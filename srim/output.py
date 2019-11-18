@@ -27,6 +27,20 @@ def _to_float(token):
         token = bytes(token).decode('latin-1')
     return float(token.replace(',', '.'))
 
+energy_prefixes = {
+    'eV': 1E-3,
+    'keV': 1,
+    'MeV': 1E3,
+    'GeV': 1E6
+}
+length_prefixes = {
+    'A': 1E-4,
+    'um': 1,
+    'mm': 1E3,
+    'cm': 1E4,
+    'm': 1E6
+}
+
 
 class SRIMOutputParseError(Exception):
     """SRIM error reading output file"""
@@ -808,34 +822,22 @@ class SRResults(object):
         start_idx = table_header_match.end()
         stop_idx = table_footer_match.start()
 
-        rawdata = BytesIO(output[start_idx:stop_idx]).read().decode('utf-8')
+        raw_data = BytesIO(output[start_idx:stop_idx]).read().decode('utf-8')
 
         output_array = [[] for i in range(6)]
 
-        #function for
-        energy_conversion = lambda a: 1 if ('keV' in a) else (1e3 if ('MeV' in a) else (1e6 if 'GeV' in a else (1e-3 if 'eV' in a else None)))
-
-        #function for
-        length_conversion = lambda a: 1 if ('um' in a) else (1e-4 if ('A' in a) else (1e3 if ('mm' in a) else None))
-
-        for line in rawdata.split('\r\n'):
+        for line in raw_data.split('\r\n'):
             line_array = line.split()
-            #print(line_array)
 
-            #find conversion factors for all energy values (current unit --> keV)
-            E_coeff = list(map(energy_conversion,(filter(energy_conversion, line_array))))[0]
+            energy = _to_float(line_array[0]) * energy_prefixes[line_array[1]]
+            e_stopping = _to_float(line_array[2])
+            n_stopping = _to_float(line_array[3])
+            range_ = _to_float(line_array[4]) * length_prefixes[line_array[5]]
+            long_straggle = _to_float(line_array[6]) * length_prefixes[line_array[7]]
+            lat_straggle = _to_float(line_array[8]) * length_prefixes[line_array[9]]
 
-            #find conversion factors for all length values (current unit --> um)
-            L_coeff = list(map(length_conversion, filter(length_conversion, line_array)))
-
-            energy = _to_float(line_array[0])*E_coeff
-            Se = _to_float(line_array[2])
-            Sn = _to_float(line_array[3])
-            Range = _to_float(line_array[4])*L_coeff[0]
-            long_straggle = _to_float(line_array[6])*L_coeff[1]
-            lat_straggle = _to_float(line_array[8])*L_coeff[2]
-
-            [output_array[i].append(d) for i, d in zip(range(6), [energy, Se, Sn, Range, long_straggle, lat_straggle])]
+            for i, d in enumerate([energy, e_stopping, n_stopping, range_, long_straggle, lat_straggle]):
+                output_array[i].append(d)
 
         return np.array(output_array)
 
