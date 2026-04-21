@@ -13,7 +13,7 @@ from .core.ion import Ion
 # Valid double_regex 4, 4.0, 4.0e100
 double_regex = r'[-+]?\d+\.?\d*(?:[eE][-+]?\d+)?'
 symbol_regex = r'[A-Z][a-z]?'
-int_regex = '[+-]?\d+'
+int_regex = r'[+-]?\d+'
 
 
 class SRIMOutputParseError(Exception):
@@ -26,7 +26,7 @@ class SRIM_Output(object):
         raise NotImplementedError()
 
     def _read_ion(self, output):
-        ion_regex = 'Ion\s+=\s+({})\s+Energy\s+=\s+({})\s+keV'.format(
+        ion_regex = r'Ion\s+=\s+({})\s+Energy\s+=\s+({})\s+keV'.format(
             symbol_regex, double_regex)
         match = re.search(ion_regex.encode('utf-8'), output)
         if match:
@@ -36,19 +36,19 @@ class SRIM_Output(object):
         raise SRIMOutputParseError("unable to extract ion from file")
 
     def _read_target(self, output):
-        match_target = re.search(b'(?<=====\r\n)Layer\s+\d+\s+:.*?(?=====)', output, re.DOTALL)
+        match_target = re.search(br'(?<=====\r\n)Layer\s+\d+\s+:.*?(?=====)', output, re.DOTALL)
         if match_target:
             print(match_target.group(0))
             layer_regex = (
-                'Layer\s+(?P<i>\d+)\s+:\s+(.+)\r\n'
-                'Layer Width\s+=\s+({0})\s+A\s+;\r\n'
-                '\s+Layer #\s+(?P=i)- Density = ({0}) atoms/cm3 = ({0}) g/cm3\r\n'
-                '((?:\s+Layer #\s+(?P=i)-\s+{1}\s+=\s+{0}\s+Atomic Percent = {0}\s+Mass Percent\r\n)+)'
+                r'Layer\s+(?P<i>\d+)\s+:\s+(.+)\r\n'
+                r'Layer Width\s+=\s+({0})\s+A\s+;\r\n'
+                r'\s+Layer #\s+(?P=i)- Density = ({0}) atoms/cm3 = ({0}) g/cm3\r\n'
+                r'((?:\s+Layer #\s+(?P=i)-\s+{1}\s+=\s+{0}\s+Atomic Percent = {0}\s+Mass Percent\r\n)+)'
             ).format(double_regex, symbol_regex)
             layers = re.findall(layer_regex.encode('utf-8'), match_target.group(0))
             if layers:
                 element_regex = (
-                    '\s+Layer #\s+(\d+)-\s+({1})\s+=\s+({0})\s+Atomic Percent = ({0})\s+Mass Percent\r\n'
+                    r'\s+Layer #\s+(\d+)-\s+({1})\s+=\s+({0})\s+Atomic Percent = ({0})\s+Mass Percent\r\n'
                 ).format(double_regex, symbol_regex)
                 element_regex = element_regex.encode()
 
@@ -65,7 +65,7 @@ class SRIM_Output(object):
         raise SRIMOutputParseError("unable to extract total target from file")
 
     def _read_num_ions(self, output):
-        match = re.search(b'Total Ions calculated\s+=(\d+.\d+)', output)
+        match = re.search(br'Total Ions calculated\s+=(\d+.\d+)', output)
         if match:
             # Cast string -> float -> round down to nearest int
             return int(float(match.group(1)))
@@ -74,7 +74,7 @@ class SRIM_Output(object):
     def _read_table(self, output):
         match = re.search((
             b'=+(.*)'
-            b'-+(?:\s+-+)+'
+            br'-+(?:\s+-+)+'
         ), output, re.DOTALL)
         # Read Data from table
 
@@ -603,8 +603,8 @@ class Collision:
 
         line = next(lines)
         assert re.match((
-                "  Recoil Atom Energy\(eV\)   X \(A\)      Y \(A\)      Z \(A\)"
-                "   Vac Repl Ion Numb \d+="
+                r"  Recoil Atom Energy\(eV\)   X \(A\)      Y \(A\)      Z \(A\)"
+                r"   Vac Repl Ion Numb \d+="
         ), line)
 
         cascade = []
