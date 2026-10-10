@@ -121,7 +121,7 @@ class TRIMSettings(object):
             'ranges': check_input(int, is_zero_or_one, kwargs.get('ranges', 0)),
             'backscattered': check_input(int, is_zero_or_one, kwargs.get('backscattered', 0)),
             'transmit': check_input(int, is_zero_or_one, kwargs.get('transmit', 0)),
-            'sputtered': check_input(int, is_zero_or_one, kwargs.get('ranges', 0)),
+            'sputtered': check_input(int, is_zero_or_one, kwargs.get('sputtered', 0)),
             'collisions': check_input(int, is_zero_to_two, kwargs.get('collisions', 0)),
             'exyz': check_input(int, is_positive, kwargs.get('exyz', 0)),
             'angle_ions': check_input(float, is_srim_degrees, kwargs.get('angle_ions', 0.0)),

@@ -35,6 +35,32 @@ def test_launch_command_native_with_xvfb_run_only(monkeypatch):
     assert _launch_command("TRIM.exe") == [os.path.join(".", "TRIM.exe")]
 
 
+@pytest.mark.parametrize('ranges,sputtered', [(0, 0), (0, 1), (1, 0), (1, 1)])
+def test_trim_sputtered_output_independent_of_ranges(tmp_path, monkeypatch, ranges, sputtered):
+    ion = Ion('Ni', 1.0e6)
+    target = Target([Layer.from_formula('Ni', 8.9, 1000.0)])
+    trim = TRIM(target, ion, ranges=ranges, sputtered=sputtered)
+
+    assert trim.settings.ranges == ranges
+    assert trim.settings.sputtered == sputtered
+
+    monkeypatch.chdir(tmp_path)
+    trim._write_input_files()
+    lines = (tmp_path / 'TRIM.IN').read_bytes().decode('utf-8').splitlines()
+    header_index = next(i for i, line in enumerate(lines) if line.startswith('Diskfiles'))
+    assert lines[header_index + 1].split() == [str(ranges), '0', '0', str(sputtered), '0', '0']
+
+
+def test_trim_sputtered_default():
+    assert TRIMSettings().sputtered == 0
+
+
+@pytest.mark.parametrize('sputtered', [-1, 2])
+def test_trim_sputtered_invalid(sputtered):
+    with pytest.raises(ValueError):
+        TRIMSettings(sputtered=sputtered)
+
+
 def test_simple_trim_init():
     ion = Ion('Ni', 1.0e6)
 
