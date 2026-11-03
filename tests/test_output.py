@@ -147,7 +147,8 @@ def test_comma_decimal_results_load():
 
 def test_comma_decimal_sr_results(tmp_path):
     src = os.path.join(TESTDATA_DIRECTORY, "SRIM", "SR_OUTPUT.txt")
-    raw = open(src, "rb").read()
+    with open(src, "rb") as f:
+        raw = f.read()
     lines = [
         line if b"SRIM-" in line
         else re.sub(rb"(?<=\d)\.(?=\d|[Ee][-+]?\d)", b",", line)
