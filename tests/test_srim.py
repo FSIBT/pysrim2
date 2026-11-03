@@ -18,6 +18,21 @@ def test_launch_command_native_without_wine(monkeypatch):
     assert _launch_command("TRIM.exe") == [os.path.join(".", "TRIM.exe")]
 
 
+def test_launch_command_uses_xvfb_run_with_wine(monkeypatch):
+    found = {"wine": "/usr/bin/wine", "xvfb-run": "/usr/bin/xvfb-run"}
+    monkeypatch.setattr("shutil.which", lambda n: found.get(n))
+    assert _launch_command("TRIM.exe") == [
+        "xvfb-run", "-a", "wine", os.path.join(".", "TRIM.exe")
+    ]
+
+
+def test_launch_command_native_with_xvfb_run_only(monkeypatch):
+    monkeypatch.setattr(
+        "shutil.which", lambda n: "/usr/bin/xvfb-run" if n == "xvfb-run" else None
+    )
+    assert _launch_command("TRIM.exe") == [os.path.join(".", "TRIM.exe")]
+
+
 def test_simple_trim_init():
     ion = Ion('Ni', 1.0e6)
 

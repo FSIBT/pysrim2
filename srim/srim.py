@@ -24,7 +24,9 @@ def _launch_command(executable):
     """ Build the command line that starts a SRIM Windows executable.
 
     Uses ``wine`` when it is on the PATH (needed on linux and osx),
-    otherwise runs the executable directly.
+    wrapping it in ``xvfb-run`` when that is also available so the
+    graphical SRIM window does not need a display. Otherwise runs the
+    executable directly.
 
     Parameters
     ----------
@@ -38,6 +40,8 @@ def _launch_command(executable):
     """
     exe = os.path.join('.', executable)
     if shutil.which("wine"):
+        if shutil.which("xvfb-run"):
+            return ['xvfb-run', '-a', 'wine', exe]
         return ['wine', exe]
     return [exe]
 
