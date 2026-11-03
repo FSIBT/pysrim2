@@ -1,9 +1,22 @@
-from srim.srim import TRIM, SR
+import os
+
+from srim.srim import TRIM, SR, _launch_command
 from srim.core.target import Target
 from srim.core.layer import Layer
 from srim.core.ion import Ion
 
 TESTDATA_DIRECTORY = 'test_files'
+
+
+def test_launch_command_uses_wine_when_available(monkeypatch):
+    monkeypatch.setattr("shutil.which", lambda n: "/usr/bin/wine" if n == "wine" else None)
+    assert _launch_command("TRIM.exe") == ["wine", os.path.join(".", "TRIM.exe")]
+
+
+def test_launch_command_native_without_wine(monkeypatch):
+    monkeypatch.setattr("shutil.which", lambda n: None)
+    assert _launch_command("TRIM.exe") == [os.path.join(".", "TRIM.exe")]
+
 
 def test_simple_trim_init():
     ion = Ion('Ni', 1.0e6)

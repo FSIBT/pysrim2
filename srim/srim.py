@@ -20,6 +20,28 @@ from .input import AutoTRIM, TRIMInput, SRInput
 from .config import DEFAULT_SRIM_DIRECTORY
 
 
+def _launch_command(executable):
+    """ Build the command line that starts a SRIM Windows executable.
+
+    Uses ``wine`` when it is on the PATH (needed on linux and osx),
+    otherwise runs the executable directly.
+
+    Parameters
+    ----------
+    executable : str
+        Name of the executable, relative to the SRIM directory (e.g. ``TRIM.exe``)
+
+    Returns
+    -------
+    list[str]
+        Argument list suitable for ``subprocess.check_call``
+    """
+    exe = os.path.join('.', executable)
+    if shutil.which("wine"):
+        return ['wine', exe]
+    return [exe]
+
+
 class TRIMSettings(object):
     """ TRIM Settings
 
@@ -213,11 +235,7 @@ class TRIM(object):
             os.chdir(srim_directory)
             self._write_input_files()
             # Make sure compatible with Windows, OSX, and Linux
-            # If 'wine' command exists use it to launch TRIM
-            if shutil.which("wine"):
-                subprocess.check_call(['wine', str(os.path.join('.', 'TRIM.exe'))])
-            else:
-                subprocess.check_call([str(os.path.join('.', 'TRIM.exe'))])
+            subprocess.check_call(_launch_command('TRIM.exe'))
             os.chdir(current_directory)
             return Results(srim_directory)
         finally:
@@ -307,11 +325,7 @@ class SR(object):
             os.chdir(os.path.join(srim_directory, 'SR Module'))
             self._write_input_file()
             # Make sure compatible with Windows, OSX, and Linux
-            # If 'wine' command exists use it to launch TRIM
-            if shutil.which("wine"):
-                subprocess.check_call(['wine', str(os.path.join('.', 'SRModule.exe'))])
-            else:
-                subprocess.check_call([str(os.path.join('.', 'SRModule.exe'))])
+            subprocess.check_call(_launch_command('SRModule.exe'))
 
             return SRResults(os.path.join(srim_directory, 'SR Module'))
         finally:
