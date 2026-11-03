@@ -1,63 +1,46 @@
+.. _installation:
+
 ============
 Installation
 ============
 
-Installation of ``pysrim`` is easy via pip or conda. If you do not
-have python installed on your machine and are new to python I would
-suggest using `anaconda
-<https://docs.anaconda.com/anaconda/install/>`_.
+Install ``pysrim2`` with `uv <https://docs.astral.sh/uv/>`_ or pip. Python
+3.11 or newer is required. The import name is ``srim``.
 
-Available on PyPi
+.. code-block:: bash
 
- - ``pip install pysrim``
+   uv add pysrim2
+   # or
+   pip install pysrim2
 
-Available on Conda
+If the original ``pysrim`` is installed, remove it first, because both
+packages provide the ``srim`` module::
 
- - ``conda install -c costrouc pysrim``
+   pip uninstall pysrim && pip install pysrim2
 
-Available on Docker **recommended** no SRIM installation necessary
+SRIM
+----
 
- - ``docker pull costrouc/pysrim``
-
-You **do not** need to install SRIM if you are just doing
-analysis. Otherwise for windows this is straightforward and normal
-while for Linux and OSX you will need `wine` additionally installed.
-
-Docker
-------
-
-There is a docker container with `pysrim` and SRIM already
-installed. Some interesting tricks had to be done with using wine and
-faking an X11 session. `xvfb-run -a ` creates a fake X11 session
-within the docker container therefore allowing SRIM to run on servers
-without displays. This is the method that I always use to run SRIM
-calculations.
-
-Image: `costrouc/pysrim <https://hub.docker.com/r/costrouc/pysrim/tags/>`_
-
-See
-`examples/docker <https://gitlab.com/costrouc/pysrim/tree/master/examples/docker>`_
-for an example of how to use the docker image.
-
-
-Linux and OSX
--------------
-
-For linux an OSX you will need to first have wine installed. See `this post <https://www.davidbaumgold.com/tutorials/wine-mac/>`_ on installation of wine on OSX. For linux you will typically be able to install wine via ``apt get install wine`` or ``yum install wine``. SRIM is `compatible <https://appdb.winehq.org/objectManager.php?sClass=version&iId=13202>`_ with wine.
-
-Once you have wine installed run the `installer script <https://gitlab.com/costrouc/pysrim/raw/master/install.sh>`_ ``install.sh``.
-
-Click extract and then done. The installed version should be
-SRIM 2013. To check for this see that an executable ``TRIM.exe`` is in
-the directory.
+SRIM itself is not included. Download it from `srim.org
+<http://www.srim.org/>`_. SRIM is copyright (c) James F. Ziegler and is free
+for non-commercial use only. You do not need SRIM if you are only analysing
+existing output files.
 
 Windows
 -------
 
-A collegue of mine has gotten it to work easily on Windows but I
-myself have no experience. Just download the executable at
-[srim.org](http://srim.org/). Next you will extract the SRIM files
-into a directory on your windows machine. Note the directory of
-installation as it will be needed from `trim.run()`. Make sure that
-your installed version is SRIM 2013. To check for this see that an
-executable ``TRIM.exe`` is in the directory.
+Extract the SRIM files into a directory and pass that directory to
+``trim.run()``. Check that ``TRIM.exe`` is in the directory.
+
+Linux and macOS
+---------------
+
+Install `wine <https://www.winehq.org/>`_ (for example ``apt install wine``
+on Debian-based systems, or see `this post
+<https://www.davidbaumgold.com/tutorials/wine-mac/>`_ for macOS), then extract
+SRIM into a directory. SRIM is `compatible
+<https://appdb.winehq.org/objectManager.php?sClass=version&iId=13202>`_ with
+wine. If ``xvfb-run`` is available, ``pysrim2`` runs SRIM through it so no
+display is needed. An installer for SRIM under wine is planned.
+
+A container image with SRIM under wine is also planned.

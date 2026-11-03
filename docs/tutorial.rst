@@ -5,7 +5,7 @@ Tutorial
 If you have already installed srim then lets get started! If not
 please make sure to look at :ref:`installation` first.
 
-In this tutorial we will cover all of the basics of ``pysrim``.
+In this tutorial we will cover all of the basics of ``pysrim2``.
 
  - running a TRIM simple calculation
  - analyzing TRIM calculation output files
@@ -98,8 +98,8 @@ Plotting and Analysis of Results
 
 Now we assume that we have completed several interesting SRIM
 calculations. For this tutorial we will use `results
-<https://gitlab.com/costrouc/pysrim/tree/master/test_files>`_ within
-the ``pysrim`` repository. You will need to download these files. We
+<https://github.com/FSIBT/pysrim2/tree/main/test_files>`_ within
+the ``pysrim2`` repository. You will need to download these files. We
 will analyze results such as damage energy, ionization, and vacancy
 production.
 
@@ -191,6 +191,6 @@ Total number of vacancies vs depth.
 
 For a much more advanced example please see `SiC ion damage production
 jupyter notebook
-<https://gitlab.com/costrouc/pysrim/blob/master/examples/notebooks/SiC.ipynb>`_. This
+<https://github.com/FSIBT/pysrim2/blob/main/examples/notebooks/SiC.ipynb>`_. This
 tutorial is also available in `notebook form
-<https://gitlab.com/costrouc/pysrim/blob/master/examples/notebooks/Analysis.ipynb>`_.
+<https://github.com/FSIBT/pysrim2/blob/main/examples/notebooks/Analysis.ipynb>`_.

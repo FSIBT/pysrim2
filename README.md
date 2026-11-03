@@ -1,79 +1,54 @@
-![srim heatmap](https://gitlab.com/costrouc/pysrim/raw/master/examples/images/length-heatmap-log-cropped.png)
+![srim heatmap](https://raw.githubusercontent.com/FSIBT/pysrim2/main/examples/images/length-heatmap-log-cropped.png)
 
-**All issues and contributions should be done on
-[Gitlab](https://gitlab.com/costrouc/pysrim). Github is used only as a
-mirror for visibility**
+# pysrim2: Automation, Analysis, and Plotting of SRIM Calculations
 
-# pysrim: Automation, Analysis, and Plotting of SRIM Calculations
+> **pysrim2 is a maintained continuation of
+> [pysrim](https://gitlab.com/costrouc/pysrim) by Chris Ostrouchov.**
+> See [what changed](https://pysrim2.readthedocs.io/en/latest/changes-from-pysrim.html).
 
-`pysrim` is a python package that aims to wrap and extend SRIM a
-popular tool for simulating ions traveling through a material. There
-are many pain points to SRIM and this package aims to address
-them. These include compatibility with all OS's, automation and crash
-recovery of SRIM calculations, parsing of all output files, and
-publication quality plots.
+[![PyPI](https://img.shields.io/pypi/v/pysrim2.svg)](https://pypi.org/project/pysrim2/)
+[![CI](https://github.com/FSIBT/pysrim2/actions/workflows/ci.yml/badge.svg)](https://github.com/FSIBT/pysrim2/actions/workflows/ci.yml)
+[![Documentation](https://readthedocs.org/projects/pysrim2/badge/?version=latest)](https://pysrim2.readthedocs.io/en/latest/)
+[![License](https://img.shields.io/pypi/l/pysrim2.svg)](LICENSE)
 
-There is now a docker image
-[costrouc/pysrim](https://hub.docker.com/r/costrouc/pysrim/tags/) for
-running pysrim and SRIM! **No setup necissary and does not require a
-display so it is server ready**. If you would like to try it run the
-short command below (obviously requires docker). All output files will
-be stored in `/tmp/output` for this example. [Benchmarks
-show](https://pysrim.readthedocs.io/en/latest/benchmarks.html) the
-docker container is around 50-60% faster. I believe this is due to
-using [xvfb](https://linux.die.net/man/1/xvfb)
+`pysrim2` is a Python package that wraps and extends SRIM, a popular
+tool for simulating ions traveling through a material. It addresses
+several pain points of SRIM: automation and crash recovery of SRIM
+calculations, parsing of all output files, publication quality plots,
+and running on Linux and macOS.
 
-``` bash
-docker run -v $PWD/examples/docker:/opt/pysrim/ \
-           -v /tmp/output:/tmp/output \
-           -it costrouc/pysrim sh -c "xvfb-run -a python3.6 /opt/pysrim/ni.py"
-ls /tmp/output
+The import name is unchanged: `import srim`. Because both packages
+provide the `srim` module, `pysrim2` cannot be installed alongside the
+original `pysrim`.
+
+Documentation: <https://pysrim2.readthedocs.io/en/latest/>
+
+# Installation
+
+```bash
+uv add pysrim2        # or: pip install pysrim2
 ```
 
-<table>
-<tr>
-  <td>Latest Release</td>
-  <td><img src="https://img.shields.io/pypi/v/pysrim.svg" alt="latest release"/></td>
-</tr>
-<tr>
-  <td></td>
-  <td><img src="https://anaconda.org/costrouc/pysrim/badges/version.svg" alt="latest release" /></td>
-</tr>
-<tr>
-  <td>Package Status</td>
-  <td><img src="https://img.shields.io/pypi/status/pysrim.svg" alt="status" /></td>
-</tr>
-<tr>
-  <td>License</td>
-  <td><img src="https://img.shields.io/pypi/l/pysrim.svg" alt="license" /></td>
-</tr>
-<tr>
-  <td>Build Status</td>
-  <td> <a href="https://gitlab.com/costrouc/pysrim/pipelines"> <img
-src="https://gitlab.com/costrouc/pysrim/badges/master/pipeline.svg"
-alt="gitlab pipeline status" /> </a> </td>
-</tr>
-<tr>
-  <td>Coverage</td> <td><img src="https://gitlab.com/costrouc/pysrim/badges/master/coverage.svg" alt="coverage" /></td> </tr> <tr> <td>Conda</td>
-  <td> <a href="https://gitlab.com/costrouc/pysrim"> <img src="https://anaconda.org/costrouc/pysrim/badges/downloads.svg" alt="conda downloads" /> </a> </td>
-</tr>
-<tr>
-  <td>Documentation</td>
-  <td> <a href="https://pysrim.readthedocs.io/en/latest/"> <img src="https://readthedocs.org/projects/pysrim/badge/?version=latest" alt="readthedocs documentation" /> </a> </td>
-</tr>
-<tr>
-    <td>Publication</td>
-    <td><a href="http://joss.theoj.org/papers/d5ff2e218ff209390eb4882822e7b382"><img src="http://joss.theoj.org/papers/d5ff2e218ff209390eb4882822e7b382/status.svg"></a></td>
-</tr>
-<tr>
-    <td>DOI Repository Archive</td>
-    <td><a href="https://zenodo.org/badge/latestdoi/135215837"><img src="https://zenodo.org/badge/135215837.svg" alt="DOI"></a></td>
-</tr>
-</table>
+If you have `pysrim` installed, remove it first:
+`pip uninstall pysrim && pip install pysrim2`. Python 3.11 or newer is
+required.
 
-# Documentation
+## SRIM
 
-Link to [documentation on readthedocs](https://pysrim.readthedocs.io/en/latest/)
+SRIM itself is not included. Download it from
+[srim.org](http://www.srim.org/). SRIM is copyright (c) James F.
+Ziegler and is free for non-commercial use only; check its licence
+before using it. You do not need SRIM if you only analyse existing
+output files.
+
+- **Windows:** extract the SRIM files into a directory and pass that
+  directory to `trim.run()`. `TRIM.exe` should be in it.
+- **Linux and macOS:** install [wine](https://www.winehq.org/) and
+  extract SRIM into a directory. SRIM is
+  [compatible](https://appdb.winehq.org/objectManager.php?sClass=version&iId=13202)
+  with wine. If `xvfb-run` is available, `pysrim2` uses it so no
+  display is needed. An installer for SRIM under wine is planned.
+- **Container:** a container image with SRIM under wine is planned.
 
 # Features
 
@@ -86,17 +61,17 @@ One of these crashes everyone has encountered is the fact that a float
 text field can never be empty. TRIM also has a tendancy to crash
 becuase it stores all cascades in memory. Meaning that for large runs
 with full cascades greater than 1,000 ions it will run out of
-memory. `pysrim` addresses all of these issues by providing a simple
+memory. `pysrim2` addresses all of these issues by providing a simple
 API wrapper for the input file (supporting all of the features),
 ability to run on all operating systems (using
 [wine](https://appdb.winehq.org/objectManager.php?sClass=version&iId=13202)
 for linux and OSX), and allowing batch runs of calculations see [this
 notebook
-example](https://gitlab.com/costrouc/pysrim/blob/master/examples/notebooks/SiC.ipynb).
+example](https://github.com/FSIBT/pysrim2/blob/main/examples/notebooks/SiC.ipynb).
 
-Below is a hello world example of using `pysrim` for running a TRIM
+Below is a hello world example of using `pysrim2` for running a TRIM
 calcualtion. Note that `/tmp/srim` is the path to the SRIM executable
-directory (`SRIM.exe` should reside in this directory). `pysrim` will
+directory (`SRIM.exe` should reside in this directory). `pysrim2` will
 add all the necessary input files. If this ran successfully for you a
 SRIM window will popup and start the calculation.
 
@@ -127,7 +102,7 @@ results = trim.run(srim_executable_directory)
 # results is `srim.output.Results` and contains all output files parsed
 ```
 
-See [documentation](https://pysrim.readthedocs.io/en/latest/) for all available options.
+See [documentation](https://pysrim2.readthedocs.io/en/latest/) for all available options.
 
 ## Copy SRIM output files to directory
 
@@ -137,28 +112,28 @@ all of the output files and move them to a directory of your liking.
 ``` python
 from srim import TRIM
 
-TRIM.copy_output_files("/tmp/srim", "/home/costrouc/scratch/srim")
+TRIM.copy_output_files("/tmp/srim", "/home/user/scratch/srim")
 ```
 
 ## Post processes SRIM output as numpy arrays
 
 By far the hardest part about running TRIM calculations is analyzing
-the output files. `pysrim` comes with parsers for
-[IONIZ.txt](https://pysrim.readthedocs.io/en/latest/source/srim.html#srim.output.Ioniz),
-[VACANCY.txt](https://pysrim.readthedocs.io/en/latest/source/srim.html#srim.output.Vacancy),
-[NOVAC.txt](https://pysrim.readthedocs.io/en/latest/source/srim.html#srim.output.NoVacancy),
-[E2RECOIL.txt](https://pysrim.readthedocs.io/en/latest/source/srim.html#srim.output.EnergyToRecoils),
-[PHONON.txt](https://pysrim.readthedocs.io/en/latest/source/srim.html#srim.output.Phonons),
-[RANGE.txt](https://pysrim.readthedocs.io/en/latest/source/srim.html#srim.output.Range),
+the output files. `pysrim2` comes with parsers for
+[IONIZ.txt](https://pysrim2.readthedocs.io/en/latest/source/srim.html#srim.output.Ioniz),
+[VACANCY.txt](https://pysrim2.readthedocs.io/en/latest/source/srim.html#srim.output.Vacancy),
+[NOVAC.txt](https://pysrim2.readthedocs.io/en/latest/source/srim.html#srim.output.NoVacancy),
+[E2RECOIL.txt](https://pysrim2.readthedocs.io/en/latest/source/srim.html#srim.output.EnergyToRecoils),
+[PHONON.txt](https://pysrim2.readthedocs.io/en/latest/source/srim.html#srim.output.Phonons),
+[RANGE.txt](https://pysrim2.readthedocs.io/en/latest/source/srim.html#srim.output.Range),
 and
-[COLLISON.txt](https://pysrim.readthedocs.io/en/latest/source/srim.html#srim.output.Collision). The
+[COLLISON.txt](https://pysrim2.readthedocs.io/en/latest/source/srim.html#srim.output.Collision). The
 COLLISON.txt file can get quite large so the `Collision` parser uses a
 buffered reader that can handle any file size. Additinally a class
-[srim.output.Results](https://pysrim.readthedocs.io/en/latest/source/srim.html#srim.output.Results)
+[srim.output.Results](https://pysrim2.readthedocs.io/en/latest/source/srim.html#srim.output.Results)
 will processes all output files in a directory and provide a
-dictionary of each parsed output file. `pysrim` comes with some
+dictionary of each parsed output file. `pysrim2` comes with some
 helpful plotting utilities such a plotting the DPA vs depth. However,
-`pysrim's` most powerful feature is that all of the text files are
+`pysrim2's` most powerful feature is that all of the text files are
 exposed as numpy arrays. The example below shows how to plot DPA using
 a simple math and numpy. This enables the user to seamlessly use TRIM
 and do analysis.
@@ -183,7 +158,7 @@ def plot_ionization(folder, ax):
 ```
 
 Set `folders` to list of directories to SRIM outputs. See
-[Analysis](https://gitlab.com/costrouc/pysrim/blob/master/examples/notebooks/Analysis.ipynb)
+[Analysis](https://github.com/FSIBT/pysrim2/blob/main/examples/notebooks/Analysis.ipynb)
 for detailed example. Notice how there is a python class for each SRIM
 output file and gives simple access to each column. This did require
 some complex regex to get working just right.
@@ -205,75 +180,39 @@ fig.set_size_inches((20, 6))
 fig.savefig(os.path.join(image_directory, "ionizationvsdepth.png"), transparent=True)
 ```
 
-![srim heatmap](https://gitlab.com/costrouc/pysrim/raw/master/examples/images/ionizationvsdepth.png)
+![srim heatmap](https://raw.githubusercontent.com/FSIBT/pysrim2/main/examples/images/ionizationvsdepth.png)
 
 See [jupyter
-notebook](<https://gitlab.com/costrouc/pysrim/blob/master/examples/notebooks/Analysis.ipynb)
+notebook](https://github.com/FSIBT/pysrim2/blob/main/examples/notebooks/Analysis.ipynb)
 for full demonstration of features.
 
-An example of creating some publication graphics with pysrim can also
-be found in that
-[directory](https://gitlab.com/costrouc/pysrim/blob/master/examples/notebooks/SiC.ipynb). I
-have used this in a
+An example of creating some publication graphics with pysrim2 can also
+be found in the
+[SiC notebook](https://github.com/FSIBT/pysrim2/blob/main/examples/notebooks/SiC.ipynb).
+Chris Ostrouchov used it in a
 [publication](https://doi.org/10.1016/j.cossms.2017.09.003).
 
+# Development
 
-# Installation
+```bash
+uv sync                          # set up the environment
+uv run pytest                    # run the tests (from the repository root)
+uv run pre-commit run --all-files   # lint and format
+git config blame.ignoreRevsFile .git-blame-ignore-revs
+```
 
-Installation of `pysrim` is easy via pip or conda.
+The last command makes `git blame` skip the one-off formatting commit.
+See [AGENTS.md](AGENTS.md) for commit conventions. Bug reports and pull
+requests are welcome at <https://github.com/FSIBT/pysrim2>.
 
-Available on PyPi
+# Credits
 
- -  `pip install pysrim`
-
-Available on Conda
-
- - `conda install -c costrouc pysrim`
-
-Available on Docker
-
- - `docker pull costrouc/pysrim`
-
-Unless you are using the docker image, you will need to install SRIM
-on your machine using the instructions bellow for linux, OSX, and
-windows.
-
-## Docker
-
-There is a docker container with `pysrim` and SRIM already
-installed. Some interesting tricks had to be done with using wine and
-faking an X11 session. `xvfb-run -a ` creates a fake X11 session
-within the docker container therefore allowing SRIM to run on servers
-without displays. This is the method that I always use to run SRIM.
-
-Image: [costrouc/pysrim](https://hub.docker.com/r/costrouc/pysrim/tags/)
-
-## Linux and OSX
-
-For linux an OSX you will need to first have wine installed. See [this post](https://www.davidbaumgold.com/tutorials/wine-mac/) on installation of wine on OSX. For linux you will typically be able to install wine via `apt get install wine` or `yum install wine`. SRIM is [compatible](https://appdb.winehq.org/objectManager.php?sClass=version&iId=13202) with wine.
-
-Once you have wine installed run the [installer script](https://gitlab.com/costrouc/pysrim/raw/master/install.sh) `install.sh`.
-
-Click extract and then done.
-
-## Windows
-
-A collegue of mine has gotten it to work easily on Windows but I
-myself have no experience. Just download the executable at [srim.org](http://srim.org/). Next you will extract the SRIM files into a directory on your windows machine. Note the directory of installation as it will be needed from `trim.run()`.
-
-# Contributing
-
-All contributions, bug reports, bug fixes, documentation improvements,
-enhancements and ideas are welcome! These should be submitted at the
-[Gitlab repository](https://gitlab.com/costrouc/pysrim). Github is
-only used for visibility.
-
-Contributors:
- - [Chris Ostrouchov](https://gitlab.com/costrouc) (maintainer)
- - [Alex Hanson](https://gitlab.com/wahanson)
- - [dschwen](https://github.com/dschwen)
-
+pysrim was written by [Chris Ostrouchov](https://gitlab.com/costrouc)
+with contributions from [Alex Hanson](https://gitlab.com/wahanson) and
+[dschwen](https://github.com/dschwen). pysrim2 includes fixes from many
+fork authors, listed in
+[changes from pysrim](https://pysrim2.readthedocs.io/en/latest/changes-from-pysrim.html).
 
 # License
 
-MIT
+MIT. See [LICENSE](LICENSE). SRIM is licensed separately by its author.
