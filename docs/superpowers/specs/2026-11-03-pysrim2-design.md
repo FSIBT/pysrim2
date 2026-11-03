@@ -307,6 +307,17 @@ Target:
 - `release.yml`: on tag `v*` → `uv build` → publish to PyPI via **trusted
   publishing** (no tokens) → GitHub Release with changelog section.
 
+## Release roadmap
+- **0.6.0**: foundation (fork fixes integrated, packaging, CI, docs, changelog).
+- **0.7.0**: SRIM GitHub Release asset; `uv tool install pysrim2` followed by
+  `pysrim2 install` (`--dry-run`, per-component install, optional container
+  runtime) and `pysrim2 doctor`; container image `ghcr.io/fsibt/pysrim2`;
+  real-SRIM integration tests; first version of the agent skill and its
+  installation.
+- **0.8.0**: DataFrames, `run.yaml`, EXYZ parser, cascade export.
+- **0.9.0**: scans, chunked runs, caching, backends, progress UIs.
+- Later: docs overhaul, CITATION.cff, Zenodo, announcements.
+
 ## Left to the builder (Claude's calls, adjustable)
 - First version number: `0.6.0` (continues pysrim lineage, signals pre-1.0
   API); `1.0.0` once DataFrame/scan APIs settle.

@@ -13,11 +13,10 @@
 ## Roadmap (later plans, written when their predecessor ships)
 
 1. **Foundation → 0.6.0** (this plan)
-2. Container + SRIM GitHub Release asset + in-container integration tests + container CI
-3. DataFrames, `run.yaml` spec round-trip, EXYZ parser (jphilis), cascade export (Parquet/HDF5)
-4. Execution: job dirs, scans, chunked runs with seeds, caching, local/container backends, long runs, `--ui` progress front ends
-5. `pysrim2 install` / `doctor` CLI, SKILL.md + skill installation, full AGENTS.md
-6. Docs overhaul, CITATION.cff, Zenodo, templates, Dependabot, announcements
+2. **0.7.0**: SRIM GitHub Release asset, `uv tool install pysrim2` then `pysrim2 install` (`--dry-run`, per-component install, optional container runtime) and `pysrim2 doctor`; container image `ghcr.io/fsibt/pysrim2`; real-SRIM integration tests; first version of the agent skill and its installation
+3. **0.8.0**: DataFrames, `run.yaml` spec round-trip, EXYZ parser (jphilis), cascade export (Parquet/HDF5)
+4. **0.9.0**: execution: job dirs, scans, chunked runs with seeds, caching, local/container backends, `--ui` progress front ends
+5. Later: docs overhaul, CITATION.cff, Zenodo, templates, Dependabot, announcements
 
 ## Global Constraints
 
