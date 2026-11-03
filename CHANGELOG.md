@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Parsing SRIM output no longer prints debug output to stdout.
 - `SR.run` reads its results correctly when `srim_directory` is a relative path.
 
+### Changed
+
+- The source distribution no longer includes `CLAUDE.md`, `docs/superpowers/`, `.github/` or `tests/`.
+
 ## [0.6.0] - 2026-11-03
 
 Changes since pysrim 0.5.10. See

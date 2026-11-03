@@ -43,9 +43,13 @@ packages = ["srim"]
 
 [tool.hatch.build.targets.sdist]
 exclude = [
-    "examples/images",
-    "test_files",
-    "docs/paper",
+    "/.github",
+    "/CLAUDE.md",
+    "/docs/paper",
+    "/docs/superpowers",
+    "/examples/images",
+    "/test_files",
+    "/tests",
 ]
 
 [dependency-groups]
