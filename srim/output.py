@@ -63,7 +63,6 @@ class SRIM_Output:
     def _read_target(self, output):
         match_target = re.search(rb"(?<=====\r\n)Layer\s+\d+\s+:.*?(?=====)", output, re.DOTALL)
         if match_target:
-            print(match_target.group(0))
             layer_regex = (
                 r"Layer\s+(?P<i>\d+)\s+:\s+(.+)\r\n"
                 rf"Layer Width\s+=\s+({double_regex})\s+A\s+;\r\n"
@@ -648,7 +647,6 @@ class Collision:
                 break
             tokens = line.split()[1:-1]
 
-            print(tokens)
             cascade.append(
                 {
                     "recoil": int(tokens[0]),

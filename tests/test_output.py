@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 from srim.output import (
+    Collision,
     EnergyToRecoils,
     Ioniz,
     NoVacancy,
@@ -219,7 +220,7 @@ def test_importing_output_does_not_change_locale():
     subprocess.run([sys.executable, "-c", code], check=True)
 
 
-def test_read_target_with_layers_raises_not_implemented():
+def test_read_target_with_layers_raises_not_implemented(capsys):
     # _read_target is not reachable from a public method yet; exercise it directly.
     output = (
         b"=====\r\n"
@@ -231,6 +232,21 @@ def test_read_target_with_layers_raises_not_implemented():
     )
     with pytest.raises(NotImplementedError):
         SRIM_Output()._read_target(output)
+    assert capsys.readouterr().out == ""
+
+
+def test_collision_parsing_prints_nothing(capsys):
+    collision = Collision(os.path.join(TESTDATA_DIRECTORY, "SiC-C"))
+    parsed = 0
+    for i in range(len(collision)):
+        try:
+            collision[i]
+        except (ValueError, IndexError):
+            # Some ions in this fixture trip over existing parser gaps; those are out of scope here.
+            continue
+        parsed += 1
+    assert parsed > 0
+    assert capsys.readouterr().out == ""
 
 
 def test_sr_range_in_kilometres_converted_to_micrometres(tmp_path):
