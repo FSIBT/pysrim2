@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - SR output ranges in `km` are parsed instead of raising `SRIMOutputParseError`.
 - Parsing SRIM output no longer prints debug output to stdout.
+- `SR.run` reads its results correctly when `srim_directory` is a relative path.
 
 ## [0.6.0] - 2026-11-03
 

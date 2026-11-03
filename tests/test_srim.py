@@ -1,10 +1,13 @@
 import os
+import shutil
+import subprocess
 
 import pytest
 
 from srim.core.ion import Ion
 from srim.core.layer import Layer
 from srim.core.target import Target
+from srim.output import SRResults
 from srim.srim import SR, TRIM, TRIMSettings, _launch_command
 
 TESTDATA_DIRECTORY = "test_files"
@@ -107,3 +110,33 @@ def test_simple_srim_init():
 
     # resulting file should be equal to
     # test_files/SRIM/SR_OUTPUT.txt
+
+
+def test_sr_run_reads_results_from_relative_srim_directory(tmp_path, monkeypatch):
+    sr_module = tmp_path / "srim" / "SR Module"
+    sr_module.mkdir(parents=True)
+    shutil.copy(
+        os.path.join(TESTDATA_DIRECTORY, "SRIM", "SR_OUTPUT.txt"),
+        sr_module / "SR_OUTPUT.txt",
+    )
+
+    layer = Layer(
+        {
+            "Si": {"stoich": 0.5, "E_d": 35.0, "lattice": 0.0, "surface": 3.0},
+            "C": {"stoich": 0.5, "E_d": 20.0, "lattice": 0.0, "surface": 3.0},
+        },
+        density=3.21,
+        width=10000.0,
+    )
+    ion = Ion("Xe", energy=1.2e9)
+    sr = SR(layer, ion, output_type=5)
+
+    commands = []
+    monkeypatch.setattr(subprocess, "check_call", lambda cmd: commands.append(cmd))
+    monkeypatch.chdir(tmp_path)
+
+    results = sr.run(srim_directory="srim")
+
+    assert isinstance(results, SRResults)
+    assert len(commands) == 1
+    assert os.getcwd() == os.path.realpath(tmp_path)

@@ -344,12 +344,13 @@ class SR:
             to be changed for windows.
         """
         current_directory = os.getcwd()
+        sr_directory = os.path.abspath(os.path.join(srim_directory, "SR Module"))
         try:
-            os.chdir(os.path.join(srim_directory, "SR Module"))
+            os.chdir(sr_directory)
             self._write_input_file()
             # Make sure compatible with Windows, OSX, and Linux
             subprocess.check_call(_launch_command("SRModule.exe"))
 
-            return SRResults(os.path.join(srim_directory, "SR Module"))
+            return SRResults(sr_directory)
         finally:
             os.chdir(current_directory)
