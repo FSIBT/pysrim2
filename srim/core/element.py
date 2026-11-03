@@ -1,7 +1,8 @@
 from .elementdb import ElementDB
 
-class Element(object):
-    """ Element from periodic table
+
+class Element:
+    """Element from periodic table
 
     Parameters
     ----------
@@ -27,35 +28,37 @@ class Element(object):
     >>> Element('He', 4.3)
     <Element symbol:He name:Helium mass:4.30>
     """
+
     def __init__(self, identifier, mass=None):
         """Initializes element from identifier and mass"""
         element = ElementDB.lookup(identifier)
 
-        self._symbol = element['symbol']
-        self._name = element['name']
-        self._atomic_number = element['z']
+        self._symbol = element["symbol"]
+        self._name = element["name"]
+        self._atomic_number = element["z"]
 
         if mass:
             self._mass = mass
         else:
-            self._mass = element['mass']
+            self._mass = element["mass"]
 
     def __eq__(self, element):
-        if (self.symbol == element.symbol and
-            self.name == element.name and
-            self.atomic_number == element.atomic_number and
-            self.mass == element.mass):
+        if (
+            self.symbol == element.symbol
+            and self.name == element.name
+            and self.atomic_number == element.atomic_number
+            and self.mass == element.mass
+        ):
             return True
         return False
 
     def __repr__(self):
-        return "<Element symbol:{} name:{} mass:{:2.2f}>".format(
-            self.symbol, self.name, self.mass)
+        return f"<Element symbol:{self.symbol} name:{self.name} mass:{self.mass:2.2f}>"
 
     def __hash__(self):
-        return sum(hash(item) for item in [
-            self._mass, self._symbol, self._name, self.atomic_number
-        ])
+        return sum(
+            hash(item) for item in [self._mass, self._symbol, self._name, self.atomic_number]
+        )
 
     @property
     def symbol(self):

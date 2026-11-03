@@ -3,8 +3,9 @@ from math import sqrt
 from . import units
 from .element import Element
 
+
 class Ion(Element):
-    """ Representation of ion traveling through medium
+    """Representation of ion traveling through medium
 
     Similar to :class:`srim.core.element.Element` but associates an
     energy with the element.
@@ -29,17 +30,17 @@ class Ion(Element):
     >>> Ion('He', energy=1e6, mass=4.2)
     "<Ion element:He mass:4.20 energy:1.00e6 eV>"
     """
+
     def __init__(self, identifier, energy, mass=None):
         """Initialize Ion"""
         if energy <= 0.0:
-            raise ValueError('energy {} cannot be 0.0 or less'.format(energy))
+            raise ValueError(f"energy {energy} cannot be 0.0 or less")
 
         self._energy = energy
-        super(Ion, self).__init__(identifier, mass)
+        super().__init__(identifier, mass)
 
     def __repr__(self):
-        return "<Ion element:{} mass:{:2.2f} energy:{:1.2E} eV>".format(
-            self.name, self.mass, self.energy)
+        return f"<Ion element:{self.name} mass:{self.mass:2.2f} energy:{self.energy:1.2E} eV>"
 
     @property
     def energy(self):

@@ -73,8 +73,10 @@
   import importlib.metadata
   import srim
 
+
   def test_version_matches_distribution():
       assert srim.__version__ == importlib.metadata.version("pysrim2")
+
 
   def test_element_data_is_packaged():
       assert srim.ElementDB.lookup("Si")["z"] == 14
@@ -96,6 +98,7 @@
   def test_launch_command_uses_wine_when_available(monkeypatch):
       monkeypatch.setattr("shutil.which", lambda n: "/usr/bin/wine" if n == "wine" else None)
       assert _launch_command("TRIM.exe") == ["wine", os.path.join(".", "TRIM.exe")]
+
 
   def test_launch_command_native_without_wine(monkeypatch):
       monkeypatch.setattr("shutil.which", lambda n: None)

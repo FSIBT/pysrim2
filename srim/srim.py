@@ -1,27 +1,28 @@
-""" Module for automating srim calculations
+"""Module for automating srim calculations"""
 
-"""
 import os
 import random
-import subprocess
 import shutil
+import subprocess
 
+from .config import DEFAULT_SRIM_DIRECTORY
 from .core.utils import (
     check_input,
-    is_zero, is_zero_or_one, is_zero_to_two, is_zero_to_five,
-    is_one_to_seven, is_one_to_eight,
-    is_srim_degrees,
+    is_one_to_eight,
+    is_one_to_seven,
     is_positive,
-    is_quoteless
+    is_quoteless,
+    is_srim_degrees,
+    is_zero_or_one,
+    is_zero_to_five,
+    is_zero_to_two,
 )
-
+from .input import AutoTRIM, SRInput, TRIMInput
 from .output import Results, SRResults
-from .input import AutoTRIM, TRIMInput, SRInput
-from .config import DEFAULT_SRIM_DIRECTORY
 
 
 def _launch_command(executable):
-    """ Build the command line that starts a SRIM Windows executable.
+    """Build the command line that starts a SRIM Windows executable.
 
     Uses ``wine`` when it is on the PATH (needed on linux and osx),
     wrapping it in ``xvfb-run`` when that is also available so the
@@ -38,16 +39,16 @@ def _launch_command(executable):
     list[str]
         Argument list suitable for ``subprocess.check_call``
     """
-    exe = os.path.join('.', executable)
+    exe = os.path.join(".", executable)
     if shutil.which("wine"):
         if shutil.which("xvfb-run"):
-            return ['xvfb-run', '-a', 'wine', exe]
-        return ['wine', exe]
+            return ["xvfb-run", "-a", "wine", exe]
+        return ["wine", exe]
     return [exe]
 
 
-class TRIMSettings(object):
-    """ TRIM Settings
+class TRIMSettings:
+    """TRIM Settings
 
     This object can construct all options available when running a TRIM calculation.
 
@@ -109,36 +110,41 @@ class TRIMSettings(object):
         This class should never explicitely created. Instead set as
         kwargs in :class:`srim.srim.TRIM`
     """
+
     def __init__(self, **kwargs):
         """Initialize settings for a TRIM running"""
         self._settings = {
-            'description': check_input(str, is_quoteless, kwargs.get('description', 'pysrim run')),
-            'reminders': check_input(int, is_zero_or_one, kwargs.get('reminders', 0)),
-            'autosave': check_input(int, is_positive, kwargs.get('autosave', 0)),
-            'plot_mode': check_input(int, is_zero_to_five, kwargs.get('plot_mode', 5)),
-            'plot_xmin': check_input(float, is_positive, kwargs.get('plot_xmin', 0.0)),
-            'plot_xmax': check_input(float, is_positive, kwargs.get('plot_xmax', 0.0)),
-            'ranges': check_input(int, is_zero_or_one, kwargs.get('ranges', 0)),
-            'backscattered': check_input(int, is_zero_or_one, kwargs.get('backscattered', 0)),
-            'transmit': check_input(int, is_zero_or_one, kwargs.get('transmit', 0)),
-            'sputtered': check_input(int, is_zero_or_one, kwargs.get('sputtered', 0)),
-            'collisions': check_input(int, is_zero_to_two, kwargs.get('collisions', 0)),
-            'exyz': check_input(int, is_positive, kwargs.get('exyz', 0)),
-            'angle_ions': check_input(float, is_srim_degrees, kwargs.get('angle_ions', 0.0)),
-            'bragg_correction': float(kwargs.get('bragg_correction', 1.0)), # TODO: Not sure what correct values are
-            'random_seed': check_input(int, is_positive, kwargs.get('random_seed', random.randint(0, 100000))),
-            'version': check_input(int, is_zero_or_one, kwargs.get('version', 0)),
+            "description": check_input(str, is_quoteless, kwargs.get("description", "pysrim run")),
+            "reminders": check_input(int, is_zero_or_one, kwargs.get("reminders", 0)),
+            "autosave": check_input(int, is_positive, kwargs.get("autosave", 0)),
+            "plot_mode": check_input(int, is_zero_to_five, kwargs.get("plot_mode", 5)),
+            "plot_xmin": check_input(float, is_positive, kwargs.get("plot_xmin", 0.0)),
+            "plot_xmax": check_input(float, is_positive, kwargs.get("plot_xmax", 0.0)),
+            "ranges": check_input(int, is_zero_or_one, kwargs.get("ranges", 0)),
+            "backscattered": check_input(int, is_zero_or_one, kwargs.get("backscattered", 0)),
+            "transmit": check_input(int, is_zero_or_one, kwargs.get("transmit", 0)),
+            "sputtered": check_input(int, is_zero_or_one, kwargs.get("sputtered", 0)),
+            "collisions": check_input(int, is_zero_to_two, kwargs.get("collisions", 0)),
+            "exyz": check_input(int, is_positive, kwargs.get("exyz", 0)),
+            "angle_ions": check_input(float, is_srim_degrees, kwargs.get("angle_ions", 0.0)),
+            "bragg_correction": float(
+                kwargs.get("bragg_correction", 1.0)
+            ),  # TODO: Not sure what correct values are
+            "random_seed": check_input(
+                int, is_positive, kwargs.get("random_seed", random.randint(0, 100000))
+            ),
+            "version": check_input(int, is_zero_or_one, kwargs.get("version", 0)),
         }
 
         if self.plot_xmin > self.plot_xmax:
-            raise ValueError('xmin must be <= xmax')
+            raise ValueError("xmin must be <= xmax")
 
     def __getattr__(self, attr):
         return self._settings[attr]
 
 
-class TRIM(object):
-    """ Automate TRIM Calculations
+class TRIM:
+    """Automate TRIM Calculations
 
     Parameters
     ----------
@@ -171,8 +177,9 @@ class TRIM(object):
         calculations. TRIM has been known to unexpectedly crash mainly
         due to memory usage.
     """
+
     def __init__(self, target, ion, calculation=1, number_ions=1000, **kwargs):
-        """ Initialize TRIM calcualtion"""
+        """Initialize TRIM calcualtion"""
         self.settings = TRIMSettings(**kwargs)
         self.calculation = check_input(int, is_one_to_seven, calculation)
         self.number_ions = check_input(int, is_positive, number_ions)
@@ -180,7 +187,7 @@ class TRIM(object):
         self.ion = ion
 
     def _write_input_files(self):
-        """ Write necissary TRIM input files for calculation """
+        """Write necissary TRIM input files for calculation"""
         AutoTRIM().write()
         TRIMInput(self).write()
 
@@ -198,27 +205,37 @@ class TRIM(object):
             ensure that all files exist
         """
         known_files = {
-            'TRIM.IN', 'PHONON.txt', 'E2RECOIL.txt', 'IONIZ.txt',
-            'LATERAL.txt', 'NOVAC.txt', 'RANGE.txt', 'VACANCY.txt',
-            'COLLISON.txt', 'BACKSCAT.txt', 'SPUTTER.txt',
-            'RANGE_3D.txt', 'TRANSMIT.txt', 'TRIMOUT.txt',
-            'TDATA.txt'
+            "TRIM.IN",
+            "PHONON.txt",
+            "E2RECOIL.txt",
+            "IONIZ.txt",
+            "LATERAL.txt",
+            "NOVAC.txt",
+            "RANGE.txt",
+            "VACANCY.txt",
+            "COLLISON.txt",
+            "BACKSCAT.txt",
+            "SPUTTER.txt",
+            "RANGE_3D.txt",
+            "TRANSMIT.txt",
+            "TRIMOUT.txt",
+            "TDATA.txt",
         }
 
         if not os.path.isdir(src_directory):
-            raise ValueError('src_directory must be directory')
+            raise ValueError("src_directory must be directory")
 
         if not os.path.isdir(dest_directory):
-            raise ValueError('dest_directory must be directory')
+            raise ValueError("dest_directory must be directory")
 
         for known_file in known_files:
-            if os.path.isfile(os.path.join(
-                    src_directory, known_file)):
-                shutil.copy(os.path.join(
-                    src_directory, known_file), dest_directory)
-            elif os.path.isfile(os.path.join(src_directory, 'SRIM Outputs', known_file)) and check_srim_output:
-                shutil.move(os.path.join(
-                    src_directory, 'SRIM Outputs', known_file), dest_directory)
+            if os.path.isfile(os.path.join(src_directory, known_file)):
+                shutil.copy(os.path.join(src_directory, known_file), dest_directory)
+            elif (
+                os.path.isfile(os.path.join(src_directory, "SRIM Outputs", known_file))
+                and check_srim_output
+            ):
+                shutil.move(os.path.join(src_directory, "SRIM Outputs", known_file), dest_directory)
 
     def run(self, srim_directory=DEFAULT_SRIM_DIRECTORY):
         """Run configured srim calculation
@@ -239,15 +256,15 @@ class TRIM(object):
             os.chdir(srim_directory)
             self._write_input_files()
             # Make sure compatible with Windows, OSX, and Linux
-            subprocess.check_call(_launch_command('TRIM.exe'))
+            subprocess.check_call(_launch_command("TRIM.exe"))
             os.chdir(current_directory)
             return Results(srim_directory)
         finally:
             os.chdir(current_directory)
 
 
-class SRSettings(object):
-    """ SR Settings
+class SRSettings:
+    """SR Settings
 
     Parameters
     ----------
@@ -275,20 +292,21 @@ class SRSettings(object):
         This class should never explicitely created. Instead set as
         kwargs in :class:`srim.srim.SR`
     """
+
     def __init__(self, **args):
         self._settings = {
-            'energy_min': check_input(float, is_positive, args.get('energy_min', 1.0E3)),
-            'output_type': check_input(int, is_one_to_eight, args.get('output_type', 1)),
-            'output_filename': args.get('output_filename', 'SR_OUTPUT.txt'),
-            'correction': check_input(float, is_positive, args.get('correction', 1.0))
+            "energy_min": check_input(float, is_positive, args.get("energy_min", 1.0e3)),
+            "output_type": check_input(int, is_one_to_eight, args.get("output_type", 1)),
+            "output_filename": args.get("output_filename", "SR_OUTPUT.txt"),
+            "correction": check_input(float, is_positive, args.get("correction", 1.0)),
         }
 
     def __getattr__(self, attr):
         return self._settings[attr]
 
 
-class SR(object):
-    """ Automate SR Calculations
+class SR:
+    """Automate SR Calculations
 
     Parameters
     ----------
@@ -301,13 +319,14 @@ class SR(object):
         options. There are a few and none are required. Defaults are
         appropriate for most cases.
     """
+
     def __init__(self, layer, ion, **kwargs):
         self.settings = SRSettings(**kwargs)
         self.layer = layer
         self.ion = ion
 
     def _write_input_file(self):
-        """ Write necissary SR input file for calculation """
+        """Write necissary SR input file for calculation"""
         SRInput(self).write()
 
     def run(self, srim_directory=DEFAULT_SRIM_DIRECTORY):
@@ -326,11 +345,11 @@ class SR(object):
         """
         current_directory = os.getcwd()
         try:
-            os.chdir(os.path.join(srim_directory, 'SR Module'))
+            os.chdir(os.path.join(srim_directory, "SR Module"))
             self._write_input_file()
             # Make sure compatible with Windows, OSX, and Linux
-            subprocess.check_call(_launch_command('SRModule.exe'))
+            subprocess.check_call(_launch_command("SRModule.exe"))
 
-            return SRResults(os.path.join(srim_directory, 'SR Module'))
+            return SRResults(os.path.join(srim_directory, "SR Module"))
         finally:
             os.chdir(current_directory)

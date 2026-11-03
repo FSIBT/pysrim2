@@ -1,5 +1,5 @@
-class Target(object):
-    """ Target that Ion Impacts
+class Target:
+    """Target that Ion Impacts
 
     Parameters
     ----------
@@ -25,6 +25,7 @@ class Target(object):
            'surface': 3.0
     }, density=3.21, width=10000.0)])
     """
+
     def __init__(self, layers):
         self.layers = layers
 

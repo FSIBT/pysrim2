@@ -1,8 +1,9 @@
 from .material import Material
 from .utils import check_input, is_positive
 
+
 class Layer(Material):
-    """ Represents a layer in target
+    """Represents a layer in target
 
     Parameters
     ----------
@@ -39,16 +40,17 @@ class Layer(Material):
            'surface': 3.0
     }, density=3.21, width=10000.0)
     """
+
     def __init__(self, elements, density, width, phase=0, name=None):
         """Creation of Layer from elements, density, width, phase, and
-name"""
+        name"""
         self.width = width
         self.name = name
-        super(Layer, self).__init__(elements, density, phase)
+        super().__init__(elements, density, phase)
 
     @classmethod
     def from_formula(cls, chemical_formula, density, width, phase=0, name=None):
-        """ Creation Layer from chemical formula string, density, width, phase, and name
+        """Creation Layer from chemical formula string, density, width, phase, and name
 
         Parameters
         ----------
@@ -93,4 +95,4 @@ name"""
         self._name = str(value)
 
     def __repr__(self):
-        return "<Layer material:{} width:{}>".format(self.chemical_formula, self.width)
+        return f"<Layer material:{self.chemical_formula} width:{self.width}>"
