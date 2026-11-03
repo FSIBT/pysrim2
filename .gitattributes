@@ -1,0 +1,4 @@
+# SRIM fixtures are CRLF and read byte-for-byte on every platform; never normalise them.
+test_files/** -text
+examples/input/** -text
+*.IN -text
