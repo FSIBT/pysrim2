@@ -95,3 +95,17 @@ def test_results_srim_calcluation():
             'Si': [14, 50.0, 70.05]
         }
     }
+
+
+@pytest.mark.parametrize("energy, expected_ev", [
+    (b".3", 300.0),
+    (b"3.", 3000.0),
+    (b"0.5", 500.0),
+    (b"20", 20000.0),
+    (b"1.5E+03", 1.5e6),
+])
+def test_read_ion_parses_energy_formats(energy, expected_ev):
+    header = b"Ion = Ni   Energy = " + energy + b" keV"
+    ion = SRIM_Output()._read_ion(header)
+    assert ion.symbol == "Ni"
+    assert ion.energy == pytest.approx(expected_ev)
