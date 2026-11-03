@@ -27,6 +27,7 @@ def _to_float(token):
         token = bytes(token).decode('latin-1')
     return float(token.replace(',', '.'))
 
+
 energy_prefixes = {
     'eV': 1E-3,
     'keV': 1,
@@ -40,6 +41,14 @@ length_prefixes = {
     'cm': 1E4,
     'm': 1E6
 }
+
+
+def _prefix_factor(prefixes, unit):
+    """Return the conversion factor for ``unit``, or raise a parse error."""
+    try:
+        return prefixes[unit]
+    except KeyError:
+        raise SRIMOutputParseError(f"unknown unit {unit!r}") from None
 
 
 class SRIMOutputParseError(Exception):
@@ -829,12 +838,12 @@ class SRResults(object):
         for line in raw_data.split('\r\n'):
             line_array = line.split()
 
-            energy = _to_float(line_array[0]) * energy_prefixes[line_array[1]]
+            energy = _to_float(line_array[0]) * _prefix_factor(energy_prefixes, line_array[1])
             e_stopping = _to_float(line_array[2])
             n_stopping = _to_float(line_array[3])
-            range_ = _to_float(line_array[4]) * length_prefixes[line_array[5]]
-            long_straggle = _to_float(line_array[6]) * length_prefixes[line_array[7]]
-            lat_straggle = _to_float(line_array[8]) * length_prefixes[line_array[9]]
+            range_ = _to_float(line_array[4]) * _prefix_factor(length_prefixes, line_array[5])
+            long_straggle = _to_float(line_array[6]) * _prefix_factor(length_prefixes, line_array[7])
+            lat_straggle = _to_float(line_array[8]) * _prefix_factor(length_prefixes, line_array[9])
 
             for i, d in enumerate([energy, e_stopping, n_stopping, range_, long_straggle, lat_straggle]):
                 output_array[i].append(d)

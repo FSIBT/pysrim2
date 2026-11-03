@@ -8,7 +8,7 @@ import pytest
 
 from srim.output import (
     Ioniz, NoVacancy, Vacancy, EnergyToRecoils, Phonons, Range,
-    Results, SRIM_Output, SRResults, _to_float
+    Results, SRIM_Output, SRResults, SRIMOutputParseError, _to_float
 )
 
 TESTDATA_DIRECTORY = 'test_files'
@@ -161,6 +161,36 @@ def test_comma_decimal_sr_results(tmp_path):
     assert comma.ion == dot.ion
     assert comma.target == dot.target
     np.testing.assert_allclose(comma.data, dot.data)
+
+
+def test_sr_results_existing_units_unchanged():
+    results = SRResults(os.path.join(TESTDATA_DIRECTORY, "SRIM"))
+    energy, _, _, rng, long_straggle, lat_straggle = results.data
+    assert energy[0] == pytest.approx(0.999999)      # 999.999 eV -> keV
+    assert energy[1] == pytest.approx(1.10)          # keV
+    assert rng[1] == pytest.approx(28e-4)            # "28 A" -> um
+    assert long_straggle[1] == pytest.approx(9e-4)   # "9 A" -> um
+    assert lat_straggle[1] == pytest.approx(6e-4)    # "6 A" -> um
+
+
+def test_sr_range_in_metres_converted_to_micrometres():
+    dot = SRResults(os.path.join(TESTDATA_DIRECTORY, "SRIM"))
+    metres = SRResults(os.path.join(TESTDATA_DIRECTORY, "SRIM_m"))
+    assert metres.data[3][2] == pytest.approx(1.2e6)  # the 1.20 keV row
+    expected = dot.data.copy()
+    expected[3][2] = 1.2e6
+    np.testing.assert_allclose(metres.data, expected)
+
+
+def test_sr_unknown_range_unit_raises(tmp_path):
+    with open(os.path.join(TESTDATA_DIRECTORY, "SRIM", "SR_OUTPUT.txt"), "rb") as f:
+        raw = f.read()
+    old = b"   1.20 keV   1.751E-01  2.329E+00      29 A  "
+    new = b"   1.20 keV   1.751E-01  2.329E+00     29 nm  "
+    assert raw.count(old) == 1
+    (tmp_path / "SR_OUTPUT.txt").write_bytes(raw.replace(old, new))
+    with pytest.raises(SRIMOutputParseError, match="nm"):
+        SRResults(str(tmp_path))
 
 
 def test_importing_output_does_not_change_locale():
