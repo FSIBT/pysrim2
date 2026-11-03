@@ -216,3 +216,17 @@ def test_importing_output_does_not_change_locale():
         "assert locale.setlocale(locale.LC_NUMERIC) == before"
     )
     subprocess.run([sys.executable, "-c", code], check=True)
+
+
+def test_read_target_with_layers_raises_not_implemented():
+    # _read_target is not reachable from a public method yet; exercise it directly.
+    output = (
+        b"=====\r\n"
+        b"Layer  1 : Si\r\n"
+        b"Layer Width = 1.0 A ;\r\n"
+        b"  Layer # 1- Density = 1.0 atoms/cm3 = 1.0 g/cm3\r\n"
+        b"  Layer # 1-  Si = 1.0   Atomic Percent = 1.0 Mass Percent\r\n"
+        b"=====\r\n"
+    )
+    with pytest.raises(NotImplementedError):
+        SRIM_Output()._read_target(output)

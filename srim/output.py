@@ -80,11 +80,7 @@ class SRIM_Output:
                     # We know that elements will match
                     layers_elements.append(re.findall(element_regex, layer[5]))
 
-                raise NotImpementedError()
-
-                import pytest
-
-                pytest.set_trace()
+                raise NotImplementedError()
 
         raise SRIMOutputParseError("unable to extract total target from file")
 
