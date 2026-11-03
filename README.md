@@ -9,7 +9,7 @@
 [![PyPI](https://img.shields.io/pypi/v/pysrim2.svg)](https://pypi.org/project/pysrim2/)
 [![CI](https://github.com/FSIBT/pysrim2/actions/workflows/ci.yml/badge.svg)](https://github.com/FSIBT/pysrim2/actions/workflows/ci.yml)
 [![Documentation](https://readthedocs.org/projects/pysrim2/badge/?version=latest)](https://pysrim2.readthedocs.io/en/latest/)
-[![License](https://img.shields.io/pypi/l/pysrim2.svg)](LICENSE)
+[![License](https://img.shields.io/pypi/l/pysrim2.svg)](https://github.com/FSIBT/pysrim2/blob/main/LICENSE)
 
 `pysrim2` is a Python package that wraps and extends SRIM, a popular
 tool for simulating ions traveling through a material. It addresses
@@ -72,8 +72,9 @@ example](https://github.com/FSIBT/pysrim2/blob/main/examples/notebooks/SiC.ipynb
 Below is a hello world example of using `pysrim2` for running a TRIM
 calcualtion. Note that `/tmp/srim` is the path to the SRIM executable
 directory (`SRIM.exe` should reside in this directory). `pysrim2` will
-add all the necessary input files. If this ran successfully for you a
-SRIM window will popup and start the calculation.
+add all the necessary input files. If this ran successfully the
+calculation starts. With wine and `xvfb-run` installed it runs headless;
+otherwise a TRIM window may appear.
 
 ``` python
 from srim import Ion, Layer, Target, TRIM
@@ -98,7 +99,8 @@ srim_executable_directory = "/tmp/srim"
 
 # takes about 10 seconds on my laptop
 results = trim.run(srim_executable_directory)
-# If all went successfull you should have seen a TRIM window popup and run 25 ions!
+# If all went successfully, 25 ions were run (a TRIM window may have appeared
+# if wine or xvfb-run is not available)!
 # results is `srim.output.Results` and contains all output files parsed
 ```
 
@@ -202,7 +204,7 @@ git config blame.ignoreRevsFile .git-blame-ignore-revs
 ```
 
 The last command makes `git blame` skip the one-off formatting commit.
-See [AGENTS.md](AGENTS.md) for commit conventions. Bug reports and pull
+See [AGENTS.md](https://github.com/FSIBT/pysrim2/blob/main/AGENTS.md) for commit conventions. Bug reports and pull
 requests are welcome at <https://github.com/FSIBT/pysrim2>.
 
 # Credits
@@ -215,4 +217,4 @@ fork authors, listed in
 
 # License
 
-MIT. See [LICENSE](LICENSE). SRIM is licensed separately by its author.
+MIT. See [LICENSE](https://github.com/FSIBT/pysrim2/blob/main/LICENSE). SRIM is licensed separately by its author.

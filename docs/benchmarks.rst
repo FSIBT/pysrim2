@@ -1,6 +1,12 @@
 Benchmarks
 ==========
 
+.. note::
+
+   These are historical results measured with the Docker image of the
+   original ``pysrim``. ``pysrim2`` does not ship a Docker image yet; a
+   container image is planned for 0.7.0.
+
 Docker vs Standard Linux
 ------------------------
 

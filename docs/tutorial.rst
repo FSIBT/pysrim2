@@ -14,8 +14,7 @@ Most emphasis will be put on what is possible for analysis of SRIM
 calculations. Since all output files will be exposed as numpy arrays
 the sky is the limit for plotting.
 
-We will assume python 3 for this notebook and you should be using it
-too. Python 2.7 is going be depreciated in 2020.
+Python 3.11 or newer is required.
 
 .. code-block:: python
 
