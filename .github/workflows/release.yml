@@ -70,7 +70,7 @@ jobs:
 
   publish-pypi:
     needs: build
-    if: github.ref_type == 'tag'
+    if: github.event_name == 'push' && github.ref_type == 'tag'
     runs-on: ubuntu-latest
     environment:
       name: pypi
@@ -89,7 +89,7 @@ jobs:
 
   github-release:
     needs: publish-pypi
-    if: github.ref_type == 'tag'
+    if: github.event_name == 'push' && github.ref_type == 'tag'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -112,18 +112,25 @@ jobs:
       - name: Create GitHub release
         run: |
           version="${TAG#v}"
+          header="## [${version}]"
           notes="notes.md"
-          if [ -f CHANGELOG.md ] && grep -q "^## \[${version}\]" CHANGELOG.md; then
-            awk -v header="## [${version}]" '
+
+          # Extract the CHANGELOG section for this version, if there is one.
+          # Matching is literal (index), anchored at the start of the line.
+          : > "$notes"
+          if [ -f CHANGELOG.md ]; then
+            awk -v header="$header" '
               index($0, header) == 1 { found = 1; next }
-              /^## \[/ { if (found) exit }
+              found && /^## \[/ { exit }
+              found && /^\[[^]]+\]: / { exit }
               found { print }
             ' CHANGELOG.md > "$notes"
-          else
-            echo "" > "$notes"
           fi
-          if ! grep -q '[^[:space:]]' "$notes"; then
-            echo "See CHANGELOG.md." > "$notes"
+
+          # Fall back to GitHub-generated notes when there is no usable section.
+          notes_args=(--generate-notes)
+          if grep -q '[^[:space:]]' "$notes"; then
+            notes_args=(--notes-file "$notes")
           fi
 
           prerelease_flag=()
@@ -135,5 +142,5 @@ jobs:
             --repo "$REPO" \
             --verify-tag \
             --title "$TAG" \
-            --notes-file "$notes" \
+            "${notes_args[@]}" \
             "${prerelease_flag[@]}"
