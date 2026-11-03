@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-03
+
 Changes since pysrim 0.5.10. See
 [changes from pysrim](https://pysrim2.readthedocs.io/en/latest/changes-from-pysrim.html) for credits and details.
 
@@ -49,4 +51,5 @@ Changes since pysrim 0.5.10. See
 
 Versions up to and including 0.5.10 were released as `pysrim` by Chris Ostrouchov.
 
-[Unreleased]: https://github.com/FSIBT/pysrim2/compare/0421575...HEAD
+[Unreleased]: https://github.com/FSIBT/pysrim2/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/FSIBT/pysrim2/compare/0421575...v0.6.0

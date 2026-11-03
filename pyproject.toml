@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pysrim2"
-version = "0.6.0.dev0"
+version = "0.6.0"
 description = "Automation of SRIM (Stopping and Range of Ions in Matter) tasks via Python"
 readme = "README.md"
 requires-python = ">=3.11"
