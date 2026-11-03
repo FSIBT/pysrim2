@@ -132,8 +132,9 @@ and
 COLLISON.txt file can get quite large so the `Collision` parser uses a
 buffered reader that can handle any file size. Additinally a class
 [srim.output.Results](https://pysrim2.readthedocs.io/en/latest/source/srim.html#srim.output.Results)
-will processes all output files in a directory and provide a
-dictionary of each parsed output file. `pysrim2` comes with some
+will processes all output files in a directory and provide an
+object whose attributes are the parsed output files (for example
+`results.phonons`). `pysrim2` comes with some
 helpful plotting utilities such a plotting the DPA vs depth. However,
 `pysrim2's` most powerful feature is that all of the text files are
 exposed as numpy arrays. The example below shows how to plot DPA using

@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - The source distribution no longer includes `CLAUDE.md`, `docs/superpowers/`, `.github/` or `tests/`.
+- The `srim.plot` functions take a `Results` object and read its attributes; passing a dict no longer works.
 
 ## [0.6.0] - 2026-11-03
 

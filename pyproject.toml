@@ -59,7 +59,7 @@ dev = [
     "pytest-cov",
     "ruff",
     "pre-commit",
-    "matplotlib>=3.11.2",
+    "matplotlib",
 ]
 docs = [
     "sphinx",

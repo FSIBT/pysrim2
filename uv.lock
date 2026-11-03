@@ -1540,7 +1540,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "matplotlib", specifier = ">=3.11.2" },
+    { name = "matplotlib" },
     { name = "pre-commit" },
     { name = "pytest" },
     { name = "pytest-cov" },
