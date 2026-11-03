@@ -863,7 +863,8 @@ class SRResults:
 
     @property
     def data(self):
-        """
+        """Structure of the returned value::
+
         [
           <energy in keV>,
           <electronic stopping in <units> >,
@@ -872,23 +873,27 @@ class SRResults:
           <longitudinal straggling in um>,
           <lateral straggling in um>
         ]
+
         """
         return self._data
 
     @property
     def ion(self):
-        """
+        """Structure of the returned value::
+
         {
            'name': <e.g. Silicon>,
            'Z1': <int(atomic number)>,
            'A1': <float(atomic mass)>
         }
+
         """
         return self._ion
 
     @property
     def target(self):
-        """
+        """Structure of the returned value::
+
         {
            'density g/cm3': <float>,
            'density atoms/cm3': <float>,
@@ -902,5 +907,6 @@ class SRResults:
                ...
             }
         }
+
         """
         return self._target

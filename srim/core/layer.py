@@ -19,7 +19,7 @@ class Layer(Material):
        width [Angstroms] of layer
     phase : :obj:`int`
        phase of material (solid = 0, gas = 1). Default solid (0).
-    name : :obj:`str:, optional
+    name : :obj:`str`, optional
        name of the Layer (defaults to chemical_formula)
 
     Examples
@@ -63,7 +63,7 @@ class Layer(Material):
             width [Angstroms] of layer
         phase : :obj:`int`
             phase of material (solid = 0, gas = 1). Default solid (0).
-        name : :obj:`str:, optional
+        name : :obj:`str`, optional
             name of the Layer (defaults to chemical_formula)
 
         Notes
