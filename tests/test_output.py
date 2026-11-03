@@ -231,3 +231,14 @@ def test_read_target_with_layers_raises_not_implemented():
     )
     with pytest.raises(NotImplementedError):
         SRIM_Output()._read_target(output)
+
+
+def test_sr_range_in_kilometres_converted_to_micrometres(tmp_path):
+    with open(os.path.join(TESTDATA_DIRECTORY, "SRIM", "SR_OUTPUT.txt"), "rb") as f:
+        raw = f.read()
+    old = b"   1.20 keV   1.751E-01  2.329E+00      29 A  "
+    new = b"   1.20 keV   1.751E-01  2.329E+00     0.5 km  "
+    assert raw.count(old) == 1
+    (tmp_path / "SR_OUTPUT.txt").write_bytes(raw.replace(old, new))
+    results = SRResults(str(tmp_path))
+    assert results.data[3][2] == pytest.approx(5e8)  # 0.5 km -> um

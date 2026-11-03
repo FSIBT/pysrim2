@@ -30,7 +30,7 @@ def _to_float(token):
 
 
 energy_prefixes = {"eV": 1e-3, "keV": 1, "MeV": 1e3, "GeV": 1e6}
-length_prefixes = {"A": 1e-4, "um": 1, "mm": 1e3, "cm": 1e4, "m": 1e6}
+length_prefixes = {"A": 1e-4, "um": 1, "mm": 1e3, "cm": 1e4, "m": 1e6, "km": 1e9}
 
 
 def _prefix_factor(prefixes, unit):

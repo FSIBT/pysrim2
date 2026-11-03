@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- SR output ranges in `km` are parsed instead of raising `SRIMOutputParseError`.
+
 ## [0.6.0] - 2026-11-03
 
 Changes since pysrim 0.5.10. See
