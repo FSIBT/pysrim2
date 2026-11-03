@@ -10,10 +10,22 @@ import numpy as np
 
 from .core.ion import Ion
 
-# Valid double_regex 4, 4.0, .4, 4.0e100
-double_regex = r'[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?'
+# Valid double_regex 4, 4.0, .4, 4.0e100, and comma decimals (4,0 / 4,0E+02)
+# as written by SRIM under locales that use a comma as decimal separator
+double_regex = r'[-+]?(?:\d+(?:[.,]\d*)?|[.,]\d+)(?:[eE][-+]?\d+)?'
 symbol_regex = r'[A-Z][a-z]?'
 int_regex = r'[+-]?\d+'
+
+
+def _to_float(token):
+    """Convert a SRIM numeric token to float, accepting ``,`` as decimal mark.
+
+    SRIM running under a locale with a decimal comma writes ``1,234E+02``.
+    This avoids touching the process-wide locale.
+    """
+    if isinstance(token, (bytes, bytearray)):
+        token = bytes(token).decode('latin-1')
+    return float(token.replace(',', '.'))
 
 
 class SRIMOutputParseError(Exception):
@@ -31,7 +43,7 @@ class SRIM_Output(object):
         match = re.search(ion_regex.encode('utf-8'), output)
         if match:
             symbol = str(match.group(1).decode('utf-8'))
-            energy = float(match.group(2)) #keV
+            energy = _to_float(match.group(2)) #keV
             return Ion(symbol, 1000.0 * energy)
         raise SRIMOutputParseError("unable to extract ion from file")
 
@@ -68,7 +80,7 @@ class SRIM_Output(object):
         match = re.search(br'Total Ions calculated\s+=(\d+.\d+)', output)
         if match:
             # Cast string -> float -> round down to nearest int
-            return int(float(match.group(1)))
+            return int(_to_float(match.group(1)))
         raise SRIMOutputParseError("unable to extract total ions from file")
 
     def _read_table(self, output):
@@ -83,7 +95,7 @@ class SRIM_Output(object):
             header = None
 
             # Data
-            data = np.genfromtxt(BytesIO(output[match.end():]), max_rows=100)
+            data = np.genfromtxt(BytesIO(output[match.end():].replace(b',', b'.')), max_rows=100)
             return data
         raise SRIMOutputParseError("unable to extract table from file")
 
@@ -539,7 +551,7 @@ class Collision:
                  target_inter,
                  cascade) = self._read_cascade(lines)
             else:
-                target_disp = float(tokens[8])
+                target_disp = _to_float(tokens[8])
                 target_vac = 0
                 target_replac = 0
                 target_inter = 0
@@ -547,13 +559,13 @@ class Collision:
 
             collisions.append({
                 'ion_number': int(tokens[0]),
-                'kinetic_energy': float(tokens[1]),
-                'depth': float(tokens[2]),
-                'lat_y_dist': float(tokens[3]),
-                'lat_z_dist': float(tokens[4]),
-                'stopping_energy': float(tokens[5]),
+                'kinetic_energy': _to_float(tokens[1]),
+                'depth': _to_float(tokens[2]),
+                'lat_y_dist': _to_float(tokens[3]),
+                'lat_z_dist': _to_float(tokens[4]),
+                'stopping_energy': _to_float(tokens[5]),
                 'atom': re.search("([A-Z][a-z]?)", tokens[6]).group(1),
-                'recoil_energy': float(tokens[7]),
+                'recoil_energy': _to_float(tokens[7]),
                 'target_disp': target_disp,
                 'target_vac': target_vac,
                 'target_replac': target_replac,
@@ -580,18 +592,18 @@ class Collision:
 
         return {
             'ion_number': int(ion_number),
-            'displacements': float(matches[0]),
-            'avg_displacements': float(matches[1]),
-            'replacements': float(matches[2]),
-            'avg_replacements': float(matches[3]),
-            'vacancies': float(matches[4]),
-            'avg_vacancies': float(matches[5]),
-            'interstitials': float(matches[6]),
-            'avg_interstitials': float(matches[7]),
-            'sputtered_atoms': float(matches[8]),
-            'avg_sputtered_atoms': float(matches[9]),
-            'transmitted_atoms': float(matches[10]),
-            'avg_transmitted_atoms': float(matches[11]),
+            'displacements': _to_float(matches[0]),
+            'avg_displacements': _to_float(matches[1]),
+            'replacements': _to_float(matches[2]),
+            'avg_replacements': _to_float(matches[3]),
+            'vacancies': _to_float(matches[4]),
+            'avg_vacancies': _to_float(matches[5]),
+            'interstitials': _to_float(matches[6]),
+            'avg_interstitials': _to_float(matches[7]),
+            'sputtered_atoms': _to_float(matches[8]),
+            'avg_sputtered_atoms': _to_float(matches[9]),
+            'transmitted_atoms': _to_float(matches[10]),
+            'avg_transmitted_atoms': _to_float(matches[11]),
             'collisions': collisions
         }
 
@@ -617,10 +629,10 @@ class Collision:
             cascade.append({
                 'recoil': int(tokens[0]),
                 'atom': int(tokens[1]),
-                'recoil_energy': float(tokens[2]),
-                'position': np.array([float(tokens[3]),
-                                      float(tokens[4]),
-                                      float(tokens[5])]),
+                'recoil_energy': _to_float(tokens[2]),
+                'position': np.array([_to_float(tokens[3]),
+                                      _to_float(tokens[4]),
+                                      _to_float(tokens[5])]),
                 'vac': int(tokens[6]),
                 'repl': int(tokens[7])
             })
@@ -633,10 +645,10 @@ class Collision:
 
         if tokens:
 
-            target_disp = float(tokens[2])
-            target_vac = float(tokens[3])
-            target_replac = float(tokens[4])
-            target_inter = float(tokens[5])
+            target_disp = _to_float(tokens[2])
+            target_vac = _to_float(tokens[3])
+            target_replac = _to_float(tokens[4])
+            target_inter = _to_float(tokens[5])
         else:
             target_disp = None
             target_vac = None
@@ -715,7 +727,7 @@ class SRResults(object):
         out_dict = {
             'name': match[0][0].decode('utf-8'),
             'Z1': int(match[0][1]),
-            'A1': float(match[0][2])
+            'A1': _to_float(match[0][2])
         }
         return out_dict
 
@@ -736,7 +748,8 @@ class SRResults(object):
 
         density_match = re.search(density_reexp.encode('utf-8'), output)
 
-        density = np.array([density_match.group(1),density_match.group(2)], dtype='float')
+        density = np.array([_to_float(density_match.group(1)),
+                            _to_float(density_match.group(2))])
 
         # find the target composition table
         table_regexp = r'=*\s+Target\s+Composition\s+=*\r\n(.*\r\n){3}((?:\s*.+\s\r\n)+)\s=*\r\n\s+Bragg Correction'#.format(symbol_regex, int_regex, double_regex, double_regex)#(=*)\r\n'
@@ -751,8 +764,8 @@ class SRResults(object):
         for line in target_comp:
             element = line.strip().split()
             Z = int(element[1])
-            stoich_percent = float(element[2])
-            mass_percent = float(element[3])
+            stoich_percent = _to_float(element[2])
+            mass_percent = _to_float(element[3])
             elements_dict[element[0]] = [Z, stoich_percent, mass_percent]
             #print()
 
@@ -815,12 +828,12 @@ class SRResults(object):
             #find conversion factors for all length values (current unit --> um)
             L_coeff = list(map(length_conversion, filter(length_conversion, line_array)))
 
-            energy = float(line_array[0])*E_coeff
-            Se = float(line_array[2])
-            Sn = float(line_array[3])
-            Range = float(line_array[4])*L_coeff[0]
-            long_straggle = float(line_array[6])*L_coeff[1]
-            lat_straggle = float(line_array[8])*L_coeff[2]
+            energy = _to_float(line_array[0])*E_coeff
+            Se = _to_float(line_array[2])
+            Sn = _to_float(line_array[3])
+            Range = _to_float(line_array[4])*L_coeff[0]
+            long_straggle = _to_float(line_array[6])*L_coeff[1]
+            lat_straggle = _to_float(line_array[8])*L_coeff[2]
 
             [output_array[i].append(d) for i, d in zip(range(6), [energy, Se, Sn, Range, long_straggle, lat_straggle])]
 

@@ -1,10 +1,14 @@
 import os
+import re
+import subprocess
+import sys
 
+import numpy as np
 import pytest
 
 from srim.output import (
     Ioniz, NoVacancy, Vacancy, EnergyToRecoils, Phonons, Range,
-    Results, SRIM_Output, SRResults
+    Results, SRIM_Output, SRResults, _to_float
 )
 
 TESTDATA_DIRECTORY = 'test_files'
@@ -109,3 +113,59 @@ def test_read_ion_parses_energy_formats(energy, expected_ev):
     ion = SRIM_Output()._read_ion(header)
     assert ion.symbol == "Ni"
     assert ion.energy == pytest.approx(expected_ev)
+
+
+def test_to_float_accepts_comma_and_dot_decimals():
+    assert _to_float(b"1,5E+02") == 150.0
+    assert _to_float("1,5E+02") == 150.0
+    assert _to_float(b"1.5E+02") == 150.0
+    assert _to_float(" 2,5 ") == 2.5
+
+
+@pytest.mark.parametrize("cls", [Ioniz, Phonons, Vacancy, Range,
+                                 NoVacancy, EnergyToRecoils])
+def test_comma_decimal_tables_match_dot_decimal(cls):
+    dot = cls(os.path.join(TESTDATA_DIRECTORY, "1"))
+    comma = cls(os.path.join(TESTDATA_DIRECTORY, "comma"))
+    for name in ("depth", "ions", "recoils", "number", "energy_ions",
+                 "energy_recoils", "vacancies"):
+        if hasattr(dot, name):
+            np.testing.assert_allclose(getattr(comma, name), getattr(dot, name))
+
+
+def test_comma_decimal_range_total_ions_and_ion():
+    dot = Range(os.path.join(TESTDATA_DIRECTORY, "1"))
+    comma = Range(os.path.join(TESTDATA_DIRECTORY, "comma"))
+    assert comma.num_ions == dot.num_ions == 1000
+    assert comma.ion.energy == dot.ion.energy
+
+
+def test_comma_decimal_results_load():
+    results = Results(os.path.join(TESTDATA_DIRECTORY, "comma"))
+    assert results.range.depth.shape == (100,)
+
+
+def test_comma_decimal_sr_results(tmp_path):
+    src = os.path.join(TESTDATA_DIRECTORY, "SRIM", "SR_OUTPUT.txt")
+    raw = open(src, "rb").read()
+    lines = [
+        line if b"SRIM-" in line
+        else re.sub(rb"(?<=\d)\.(?=\d|[Ee][-+]?\d)", b",", line)
+        for line in raw.split(b"\n")
+    ]
+    (tmp_path / "SR_OUTPUT.txt").write_bytes(b"\n".join(lines))
+    assert b"," in lines[9] + b"".join(lines)
+    dot = SRResults(os.path.join(TESTDATA_DIRECTORY, "SRIM"))
+    comma = SRResults(str(tmp_path))
+    assert comma.ion == dot.ion
+    assert comma.target == dot.target
+    np.testing.assert_allclose(comma.data, dot.data)
+
+
+def test_importing_output_does_not_change_locale():
+    code = (
+        "import locale; before = locale.setlocale(locale.LC_NUMERIC); "
+        "import srim.output; "
+        "assert locale.setlocale(locale.LC_NUMERIC) == before"
+    )
+    subprocess.run([sys.executable, "-c", code], check=True)
