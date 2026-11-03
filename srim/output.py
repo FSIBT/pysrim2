@@ -518,14 +518,14 @@ class Collision:
 
         # Skip Ion Header
         for line in lines:
-            if re.match("^-+\r$", line):
+            if re.match(r"^-+\r$", line):
                 break
 
         collisions = []
 
         # Reads collisions for an ion
         for line in lines:
-            if re.match("^=+\r$", line):
+            if re.match(r"^=+\r$", line):
                 break
 
             tokens = line.split(chr(179))[1:-1]
@@ -570,7 +570,7 @@ class Collision:
 
         footer = ""
         for line in lines:
-            if re.match("^=+\r$", line):
+            if re.match(r"^=+\r$", line):
                 break
             footer += line
 
@@ -598,7 +598,7 @@ class Collision:
     def _read_cascade(self, lines):
         line = next(lines)
 
-        assert re.match("^=+\r$", line)
+        assert re.match(r"^=+\r$", line)
 
 
         line = next(lines)
@@ -609,7 +609,7 @@ class Collision:
 
         cascade = []
         for line in lines:
-            if re.match("^=+\r$", line):
+            if re.match(r"^=+\r$", line):
                 break
             tokens = line.split()[1:-1]
 
