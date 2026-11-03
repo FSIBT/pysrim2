@@ -133,21 +133,22 @@ def test_to_float_accepts_comma_and_dot_decimals():
     assert _to_float(" 2,5 ") == 2.5
 
 
-@pytest.mark.parametrize("cls", [Ioniz, Phonons, Vacancy, Range, NoVacancy, EnergyToRecoils])
-def test_comma_decimal_tables_match_dot_decimal(cls):
+@pytest.mark.parametrize(
+    "cls, names",
+    [
+        (Ioniz, ("depth", "ions", "recoils")),
+        (Phonons, ("depth", "ions", "recoils")),
+        (Vacancy, ("depth", "knock_ons", "vacancies")),
+        (Range, ("depth", "ions", "elements")),
+        (NoVacancy, ("depth", "number")),
+        (EnergyToRecoils, ("depth", "ions", "absorbed")),
+    ],
+)
+def test_comma_decimal_tables_match_dot_decimal(cls, names):
     dot = cls(os.path.join(TESTDATA_DIRECTORY, "1"))
     comma = cls(os.path.join(TESTDATA_DIRECTORY, "comma"))
-    for name in (
-        "depth",
-        "ions",
-        "recoils",
-        "number",
-        "energy_ions",
-        "energy_recoils",
-        "vacancies",
-    ):
-        if hasattr(dot, name):
-            np.testing.assert_allclose(getattr(comma, name), getattr(dot, name))
+    for name in names:
+        np.testing.assert_allclose(getattr(comma, name), getattr(dot, name))
 
 
 def test_comma_decimal_range_total_ions_and_ion():
