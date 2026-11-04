@@ -54,10 +54,26 @@ names the fork commit.
 
 ## Migration
 
+pysrim2 has a library (`import srim`, in your own Python) and a command line
+(`pysrim2 install`, which sets up SRIM); they are installed separately and
+most users want both. Replace the library the way you installed it:
+
 ```bash
+# uv project
+uv remove pysrim && uv add pysrim2
+# uv venv
+uv venv && source .venv/bin/activate
+uv pip uninstall pysrim && uv pip install pysrim2
+# pip venv
 pip uninstall pysrim && pip install pysrim2
-# or
-uv add pysrim2
+# one-off script, nothing installed
+uv run --with pysrim2 my_simulation.py
+# the command line (does not make `import srim` available to your Python)
+uv tool install pysrim2 && pysrim2 install
 ```
 
 Imports (`from srim import TRIM, Ion, Layer, Target`) are unchanged.
+
+Linux: pysrim2 always uses its own private wine prefix and never `~/.wine`.
+If you ran pysrim with SRIM in `/tmp/srim` and a working `~/.wine`, run
+`pysrim2 install wine` once; `/tmp/srim` is still found as the SRIM location.

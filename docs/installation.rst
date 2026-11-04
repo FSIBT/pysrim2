@@ -7,10 +7,28 @@ Installation
 Install ``pysrim2`` with `uv <https://docs.astral.sh/uv/>`_ or pip. Python
 3.11 or newer is required. The import name is ``srim``.
 
-If the original ``pysrim`` is installed, remove it first, because both
-packages provide the ``srim`` module::
+pysrim2 has two parts that are installed separately, and most users want
+both: the library (``import srim``, used in your own Python code) and the
+command line (``pysrim2 install``, which sets up SRIM itself).
 
-   pip uninstall pysrim && pip install pysrim2
+The library, depending on how you work:
+
+.. code-block:: bash
+
+   uv add pysrim2                                   # in a uv project
+   uv venv && source .venv/bin/activate && uv pip install pysrim2   # uv venv
+   python -m venv .venv && source .venv/bin/activate && pip install pysrim2   # pip venv
+   uv run --with pysrim2 my_simulation.py           # one-off script, nothing installed
+
+The command line (it does not make ``import srim`` available to your own
+Python)::
+
+   uv tool install pysrim2 && pysrim2 install
+
+If the original ``pysrim`` is installed, remove it first, because both
+packages provide the ``srim`` module: ``uv remove pysrim && uv add pysrim2``
+in a uv project, ``uv pip uninstall pysrim && uv pip install pysrim2`` in a
+uv venv, or ``pip uninstall pysrim && pip install pysrim2`` with pip.
 
 .. admonition:: SRIM licence
 
@@ -34,8 +52,7 @@ With no component names, ``pysrim2 install`` picks the right set for your
 platform (see below) and also installs the :doc:`agent skill <agents>`.
 Steps that need administrator rights ask for confirmation first (or run
 with ``--yes``); ``--dry-run`` never changes anything. See :doc:`cli` for
-all options and exit codes. Use ``uv add pysrim2`` instead if you only
-want the library in a project.
+all options and exit codes.
 
 Windows (native)
 ----------------
@@ -43,8 +60,9 @@ Windows (native)
 ``pysrim2 install`` runs two steps: ``srim`` downloads SRIM-2013 into
 ``%LOCALAPPDATA%\pysrim2\srim``, and ``vb5`` puts the Visual Basic 5 runtime
 and the OCX controls TRIM needs next to it. Registering the OCX controls
-(``regsvr32``) needs administrator rights, so you get an admin prompt
-(or pass ``--yes`` from an elevated terminal).
+(``regsvr32``) needs administrator rights. pysrim2 does not elevate by
+itself: run ``pysrim2 install vb5`` from an elevated (Administrator)
+terminal. The confirmation prompt (or ``--yes``) is not a UAC prompt.
 
 Linux (native, through wine)
 ----------------------------
@@ -54,7 +72,7 @@ parts:
 
 1. *wine packages.* It installs wine with 32-bit support, ``xvfb-run``,
    ``cabextract``, ``unzip`` and ``curl`` through your package manager
-   (``apt``, ``dnf``, ``zypper`` or ``pacman``; Arch is untested). This
+   (``apt``, ``dnf``, ``zypper`` or ``pacman``; Fedora and Arch are untested). This
    needs ``sudo`` and asks first. On other distributions install them
    yourself, see the `WineHQ download page
    <https://www.winehq.org/download>`_.
@@ -70,8 +88,11 @@ macOS
 -----
 
 Native SRIM is not supported on macOS. Use the :doc:`container`; running
-``pysrim2 install`` installs Podman (never Docker Desktop), starts a Podman
-machine and pulls the image.
+``pysrim2 install`` uses Docker if it is already running (with the seccomp
+profile on Docker 29 and newer, see :doc:`container`). If there is no
+container runtime it installs Podman, starts a Podman machine and pulls the
+image. It never installs Docker Desktop, which needs a paid subscription for
+larger organisations and a GUI installation with administrator rights.
 
 Where things live
 -----------------
