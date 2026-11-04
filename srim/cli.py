@@ -11,6 +11,7 @@ from srim.installer import container, skill
 from srim.installer import steps as steps_module
 from srim.installer.srim_install import NOTICE, SrimInstallError
 from srim.installer.steps import COMPONENTS, ComponentUnavailable
+from srim.installer.vb5 import Vb5SetupError
 from srim.installer.wine import WINE_MANUAL_HINT, WineSetupError, distro_wine_commands, wine_status
 from srim.paths import srim_dir
 
@@ -20,6 +21,8 @@ EXIT_ADMIN_SKIPPED = 2
 INSTALL_ERRORS = (
     SrimInstallError,
     WineSetupError,
+    container.ContainerError,
+    Vb5SetupError,
     skill.SkillInstallError,
     ValueError,
     subprocess.SubprocessError,

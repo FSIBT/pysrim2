@@ -341,3 +341,20 @@ def test_doctor_prefix_fix_on_unknown_distro_without_wine(monkeypatch, tmp_path,
     checks = _linux_doctor(monkeypatch, tmp_path, capsys, [])
     assert "pysrim2 install wine" not in checks["wine-prefix"]["fix"]
     assert "wiki.winehq.org" in checks["wine-prefix"]["fix"]
+
+
+@pytest.mark.parametrize(
+    "make",
+    [
+        lambda: cli.container.ContainerError("podman pull failed"),
+        lambda: cli.Vb5SetupError("regsvr32 failed"),
+    ],
+    ids=["container", "vb5"],
+)
+def test_container_and_vb5_errors_are_reported_without_traceback(rec, capsys, make):
+    def boom():
+        raise make()
+
+    steps.register("srim", lambda: Step("srim", "s", lambda: False, lambda: [], boom))
+    assert cli.main(["install", "srim"]) == 1
+    assert "[fail] srim:" in capsys.readouterr().err
