@@ -5,6 +5,7 @@ installs Docker Desktop. The image is ``linux/amd64`` only.
 """
 
 import functools
+import importlib.resources
 import re
 import shutil
 import subprocess
@@ -14,10 +15,12 @@ import srim
 from srim.installer import steps
 from srim.installer.steps import Step, register
 from srim.installer.wine import distro_ids
+from srim.paths import data_dir
 
 IMAGE = "ghcr.io/fsibt/pysrim2"
 PLATFORM = "linux/amd64"
 RUNTIMES = ("podman", "docker")
+SECCOMP_PROFILE = "seccomp-docker.json"
 PODMAN_DOCS = "https://podman.io/docs/installation"
 INFO_TIMEOUT_SECONDS = 10
 INSPECT_TIMEOUT_SECONDS = 10
@@ -172,9 +175,34 @@ def install_runtime() -> None:
         print(WINDOWS_HINT)
 
 
+def seccomp_profile_path() -> Path:
+    """Copy the packaged Docker seccomp profile into ``data_dir()`` and return its path.
+
+    Docker 29's built-in seccomp profile blocks the 32-bit socket calls wine
+    makes ("wine: socket: Function not implemented"); this one (Docker's
+    current default profile) allows them. Podman does not need it.
+    """
+    target = data_dir() / SECCOMP_PROFILE
+    source = importlib.resources.files("srim") / "data" / SECCOMP_PROFILE
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(source.read_bytes())
+    return target
+
+
 def run_hint(runtime: str, tag: str | None = None) -> str:
-    """Return the command that runs a script in the image, using ``runtime``."""
-    return f'{runtime} run --rm -v "$PWD:/data" {image_ref(tag or image_tag())} python /data/run.py'
+    """Return the command that runs a script in the image, using ``runtime``.
+
+    Podman mounts ``/data`` with ``:Z`` (SELinux relabel); Docker needs the
+    seccomp profile from ``seccomp_profile_path()``.
+    """
+    ref = image_ref(tag or image_tag())
+    if runtime == "docker":
+        profile = seccomp_profile_path()
+        return (
+            f'docker run --rm --security-opt seccomp="{profile}" '
+            f'-v "$PWD:/data" {ref} python /data/run.py'
+        )
+    return f'{runtime} run --rm -v "$PWD:/data:Z" {ref} python /data/run.py'
 
 
 # --- steps ------------------------------------------------------------------
@@ -214,6 +242,9 @@ def _pull() -> None:
     if runtime is None:
         raise ContainerError("no container runtime found; run: pysrim2 install runtime")
     pull_image(runtime, image_tag())
+    if runtime == "docker":
+        seccomp_profile_path()
+    print(f"Run a script in the image with:\n  {run_hint(runtime)}")
 
 
 def _image_step() -> Step:

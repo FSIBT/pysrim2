@@ -27,12 +27,22 @@ The import name is unchanged: `import srim`. Because both packages
 provide the `srim` module, `pysrim2` cannot be installed alongside the
 original `pysrim`.
 
-Container: `docker run --rm -v "$PWD:/data" ghcr.io/fsibt/pysrim2 python run.py`
-(linux/amd64; pysrim2, SRIM-2013 and wine). Run it as the image's default
-user (uid 1000); do not pass `-u`, because wine and SRIM files belong to that user.
-Docker 29 and later block the 32-bit socket calls wine needs in their default
-seccomp profile (wine fails with "socket: Function not implemented"); add
-`--security-opt seccomp=unconfined` to `docker run` there. Podman is not affected.
+Container (linux/amd64; pysrim2, SRIM-2013 and wine). Run it as the image's
+default user (uid 1000); do not pass `-u`, because wine and SRIM files belong to
+that user. With Podman (the default; `pysrim2 install runtime` installs it):
+
+    podman run --rm -v "$PWD:/data:Z" ghcr.io/fsibt/pysrim2 python /data/run.py
+
+With Docker, pass the seccomp profile that ships with pysrim2
+(`pysrim2 install image` copies it to the data directory, or use
+`srim/data/seccomp-docker.json` from the repository):
+
+    docker run --rm --security-opt seccomp=/path/to/seccomp-docker.json \
+      -v "$PWD:/data" ghcr.io/fsibt/pysrim2 python /data/run.py
+
+Docker 29's built-in seccomp profile blocks the 32-bit socket calls wine makes
+(it fails with "socket: Function not implemented"); the shipped profile is
+Docker's current default profile, which allows them.
 
 Documentation: <https://pysrim2.readthedocs.io/en/latest/>
 

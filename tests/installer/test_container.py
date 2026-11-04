@@ -1,3 +1,4 @@
+import json
 import subprocess
 
 import pytest
@@ -141,10 +142,44 @@ def test_runtime_install_commands_unknown_distro(monkeypatch, tmp_path):
     assert container.PODMAN_DOCS in hint
 
 
-def test_run_hint():
-    assert container.run_hint("podman", "0.7.0") == (
-        'podman run --rm -v "$PWD:/data" ghcr.io/fsibt/pysrim2:0.7.0 python /data/run.py'
+def test_run_hint_podman_relabels_and_has_no_seccomp_flag():
+    hint = container.run_hint("podman", "0.7.0")
+    assert hint == (
+        'podman run --rm -v "$PWD:/data:Z" ghcr.io/fsibt/pysrim2:0.7.0 python /data/run.py'
     )
+    assert "seccomp" not in hint
+
+
+def test_run_hint_docker_uses_the_profile(monkeypatch, tmp_path):
+    monkeypatch.setenv("PYSRIM2_HOME", str(tmp_path))
+    hint = container.run_hint("docker", "0.7.0")
+    profile = tmp_path / "seccomp-docker.json"
+    assert f'--security-opt seccomp="{profile}"' in hint
+    assert hint.endswith('-v "$PWD:/data" ghcr.io/fsibt/pysrim2:0.7.0 python /data/run.py')
+    assert "unconfined" not in hint
+    assert profile.is_file()
+
+
+def test_seccomp_profile_is_valid_and_copied(monkeypatch, tmp_path):
+    monkeypatch.setenv("PYSRIM2_HOME", str(tmp_path / "home"))
+    path = container.seccomp_profile_path()
+    assert path == tmp_path / "home" / "seccomp-docker.json"
+    profile = json.loads(path.read_text())
+    assert profile["defaultAction"] and profile["syscalls"]
+    assert "moby/profiles" in profile["_comment"]
+
+
+def test_pull_writes_profile_only_for_docker(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("PYSRIM2_HOME", str(tmp_path))
+    monkeypatch.setattr(container, "pull_image", lambda runtime, tag: None)
+    [image] = steps.plan(["image"])
+    monkeypatch.setattr(container, "find_runtime", lambda: "podman")
+    image.run()
+    assert not (tmp_path / "seccomp-docker.json").exists()
+    assert ":/data:Z" in capsys.readouterr().out
+    monkeypatch.setattr(container, "find_runtime", lambda: "docker")
+    image.run()
+    assert (tmp_path / "seccomp-docker.json").is_file()
 
 
 def test_run_runtime_commands_without_shell(monkeypatch):
