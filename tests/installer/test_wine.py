@@ -88,7 +88,9 @@ def test_setup_runs_recipe_and_copies_dlls(tmp_path, fake_system):
 
 
 def test_setup_without_xvfb_and_with_cabextract(tmp_path, fake_system, monkeypatch):
-    monkeypatch.setattr(shutil, "which", fake_which({"wine", "cabextract", "winetricks", "wget"}))
+    monkeypatch.setattr(
+        shutil, "which", fake_which({"wine", "cabextract", "winetricks", "wget", "bash"})
+    )
 
     def run(cmd, **kwargs):
         fake_system.append((cmd, kwargs))
@@ -129,12 +131,24 @@ def test_setup_checksum_mismatch(tmp_path, fake_system, monkeypatch):
     assert not (tmp_path / "wine" / MARKER_NAME).exists()
 
 
-def test_setup_prefers_system_winetricks(tmp_path, fake_system, monkeypatch):
-    monkeypatch.setattr(shutil, "which", fake_which({"wine", "7z", "winetricks", "curl"}))
+def test_setup_ignores_winetricks_on_path(tmp_path, fake_system, monkeypatch):
+    monkeypatch.setattr(shutil, "which", fake_which({"wine", "7z", "winetricks", "curl", "bash"}))
     setup_wine_prefix(tmp_path / "wine")
     cmds = [c for c, _ in fake_system]
-    assert cmds[4][0] == "/usr/bin/winetricks"
-    assert not list((tmp_path / "home" / "cache").glob("winetricks-*"))
+    assert "/usr/bin/winetricks" not in [c[0] for c in cmds]
+    assert cmds[4][0] == "/usr/bin/bash"
+    assert cmds[4][1] == str(tmp_path / "home" / "cache" / f"winetricks-{wine.WINETRICKS_TAG}")
+
+
+def test_wine_status_reports_pinned_winetricks_only(tmp_path, monkeypatch, fake_system):
+    monkeypatch.setattr(shutil, "which", fake_which({"wine", "winetricks"}))
+    assert wine_status().winetricks is None
+    script = tmp_path / "home" / "cache" / f"winetricks-{wine.WINETRICKS_TAG}"
+    script.parent.mkdir(parents=True)
+    script.write_bytes(FAKE_EXE)
+    assert wine_status().winetricks == str(script)
+    script.write_bytes(b"tampered")
+    assert wine_status().winetricks is None
 
 
 def test_download_failure_happens_before_wine_is_touched(tmp_path, fake_system, monkeypatch):

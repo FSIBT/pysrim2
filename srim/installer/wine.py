@@ -90,13 +90,22 @@ def _prefix_ready(prefix: Path) -> bool:
     )
 
 
+def _pinned_winetricks() -> str | None:
+    """Return the path of the downloaded, verified winetricks, or None if not fetched yet."""
+    script = _winetricks_script()
+    try:
+        return str(script) if script.is_file() and _sha256(script) == WINETRICKS_SHA256 else None
+    except OSError:
+        return None
+
+
 def wine_status() -> WineStatus:
     """Report which wine tools are on PATH and whether the prefix is ready."""
     return WineStatus(
         wine=shutil.which("wine"),
         xvfb_run=shutil.which("xvfb-run"),
         extractor=_find_extractor(),
-        winetricks=shutil.which("winetricks"),
+        winetricks=_pinned_winetricks(),
         downloader=_find_downloader(),
         prefix_ready=_prefix_ready(wine_prefix()),
     )
@@ -308,12 +317,17 @@ def _run(cmd: list[str], env: dict[str, str], timeout: float = SETUP_TIMEOUT_SEC
             raise error(message) from exc
 
 
+def _winetricks_script() -> Path:
+    """Return where pysrim2's pinned copy of winetricks lives (it may not exist yet)."""
+    return data_dir() / "cache" / f"winetricks-{WINETRICKS_TAG}"
+
+
 def _winetricks_command() -> list[str]:
-    """Return the command that runs winetricks: the system one, else a pinned download."""
-    system = shutil.which("winetricks")
-    if system:
-        return [system]
-    script = data_dir() / "cache" / f"winetricks-{WINETRICKS_TAG}"
+    """Return the command that runs winetricks: always our pinned, verified copy.
+
+    A winetricks on PATH is never used: old copies do not know the verbs we need.
+    """
+    script = _winetricks_script()
     if not script.is_file() or _sha256(script) != WINETRICKS_SHA256:
         script.parent.mkdir(parents=True, exist_ok=True)
         _fetch(WINETRICKS_URL, script, WINETRICKS_SHA256, "winetricks")
