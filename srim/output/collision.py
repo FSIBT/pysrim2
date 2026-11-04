@@ -5,6 +5,8 @@ import re
 
 import numpy as np
 
+from ..core.elementdb import ElementDB
+from ._chunks import concat_chunks, iter_lines, iter_row_chunks
 from ._common import SRIMOutputParseError, _to_float, double_regex
 
 #: SRIM writes ``COLLISON.txt`` in code page 437; its box-drawing characters separate columns
@@ -15,6 +17,27 @@ _SEP = "│"
 _RECOIL_SEP = "█"
 _SYMBOL = re.compile(r"[A-Z][a-z]?")
 _NUMBER = re.compile(double_regex)
+
+EVENT_COLUMNS = [
+    "ion",
+    "kind",
+    "energy_keV",
+    "depth_A",
+    "y_A",
+    "z_A",
+    "atom",
+    "recoil_energy_eV",
+    "target_displacements",
+    "target_vacancies",
+    "target_replacements",
+    "target_interstitials",
+    "atomic_number",
+    "electronic_stopping_eV_per_A",
+    "vacancy",
+    "replacement",
+]
+_EVENT_DTYPES = [int, object, float, float, float, float, object, float, float, float, float,
+                 float, float, float, float, float]  # fmt: skip
 
 
 def _parse_collision(tokens):
@@ -75,6 +98,7 @@ def _records(lines):
     collision = None
     recoils = []
     summary = None
+    closed = True
     footer = None  # [first line, [lines]]
 
     def pending():
@@ -94,15 +118,20 @@ def _records(lines):
         if first == _SEP:
             tokens = line.split(_SEP)[1:-1]
             if tokens and "Summary of Above Cascade" in tokens[0]:
-                summary = [_to_float(t) for t in tokens[1:6]] if len(tokens) >= 6 else None
+                # a second summary for one collision (SRIM lost the header line of a
+                # cascade) belongs to no collision and is skipped
+                if collision is not None and summary is None and len(tokens) >= 6:
+                    summary = [_to_float(t) for t in tokens[1:6]]
+                closed = True
                 continue
             if collision is not None:
                 yield pending()
-            collision, recoils, summary = _parse_collision(tokens), [], None
+            collision, recoils, summary, closed = _parse_collision(tokens), [], None, False
         elif first == _RECOIL_SEP:
-            # SRIM sometimes leaves a stray recoil line (recoil number 0) between two ions:
-            # it belongs to no collision and is skipped
-            if collision is not None:
+            # SRIM sometimes leaves stray recoil lines (recoil number 0) of a cascade whose
+            # header is missing, after the summary of a cascade or between two ions: they
+            # belong to no collision and are skipped
+            if collision is not None and not closed:
                 recoils.append(_parse_recoil(line))
         elif line.startswith("- For Ion"):
             if collision is not None:
@@ -144,13 +173,27 @@ def _collision_dict(collision, recoils, summary):
     }
 
 
+_SYMBOLS = {}
+
+
+def _symbol(atomic_number):
+    if atomic_number not in _SYMBOLS:
+        _SYMBOLS[atomic_number] = ElementDB.lookup(atomic_number)["symbol"]
+    return _SYMBOLS[atomic_number]
+
+
+def _as_int(value):
+    return None if value is None else int(value)
+
+
 class Collision:
     """Reads the SRIM Collisions file.
 
     This is the most important file in my opinion. It records every
     single collision and its energies. The file will get huge for
-    simulations with many collisions, so ``collision[i]`` reads only the block
-    of ion ``i``.
+    simulations with many collisions, so it is never read as a whole:
+    :meth:`iter_events` and :attr:`df` stream it line by line, and ``collision[i]``
+    reads only the block of ion ``i``.
 
     The file is decoded as ``cp437`` and split at SRIM's column separators (the
     box-drawing characters), not at white space.
@@ -168,6 +211,12 @@ class Collision:
     the ion's ``collisions`` and its totals (``displacements``, ``avg_displacements``,
     ``replacements``, ``vacancies``, ``interstitials``, ``sputtered_atoms``,
     ``transmitted_atoms``, each also with an ``avg_`` variant).
+
+    Attributes
+    ----------
+    df : :class:`pandas.DataFrame`
+        All events (see :meth:`iter_events`), built chunk-wise from the stream; empty if
+        the file has no collisions. The columns are those of :meth:`iter_events`.
     """
 
     def __init__(self, directory, filename="COLLISON.txt"):
@@ -219,6 +268,96 @@ class Collision:
             raise SRIMOutputParseError("unable to extract ion summary from file")
         footer["collisions"] = collisions
         return footer
+
+    def iter_events(self):
+        """Generate every event in the file as a flat :obj:`dict`, streaming the file.
+
+        Each ion collision is yielded (``kind="ion"``) followed by the recoils of its
+        cascade (``kind="recoil"``), in file order. Keys, and the part of the file they
+        come from:
+
+        ===========================  =============================================
+        ``ion``                      ion number (int) of the collision line
+        ``kind``                     ``"ion"`` for a line of the collision table,
+                                     ``"recoil"`` for a line of a cascade block
+        ``energy_keV``               ion: ion energy [keV]; recoil: ``None``
+        ``depth_A``                  ion: depth; recoil: ``X (A)`` of the cascade line
+        ``y_A``, ``z_A``             lateral position [Ang] (both kinds)
+        ``atom``                     ion: symbol of the atom hit; recoil: symbol of
+                                     the recoil (from its atomic number)
+        ``recoil_energy_eV``         ion: energy given to the atom hit;
+                                     recoil: ``Atom Energy(eV)``
+        ``target_displacements``     ion: totals of the ``Summary of Above Cascade``
+        ``target_vacancies``         line of that collision (in files without full
+        ``target_replacements``      cascades: the columns of the collision line);
+        ``target_interstitials``     ``None`` if SRIM wrote none; recoil: ``None``
+        ``atomic_number``            recoil: Z; ion: ``None``
+        ``electronic_stopping_eV_per_A``  ion: ``Se (eV/A)``; recoil: ``None``
+        ``vacancy``, ``replacement``  recoil: the ``Vac`` and ``Repl`` flags
+                                     (0 or 1); ion: ``None``
+        ===========================  =============================================
+
+        Recoil lines that belong to no collision (SRIM writes some with recoil number 0
+        when the header line of a cascade is lost) and summary lines without a collision
+        are skipped.
+
+        Cascade positions are printed by SRIM with fewer digits than the collision
+        lines (the depth ``2718.E+00`` against ``27179.E-01``).
+        """
+        for record in _records(iter_lines(self.filename, ENCODING)):
+            if record[0] != "ion":
+                continue
+            _, c, recoils, summary = record
+            if c["cascade_start"]:
+                targets = summary[1:5] if summary else [None] * 4
+            else:
+                values = (c["summary"] or []) + [None] * 4
+                targets = values[:4]
+            yield {
+                "ion": c["ion_number"],
+                "kind": "ion",
+                "energy_keV": c["kinetic_energy"],
+                "depth_A": c["depth"],
+                "y_A": c["lat_y_dist"],
+                "z_A": c["lat_z_dist"],
+                "atom": c["atom"],
+                "recoil_energy_eV": c["recoil_energy"],
+                "target_displacements": _as_int(targets[0]),
+                "target_vacancies": _as_int(targets[1]),
+                "target_replacements": _as_int(targets[2]),
+                "target_interstitials": _as_int(targets[3]),
+                "atomic_number": None,
+                "electronic_stopping_eV_per_A": c["stopping_energy"],
+                "vacancy": None,
+                "replacement": None,
+            }
+            for r in recoils:
+                yield {
+                    "ion": c["ion_number"],
+                    "kind": "recoil",
+                    "energy_keV": None,
+                    "depth_A": float(r["position"][0]),
+                    "y_A": float(r["position"][1]),
+                    "z_A": float(r["position"][2]),
+                    "atom": _symbol(r["atom"]),
+                    "recoil_energy_eV": r["recoil_energy"],
+                    "target_displacements": None,
+                    "target_vacancies": None,
+                    "target_replacements": None,
+                    "target_interstitials": None,
+                    "atomic_number": r["atom"],
+                    "electronic_stopping_eV_per_A": None,
+                    "vacancy": r["vac"],
+                    "replacement": r["repl"],
+                }
+
+    @property
+    def df(self):
+        """:class:`pandas.DataFrame` of :meth:`iter_events`, one row per event"""
+        rows = ([event[c] for c in EVENT_COLUMNS] for event in self.iter_events())
+        return concat_chunks(
+            iter_row_chunks(rows, EVENT_COLUMNS, _EVENT_DTYPES), EVENT_COLUMNS, _EVENT_DTYPES
+        )
 
     def __getitem__(self, i):
         index = self._ion_index

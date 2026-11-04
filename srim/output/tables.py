@@ -11,6 +11,7 @@ from ._common import (
     _to_float,
     double_regex,
 )
+from .collision import Collision
 from .events import EXYZ, Backscat, Sputter, Transmit
 from .range3d import Range3D
 
@@ -28,6 +29,7 @@ _LAZY_OUTPUTS = (
     ("backscat", Backscat, "BACKSCAT.txt"),
     ("transmit", Transmit, "TRANSMIT.txt"),
     ("sputter", Sputter, "SPUTTER.txt"),
+    ("collision", Collision, "COLLISON.txt"),
 )
 
 
@@ -55,6 +57,8 @@ class Results:
         :class:`srim.output.Backscat`, ``TRANSMIT.txt`` by :class:`srim.output.Transmit`,
         ``SPUTTER.txt`` by :class:`srim.output.Sputter` (``exyz``, ``backscat``,
         ``transmit``, ``sputter``; each ``None`` if the file is absent)
+      - ``COLLISON.txt`` handled by :class:`srim.output.Collision` (``collision``;
+        ``None`` if absent; opening it reads only the header; ``collision.df`` streams the file)
     """
 
     def __init__(self, directory):
@@ -92,6 +96,11 @@ class Results:
         return self._get_lazy("range3d")
 
     @property
+    def collision(self):
+        """:class:`srim.output.Collision`, created on first access; ``None`` if absent"""
+        return self._get_lazy("collision")
+
+    @property
     def exyz(self):
         """:class:`srim.output.EXYZ`, parsed on first access; ``None`` if absent"""
         return self._get_lazy("exyz")
@@ -118,7 +127,8 @@ class Results:
         -------
         :obj:`dict`
             Keys ``ioniz``, ``vacancy``, ``novac``, ``e2recoil``, ``phonon``,
-            ``range``, ``range3d``, ``exyz``, ``backscat``, ``transmit``, ``sputter``;
+            ``range``, ``range3d``, ``exyz``, ``backscat``, ``transmit``, ``sputter``,
+            ``collision`` (one row per ion collision and cascade recoil; can be large);
             outputs that are missing (e.g. ``novac`` for
             Kinchin-Pease calculations) are omitted.
         """
@@ -134,6 +144,7 @@ class Results:
             "backscat": self.backscat,
             "transmit": self.transmit,
             "sputter": self.sputter,
+            "collision": self.collision,
         }
         return {key: out.df for key, out in outputs.items() if out is not None}
 
