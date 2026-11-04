@@ -35,8 +35,8 @@ def mean_depth_3d(directory):
 
 def test_ni_in_ni_quick_kp():
     ion = Ion("Ni", energy=3.0e6)
-    layer = Layer.from_formula("Ni", density=8.9, width=10000.0)
-    results = TRIM(Target([layer]), ion, number_ions=10, calculation=1).run()
+    layer = Layer.from_formula("Ni", density=8.9, width=30000.0)
+    results = TRIM(Target([layer]), ion, number_ions=10, calculation=1, random_seed=12345).run()
     assert isinstance(results, Results)
     assert results.range.ions.sum() > 0
 
