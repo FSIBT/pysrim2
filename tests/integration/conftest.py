@@ -7,6 +7,10 @@ import pytest
 from srim.paths import srim_dir
 
 
+def pytest_configure(config):
+    config.addinivalue_line("markers", "srim: runs real SRIM (needs SRIM and wine, or Windows)")
+
+
 def pytest_collection_modifyitems(items):
     """Mark everything in this directory ``srim`` and skip it without SRIM."""
     missing = not (srim_dir() / "TRIM.exe").is_file()
