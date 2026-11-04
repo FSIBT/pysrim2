@@ -4,9 +4,10 @@ import argparse
 import json
 import subprocess
 import sys
+from pathlib import Path
 
 import srim
-from srim.installer import container
+from srim.installer import container, skill
 from srim.installer import steps as steps_module
 from srim.installer.srim_install import NOTICE, SrimInstallError
 from srim.installer.steps import COMPONENTS, ComponentUnavailable
@@ -19,6 +20,7 @@ EXIT_ADMIN_SKIPPED = 2
 INSTALL_ERRORS = (
     SrimInstallError,
     WineSetupError,
+    skill.SkillInstallError,
     ValueError,
     subprocess.SubprocessError,
     OSError,
@@ -33,7 +35,11 @@ def build_parser() -> argparse.ArgumentParser:
     install = sub.add_parser("install", help="install what pysrim2 needs to run SRIM")
     install.add_argument("components", nargs="*", metavar="COMPONENT", help=", ".join(COMPONENTS))
     install.add_argument("--dry-run", action="store_true", help="show every step, change nothing")
-    install.add_argument("--yes", action="store_true", help="run steps that need admin rights")
+    install.add_argument(
+        "--yes",
+        action="store_true",
+        help="run steps that need admin rights; overwrite an unmanaged skill",
+    )
     install.add_argument("--agent", choices=("claude", "all"), default="claude")
     install.add_argument("--scope", choices=("user", "project"), default="user")
 
@@ -45,6 +51,8 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     container.reset_cache()
+    if args.command == "install":
+        skill.configure(args.agent, args.scope, args.yes)
     if args.command == "install":
         return _install(args)
     return _doctor(args)
@@ -239,6 +247,20 @@ def collect_checks() -> list[dict]:
                 pkg_fix if not (status.wine and status.xvfb_run) else fix,
             ),
         ]
+    # The skill is optional: only an installed copy that is out of date is a problem.
+    candidates = skill.skill_targets("all", "user", Path.cwd()) + skill.skill_targets(
+        "claude", "project", Path.cwd()
+    )
+    installed = [t for t in candidates if (t / skill.MARKER).is_file()]
+    stale = [t for t in installed if not skill.skill_current([t])]
+    checks.append(
+        _check(
+            "agent-skill",
+            not stale,
+            ", ".join(str(t) for t in installed) or "not installed (optional)",
+            "run: pysrim2 install skill --yes",
+        )
+    )
     native_possible = system == "windows" or (status is not None and status.wine)
     if not native_possible:
         checks += _container_checks()

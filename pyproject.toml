@@ -44,6 +44,9 @@ Original = "https://gitlab.com/costrouc/pysrim"
 [tool.hatch.build.targets.wheel]
 packages = ["srim"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"skills/pysrim2" = "srim/_skill"
+
 [tool.hatch.build.targets.sdist]
 exclude = [
     "/.github",
