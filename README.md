@@ -12,6 +12,7 @@
 [![License](https://img.shields.io/pypi/l/pysrim2.svg)](https://github.com/FSIBT/pysrim2/blob/main/LICENSE)
 [![Python versions](https://img.shields.io/pypi/pyversions/pysrim2.svg)](https://pypi.org/project/pysrim2/)
 [![Downloads](https://img.shields.io/pypi/dm/pysrim2.svg)](https://pypistats.org/packages/pysrim2)
+[![Container](https://img.shields.io/badge/ghcr.io-fsibt%2Fpysrim2-blue?logo=docker)](https://github.com/FSIBT/pysrim2/pkgs/container/pysrim2)
 [![uv](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/uv/main/assets/badge/v0.json)](https://github.com/astral-sh/uv)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 [![pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit)](https://github.com/pre-commit/pre-commit)

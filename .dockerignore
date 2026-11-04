@@ -1,0 +1,17 @@
+.git
+.github
+.venv
+.eggs
+.pytest_cache
+.ruff_cache
+.superpowers
+.coverage
+coverage.xml
+dist
+docs
+examples
+test_files
+tests
+*.egg-info
+**/__pycache__
+.DS_Store
