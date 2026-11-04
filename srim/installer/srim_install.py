@@ -52,6 +52,7 @@ def install_srim(dest: Path, asset: Asset = SRIM_ASSET, *, cache: Path | None = 
         top = _unpack(zip_path, staging, asset)
         _write_markers(top, asset)
         _refuse_existing(dest)
+        _remove_empty_dir(dest)
         _replace(top, dest)
     finally:
         shutil.rmtree(staging, ignore_errors=True)
@@ -68,6 +69,15 @@ def _refuse_existing(dest: Path) -> None:
     )
 
 
+def _remove_empty_dir(dest: Path) -> None:
+    """Remove ``dest`` if it is an empty directory, so a rename onto it works on Windows."""
+    if dest.is_dir() and not any(dest.iterdir()):
+        try:
+            dest.rmdir()
+        except OSError as exc:
+            raise SrimInstallError(f"could not remove empty directory {dest}: {exc}") from exc
+
+
 def _replace(src: Path, dst: Path) -> None:
     try:
         os.replace(src, dst)
@@ -82,7 +92,10 @@ def _fetch(asset: Asset, cache: Path, dest: Path) -> Path:
     if cached.exists():
         if _problem(cached, asset) is None:
             return cached
-        cached.unlink()
+        try:
+            cached.unlink()
+        except OSError as exc:
+            raise SrimInstallError(f"could not remove corrupt cached file {cached}: {exc}") from exc
 
     failures = []
     for url in asset.urls:

@@ -377,3 +377,46 @@ def test_extract_os_error_becomes_install_error(tmp_path, fake_zip, monkeypatch)
     assert "could not extract srim.2013.zip" in str(info.value)
     assert not dest.exists()
     assert leftover_temp_dirs(tmp_path) == []
+
+
+def test_empty_dest_install_succeeds_with_windows_rename_semantics(tmp_path, fake_zip, monkeypatch):
+    # os.replace onto an existing directory fails on Windows (WinError 183) even when empty.
+    dest = tmp_path / "empty"
+    dest.mkdir()
+    asset = make_asset(fake_zip, [fake_zip.as_uri()])
+    real_replace = os.replace
+
+    def windows_replace(src, dst):
+        if Path(dst).exists():
+            raise OSError(17, "Cannot create a file when that file already exists (WinError 183)")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(srim_install.os, "replace", windows_replace)
+
+    install_srim(dest, asset, cache=tmp_path / "cache")
+
+    assert (dest / "TRIM.exe").is_file()
+    assert leftover_temp_dirs(tmp_path) == []
+
+
+def test_corrupt_cache_unlink_error_becomes_install_error(tmp_path, fake_zip, monkeypatch):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    cached = cache / ZIP_NAME
+    cached.write_bytes(b"garbage")
+    asset = make_asset(fake_zip, [fake_zip.as_uri()])
+    dest = tmp_path / "install"
+    real_unlink = Path.unlink
+
+    def locked_unlink(self, *args, **kwargs):
+        if self == cached:
+            raise PermissionError(13, "Permission denied")
+        return real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", locked_unlink)
+
+    with pytest.raises(SrimInstallError, match="Permission denied") as info:
+        install_srim(dest, asset, cache=cache)
+
+    assert str(cached) in str(info.value)
+    assert not dest.exists()
