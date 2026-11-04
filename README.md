@@ -31,14 +31,27 @@ Documentation: <https://pysrim2.readthedocs.io/en/latest/>
 
 # Installation
 
+pysrim2 has two parts that are installed separately, and most users want
+both: the library (`import srim`, used in your own Python code) and the
+command line (`pysrim2 install`, which sets up SRIM itself).
+
 ```bash
-uv tool install pysrim2       # or: pip install pysrim2
+# 1. The library, pick the way you work:
+uv add pysrim2                                  # in a uv project
+uv venv && source .venv/bin/activate && uv pip install pysrim2   # uv venv
+python -m venv .venv && source .venv/bin/activate && pip install pysrim2  # pip venv
+uv run --with pysrim2 my_simulation.py          # one-off script, nothing installed
+
+# 2. The command line, which installs SRIM (it does not make `import srim`
+#    available to your own Python):
+uv tool install pysrim2 && pysrim2 install
 pysrim2 install --dry-run     # show every step, change nothing
-pysrim2 install               # SRIM, wine (Linux) or container (macOS), agent skill
 pysrim2 doctor                # check the result
 ```
 
-If you have `pysrim` installed, remove it first:
+If you have `pysrim` installed, remove it first: in a uv project
+`uv remove pysrim && uv add pysrim2`; in a uv venv
+`uv pip uninstall pysrim && uv pip install pysrim2`; with pip
 `pip uninstall pysrim && pip install pysrim2`. Python 3.11 or newer is
 required. SRIM runs natively on Windows and (through wine, in a private prefix
 that never touches `~/.wine`) on Linux; on macOS it runs in the container
@@ -75,10 +88,9 @@ notebook
 example](https://github.com/FSIBT/pysrim2/blob/main/examples/notebooks/SiC.ipynb).
 
 Below is a hello world example of using `pysrim2` for running a TRIM
-calcualtion. Note that `/tmp/srim` is the path to the SRIM executable
-directory (`SRIM.exe` should reside in this directory). `pysrim2` will
-add all the necessary input files. If this ran successfully the
-calculation starts. With wine and `xvfb-run` installed it runs headless;
+calcualtion. `trim.run()` uses the SRIM directory that `pysrim2 install`
+set up (see `srim.paths.srim_dir()`); `pysrim2` adds all the necessary
+input files. With wine and `xvfb-run` installed it runs headless;
 otherwise a TRIM window may appear.
 
 ``` python
@@ -98,12 +110,9 @@ target = Target([layer])
 # Initialize a TRIM calculation with given target and ion for 25 ions, quick calculation
 trim = TRIM(target, ion, number_ions=25, calculation=1)
 
-# Specify the directory of SRIM.exe
-# For windows users the path will include C://...
-srim_executable_directory = "/tmp/srim"
-
-# takes about 10 seconds on my laptop
-results = trim.run(srim_executable_directory)
+# takes about 10 seconds on my laptop; uses the default SRIM directory
+# (pass a path to run() to use a SRIM installation somewhere else)
+results = trim.run()
 # If all went successfully, 25 ions were run (a TRIM window may have appeared
 # if wine or xvfb-run is not available)!
 # results is `srim.output.Results` and contains all output files parsed
@@ -118,8 +127,9 @@ all of the output files and move them to a directory of your liking.
 
 ``` python
 from srim import TRIM
+from srim.paths import srim_dir
 
-TRIM.copy_output_files("/tmp/srim", "/home/user/scratch/srim")
+TRIM.copy_output_files(srim_dir(), "/home/user/scratch/srim")
 ```
 
 ## Post processes SRIM output as numpy arrays

@@ -62,13 +62,10 @@ Concepts:
    # Initialize a TRIM calculation with given target and ion for 25 ions, quick calculation
    trim = TRIM(target, ion, number_ions=25, calculation=1)
 
-   # Specify the directory of SRIM.exe
-   # For windows users the path will include C://...
-   srim_executable_directory = '/tmp/srim'
-
-   # takes about 10 seconds on my laptop
-   results = trim.run(srim_executable_directory)
-   # If all went successfull you should have seen a TRIM window popup and run 25 ions!
+   # takes about 10 seconds on my laptop; uses the SRIM directory that
+   # ``pysrim2 install`` set up (pass a path to run() to use another one)
+   results = trim.run()
+   # If all went successfully, 25 ions were run!
 
 The following code does a quick SRIM calculation of a 3 MeV Nickel ion
 in a nickel target. We have set the displacement energy for Nickel at
@@ -79,9 +76,11 @@ copy the results to a different directory.
 
 .. code-block:: python
 
+   from srim.paths import srim_dir
+
    output_directory = '/tmp/srim_outputs'
    os.makedirs(output_directory, exist_ok=True)
-   TRIM.copy_output_files('/tmp/srim', output_directory)
+   TRIM.copy_output_files(srim_dir(), output_directory)
 
 If at a later point you would like to parse the srim calcualtions you
 can use the :class:`srim.output.Results` class to gather all the
@@ -89,8 +88,7 @@ output.
 
 .. code-block:: python
 
-   srim_executable_directory = '/tmp/srim'
-   results = Results(srim_executable_directory)
+   results = Results(srim_dir())
 
 Plotting and Analysis of Results
 --------------------------------
