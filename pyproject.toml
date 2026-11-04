@@ -30,6 +30,9 @@ dependencies = [
     "pandas",
 ]
 
+[project.scripts]
+pysrim2 = "srim.cli:main"
+
 [project.urls]
 Homepage = "https://github.com/FSIBT/pysrim2"
 Repository = "https://github.com/FSIBT/pysrim2"
