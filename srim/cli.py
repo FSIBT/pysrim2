@@ -236,7 +236,7 @@ def collect_checks() -> list[dict]:
                 "wine-prefix",
                 status.prefix_ready,
                 "ready" if status.prefix_ready else "not set up",
-                fix,
+                pkg_fix if not (status.wine and status.xvfb_run) else fix,
             ),
         ]
     native_possible = system == "windows" or (status is not None and status.wine)

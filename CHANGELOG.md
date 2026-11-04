@@ -19,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- `TRIM.run()` and `SR.run()` no longer print xvfb's "X connection to :N broken" line when SRIM exits under wine; other stderr output is kept.
+- `TRIM.run()` and `SR.run()` no longer print xvfb's "X connection to :N broken" line when SRIM exits under wine; other stderr output is kept and shown after the run. A failing run raises `srim.srim.SRIMProcessError` (a `subprocess.CalledProcessError`) whose message includes that stderr.
 - `pysrim2 install` prints `[ok] <step>: installed` (with the SRIM directory for `srim`) after each step succeeds.
 - A failed or interrupted (Ctrl-C) `pysrim2 install wine` stops the private prefix's wineserver instead of leaving wine processes running.
 - `pysrim2 install` prints a line as each long sub-step starts (wine prefix, winetricks, VB5 runtime, SRIM download/verify/unpack) instead of staying silent for minutes.

@@ -73,6 +73,7 @@ def _run_srim(executable):
     if command[0] != "xvfb-run":
         subprocess.check_call(command, env=_launch_env())
         return
+    # stderr is shown only after the run ends, not live.
     done = subprocess.run(
         command, env=_launch_env(), stderr=subprocess.PIPE, text=True, errors="replace"
     )

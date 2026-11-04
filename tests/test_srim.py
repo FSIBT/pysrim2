@@ -287,11 +287,13 @@ def test_run_srim_silent_when_only_noise(monkeypatch, capsys):
 
 
 def test_run_srim_failure_includes_remaining_stderr(monkeypatch, capsys):
+    import srim.srim as srim_module
     from srim.srim import _run_srim
 
     _fake_xvfb(monkeypatch, returncode=3, stderr="boom happened\n" + NOISE)
     with pytest.raises(subprocess.CalledProcessError) as info:
         _run_srim("TRIM.exe")
+    assert isinstance(info.value, srim_module.SRIMProcessError)
     assert info.value.returncode == 3
     assert "boom happened" in str(info.value)
     assert "X connection" not in str(info.value)

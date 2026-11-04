@@ -335,3 +335,9 @@ def test_failure_prints_no_completion_line(rec, capsys):
     steps.register("srim", lambda: Step("srim", "s", lambda: False, lambda: [], boom))
     assert cli.main(["install", "srim"]) == 1
     assert "installed" not in capsys.readouterr().out
+
+
+def test_doctor_prefix_fix_on_unknown_distro_without_wine(monkeypatch, tmp_path, capsys):
+    checks = _linux_doctor(monkeypatch, tmp_path, capsys, [])
+    assert "pysrim2 install wine" not in checks["wine-prefix"]["fix"]
+    assert "wiki.winehq.org" in checks["wine-prefix"]["fix"]
