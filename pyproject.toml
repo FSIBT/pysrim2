@@ -30,6 +30,11 @@ dependencies = [
     "pandas",
 ]
 
+[project.optional-dependencies]
+parquet = ["pyarrow"]
+hdf5 = ["tables"]
+all = ["pysrim2[parquet,hdf5]"]
+
 [project.scripts]
 pysrim2 = "srim.cli:main"
 
@@ -66,6 +71,7 @@ dev = [
     "ruff",
     "pre-commit",
     "matplotlib",
+    "pysrim2[parquet,hdf5]",
 ]
 docs = [
     "sphinx",
