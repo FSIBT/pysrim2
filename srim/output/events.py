@@ -12,7 +12,7 @@ from ._common import (
     SRIMOutputParseError,
     _empty_arrays,
     _prefix_factor,
-    _read_table,
+    _read_numeric_table,
     _to_float,
     double_regex,
     energy_prefixes,
@@ -29,9 +29,9 @@ def _row_regex(*fields):
 
 
 def _read_or_empty(path, header_end, row, columns, name):
-    """``(header, arrays)`` from :func:`_read_table`; an empty file gives empty arrays and a
+    """``(header, arrays)`` from :func:`_read_numeric_table`; an empty file gives empty arrays and a
     warning, a file without the table header raises :class:`SRIMOutputParseError`."""
-    header, arrays = _read_table(path, header_end, row, columns, name)
+    header, arrays = _read_numeric_table(path, header_end, row, columns, name)
     if arrays is None:
         if header:
             raise SRIMOutputParseError(f"unable to extract table from {name}")

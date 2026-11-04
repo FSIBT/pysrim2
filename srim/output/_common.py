@@ -77,7 +77,7 @@ def _element_names(names, count):
 _MAX_HEADER_LINES = 200
 
 
-def _read_table(path, header_end, row_regex, columns, name, chunk_rows=50000):
+def _read_numeric_table(path, header_end, row_regex, columns, name, chunk_rows=50000):
     """Read a SRIM table in one streaming pass, without holding the file in memory.
 
     Parameters
@@ -125,7 +125,7 @@ def _read_table(path, header_end, row_regex, columns, name, chunk_rows=50000):
 
     names = [str(j) for j in range(len(columns))]
     dtypes = [int if kind == "i" else float for _, kind in columns]
-    frame = concat_chunks(iter_row_chunks(rows(), names, dtypes), names, dtypes)
+    frame = concat_chunks(iter_row_chunks(rows(), names, dtypes, chunk_rows), names, dtypes)
     header = b"".join(header)
     if not found:
         return header, None

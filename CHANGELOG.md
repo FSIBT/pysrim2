@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A zero-byte `RANGE_3D.txt` gives an empty `Range3D` frame (same columns) and a warning, like the event files, instead of raising.
 - The reference example's "lateral straggle" (341.6 A for the boron case) was the root mean square of the radial distance, not what SRIM calls lateral straggling; the example and skill now report SRIM's definitions (lateral straggle 241.8 A, radial straggle 154.9 A).
 - `Results.range3d` also finds `RANGE_3D.txt` in the `SRIM Outputs` subfolder.
 - A table header whose element names cannot be read now warns before the element columns fall back to `1`, `2`, ...; the `Vacancy.knock_ons` docs give the correct unit (knock-ons per Angstrom per ion).

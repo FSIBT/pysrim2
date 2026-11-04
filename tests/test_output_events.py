@@ -295,7 +295,7 @@ def test_results_parses_lazily_and_caches(tmp_path, monkeypatch):
 def test_streaming_chunks_give_same_result():
     import re
 
-    from srim.output._common import _read_table
+    from srim.output._common import _read_numeric_table
 
     header_end = re.compile(rb"-+(?:[ \t]+-+)+[ \t]*")
     row = re.compile(
@@ -303,8 +303,8 @@ def test_streaming_chunks_give_same_result():
     )
     cols = [(0, "i")] + [(j, "f") for j in range(1, 7)]
     path = os.path.join(_dir("exyz"), "EXYZ.txt")
-    _, a = _read_table(path, header_end, row, cols, "x", chunk_rows=7)
-    _, b = _read_table(path, header_end, row, cols, "x")
+    _, a = _read_numeric_table(path, header_end, row, cols, "x", chunk_rows=7)
+    _, b = _read_numeric_table(path, header_end, row, cols, "x")
     for x, y in zip(a, b, strict=True):
         np.testing.assert_array_equal(x, y)
     assert len(a[0]) == 137

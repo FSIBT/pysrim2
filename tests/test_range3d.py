@@ -108,6 +108,18 @@ def test_unparseable_file_raises(tmp_path):
         Range3D(str(tmp_path))
 
 
+def test_zero_byte_file_gives_empty_frame_and_warning(tmp_path):
+    (tmp_path / "RANGE_3D.txt").write_bytes(b"")
+    with pytest.warns(UserWarning, match="is empty"):
+        r = Range3D(str(tmp_path))
+    df = r.df
+    assert list(df.columns) == list(Range3D(os.path.join(D, "1")).df.columns)
+    assert len(df) == 0
+    assert df["ion"].dtype.kind == "i"
+    assert r.metadata["ion"] is None and r.metadata["num_ions"] == 0
+    assert r.num_ions == 0
+
+
 def test_results_range3d_found_in_srim_outputs_subfolder(tmp_path):
     for name in os.listdir(os.path.join(D, "1")):
         if name != "RANGE_3D.txt":

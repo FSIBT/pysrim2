@@ -43,6 +43,12 @@ class Results:
 
     Notes
     -----
+    The files of the large per-ion outputs (``RANGE_3D.txt``, ``EXYZ.txt``,
+    ``BACKSCAT.txt``, ``TRANSMIT.txt``, ``SPUTTER.txt``, ``COLLISON.txt``) are read at
+    first access of the attribute (``results.range3d`` ...), not when ``Results`` is
+    created; the result is cached. A broken file therefore raises (or warns) then, and a
+    file changed afterwards is not re-read.
+
     Files that are looked for:
       - ``IONIZ.txt`` handled by :class:`srim.output.Ioniz`
       - ``VACANCY.txt`` handled by :class:`srim.output.Vacancy`

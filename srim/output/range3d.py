@@ -2,6 +2,7 @@
 
 import os
 import re
+import warnings
 
 import numpy as np
 
@@ -9,7 +10,7 @@ from ..core.ion import Ion
 from ._common import (
     SRIM_Output,
     SRIMOutputParseError,
-    _read_table,
+    _read_numeric_table,
     _to_float,
     double_regex,
     symbol_regex,
@@ -41,19 +42,28 @@ class Range3D(SRIM_Output):
     Notes
     -----
     SRIM can leave the last line of the file incomplete; such a line is ignored.
+    A zero-byte file gives an empty frame (same columns) and a warning, as for the event
+    files.
     """
 
     def __init__(self, directory, filename="RANGE_3D.txt"):
         path = os.path.join(directory, filename)
         number = double_regex.encode()
         row = re.compile(rb"[ \t]*(\d{7})" + (rb"[ \t]+(" + number + rb")") * 3 + rb"[ \t]*")
-        header, arrays = _read_table(
+        header, arrays = _read_numeric_table(
             path,
             re.compile(rb"-+(?:[ \t]+-+)+[ \t]*"),
             row,
             [(0, "i"), (1, "f"), (2, "f"), (3, "f")],
             "RANGE_3D",
         )
+        self._source = path
+        self._ion = None
+        if arrays is None and not header:
+            warnings.warn(f"{filename} is empty", stacklevel=2)
+            self._ion_numbers = np.array([], dtype=int)
+            self._positions = np.empty((0, 3))
+            return
         match = re.search(
             rb"Ion\s*=\s*(" + symbol_regex.encode() + rb")\s*\(\d+\).*?"
             rb"Energy\s*=\s*(" + double_regex.encode() + rb")\s*keV",
@@ -65,10 +75,20 @@ class Range3D(SRIM_Output):
         if arrays is None or len(arrays[0]) == 0:
             raise SRIMOutputParseError("unable to extract ion positions from file")
 
-        self._source = path
         self._ion = Ion(match.group(1).decode("ascii"), 1000.0 * _to_float(match.group(2)))
         self._ion_numbers = arrays[0]
         self._positions = np.column_stack(arrays[1:])
+
+    @property
+    def metadata(self):
+        """:obj:`dict` with ``ion`` (``None`` for an empty file), ``energy_eV``, ``num_ions``
+        and ``source`` (file path)"""
+        return {
+            "ion": self._ion.symbol if self._ion is not None else None,
+            "energy_eV": self._ion.energy if self._ion is not None else None,
+            "num_ions": self.num_ions,
+            "source": self._source,
+        }
 
     @property
     def ion(self):
