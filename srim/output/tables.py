@@ -154,7 +154,7 @@ class Results:
         }
         return {key: out.df for key, out in outputs.items() if out is not None}
 
-    def to_parquet(self, directory, spec=None, include=None):
+    def to_parquet(self, directory, spec=None, include=None, chunk_rows=100_000):
         """Write the tables to ``<directory>/<name>.parquet``, one file per table
 
         Needs ``pip install pysrim2[parquet]`` (pyarrow). The metadata of each table
@@ -171,7 +171,10 @@ class Results:
         include : iterable of :obj:`str`, optional
             table names (keys of :meth:`to_dataframes`) to export; default all available
             tables except ``collision``, which can be huge and must be asked for
-            (``include=["collision"]``); it is then streamed in chunks of 500 000 events
+            (``include=["collision"]``); it is then streamed in chunks of ``chunk_rows`` events
+        chunk_rows : :obj:`int`
+            events per chunk for ``collision`` (default 100 000); memory use grows with it.
+            ``source`` in the exported metadata is the file name only, not the full path.
 
         Returns
         -------
@@ -180,16 +183,17 @@ class Results:
         """
         from ..export import results_to_parquet
 
-        return results_to_parquet(self, directory, spec, include)
+        return results_to_parquet(self, directory, spec, include, chunk_rows)
 
-    def to_hdf5(self, path, spec=None, include=None):
+    def to_hdf5(self, path, spec=None, include=None, chunk_rows=100_000):
         """Write the tables to one HDF5 file, one key per table (``/ioniz`` ...)
 
         Needs ``pip install pysrim2[hdf5]`` (PyTables). Written with pandas'
         ``HDFStore`` in table format (read back with ``pandas.read_hdf(path, "ioniz")``).
         The metadata (see :meth:`to_parquet`) is a JSON string in the node attribute
         ``pysrim2`` (``store.get_storer("ioniz").attrs.pysrim2``). An existing file is
-        overwritten. ``collision`` (opt-in, see :meth:`to_parquet`) is appended in chunks.
+        overwritten. ``collision`` (opt-in, see :meth:`to_parquet`) is appended in chunks of
+        ``chunk_rows``.
 
         Returns
         -------
@@ -198,14 +202,14 @@ class Results:
         """
         from ..export import results_to_hdf5
 
-        return results_to_hdf5(self, path, spec, include)
+        return results_to_hdf5(self, path, spec, include, chunk_rows)
 
-    def to_csv(self, directory, spec=None, include=None):
+    def to_csv(self, directory, spec=None, include=None, chunk_rows=100_000):
         """Write the tables to ``<directory>/<name>.csv`` plus ``metadata.yaml``
 
         ``metadata.yaml`` holds the pysrim2 version, export time, the run ``spec`` (if
         given) and the ``.metadata`` of every table written. ``include`` as in
-        :meth:`to_parquet` (``collision`` is opt-in and written in chunks).
+        :meth:`to_parquet` (``collision`` is opt-in and written in chunks of ``chunk_rows``).
 
         Returns
         -------
@@ -214,7 +218,7 @@ class Results:
         """
         from ..export import results_to_csv
 
-        return results_to_csv(self, directory, spec, include)
+        return results_to_csv(self, directory, spec, include, chunk_rows)
 
 
 class Ioniz(SRIM_Output):

@@ -377,7 +377,7 @@ class Collision:
         """:obj:`dict` with the ``source`` file of the events"""
         return {"source": self.filename}
 
-    def to_parquet(self, path, chunk_rows=500_000, spec=None):
+    def to_parquet(self, path, chunk_rows=100_000, spec=None):
         """Stream all events (see :meth:`iter_events`) into a Parquet file
 
         Needs ``pip install pysrim2[parquet]``. Events are written ``chunk_rows`` at a
@@ -395,7 +395,7 @@ class Collision:
 
         return collision_to_parquet(self, path, chunk_rows, self.metadata, spec)
 
-    def to_csv(self, path, chunk_rows=500_000):
+    def to_csv(self, path, chunk_rows=100_000):
         """Stream all events into a CSV file, ``chunk_rows`` at a time
 
         Not-applicable fields are empty. Returns the number of events written.

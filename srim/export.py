@@ -10,7 +10,8 @@ Metadata
 Every export carries a JSON document (Parquet: schema key-value metadata under the key
 ``pysrim2``; HDF5: the node attribute ``pysrim2``; CSV: one ``metadata.yaml`` for all
 tables) with the keys ``pysrim2_version``, ``exported_utc`` (ISO 8601, UTC), ``table``,
-``metadata`` (the ``.metadata`` dict of the output) and ``spec`` (the run specification
+``metadata`` (the ``.metadata`` dict of the output, with ``source`` reduced to the file
+name so that no local paths are exported) and ``spec`` (the run specification
 if one is passed, else ``null``).
 
 The ``collision`` table can have millions of rows, so it is only exported when asked for
@@ -52,7 +53,7 @@ TABLE_ATTRIBUTES = {
 #: tables that are only exported if named in ``include`` (they can be huge)
 OPT_IN = ("collision",)
 #: events per chunk when streaming ``COLLISON.txt``
-DEFAULT_CHUNK_ROWS = 500_000
+DEFAULT_CHUNK_ROWS = 100_000
 #: key of the metadata in Parquet files and HDF5 attributes
 METADATA_KEY = "pysrim2"
 
@@ -88,12 +89,21 @@ def _default(obj):
     return str(obj)
 
 
+def _public(metadata):
+    """Metadata as exported: ``source`` is the file name only (no directories, so no
+    user names or local paths end up in shared files)"""
+    metadata = dict(metadata or {})
+    if isinstance(metadata.get("source"), str):
+        metadata["source"] = os.path.basename(metadata["source"].replace("\\", "/"))
+    return metadata
+
+
 def _document(name, metadata, spec, exported):
     return {
         "pysrim2_version": _version(),
         "exported_utc": exported,
         "table": name,
-        "metadata": _jsonable(metadata),
+        "metadata": _jsonable(_public(metadata)),
         "spec": _jsonable(spec),
     }
 
@@ -194,6 +204,7 @@ def collision_to_parquet(
 
 def results_to_parquet(results, directory, spec=None, include=None, chunk_rows=DEFAULT_CHUNK_ROWS):
     _require("pyarrow.parquet", "parquet")
+    chunk_rows = _check_chunk_rows(chunk_rows)
     selected = _select(results, include)
     os.makedirs(directory, exist_ok=True)
     written = {}
@@ -213,7 +224,10 @@ _HDF_MIN_ITEMSIZE = {"kind": 8, "atom": 4}
 
 
 def _hdf_write(method, name, df, **kwargs):
-    """``store.put``/``append`` without HDF5 creation times (files are then reproducible)"""
+    """``store.put``/``append`` without HDF5 object timestamps (``track_times=False``).
+
+    The exported files are still not byte-identical between runs: the metadata holds
+    ``exported_utc``."""
     try:
         method(name, df, track_times=False, **kwargs)
     except TypeError:  # pandas versions without the keyword
@@ -277,6 +291,7 @@ def collision_to_csv(collision, path, chunk_rows=DEFAULT_CHUNK_ROWS):
 
 
 def results_to_csv(results, directory, spec=None, include=None, chunk_rows=DEFAULT_CHUNK_ROWS):
+    chunk_rows = _check_chunk_rows(chunk_rows)
     selected = _select(results, include)
     os.makedirs(directory, exist_ok=True)
     exported = _now()
@@ -288,7 +303,7 @@ def results_to_csv(results, directory, spec=None, include=None, chunk_rows=DEFAU
             collision_to_csv(output, path, chunk_rows)
         else:
             output.df.to_csv(path, index=False, lineterminator="\n")
-        tables[name] = _jsonable(_metadata_of(output))
+        tables[name] = _jsonable(_public(_metadata_of(output)))
         written[name] = path
     document = {
         "pysrim2_version": _version(),

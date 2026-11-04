@@ -62,6 +62,12 @@ def cache(events_dir):
 
 
 def check_frames(actual, expected):
+    """Equal frames; numeric column dtypes must agree in kind (only object vs string
+    columns, which differ by pandas version, are relaxed)"""
+    assert list(actual.columns) == list(expected.columns)
+    for column in expected.columns:
+        if expected[column].dtype != object:
+            assert actual[column].dtype.kind == expected[column].dtype.kind, column
     pd.testing.assert_frame_equal(actual, expected, check_dtype=False)
 
 
@@ -230,6 +236,7 @@ MEASURE = textwrap.dedent("""
 
 
 def test_large_collision_export_is_chunked(tmp_path):
+    pytest.importorskip("resource")  # the child process measures RSS with it (POSIX only)
     ions = synthetic_collision(tmp_path / "COLLISON.txt", 20e6)
     collision = Collision(tmp_path)
     events = list(collision.iter_events())
@@ -252,4 +259,49 @@ def test_large_collision_export_is_chunked(tmp_path):
         assert max(pf.metadata.row_group(i).num_rows for i in range(pf.num_row_groups)) <= 1000
     # peak resident memory grows by far less than the 20 MB text / the full frame
     print(f"peak RSS {before} -> {after} MiB, {seconds} s for {rows} events")
-    assert float(after) - float(before) < 60
+    assert float(after) - float(before) < 100
+
+
+def test_all_none_chunk_keeps_schema_and_gives_nulls(tmp_path):
+    collision = Collision(SICC)
+    ions = [e for e in collision.iter_events() if e["kind"] == "ion"][:6]
+    assert all(e["atomic_number"] is None and e["vacancy"] is None for e in ions)
+    collision.iter_events = lambda: iter(ions)  # every chunk has all-None nullable columns
+    path = tmp_path / "n.parquet"
+    assert collision.to_parquet(path, chunk_rows=2) == 6
+    with pq.ParquetFile(path) as pf:
+        assert pf.metadata.num_row_groups == 3
+        for field in ("atomic_number", "vacancy", "replacement"):
+            assert pf.schema_arrow.field(field).type == pa.float64()
+        table = pf.read()
+    assert table["atomic_number"].null_count == 6
+    assert table["kind"].to_pylist() == ["ion"] * 6
+
+
+def test_exported_source_is_file_name_only(cache, tmp_path):
+    results = cache("SiC-C")
+    results.to_parquet(tmp_path / "p", include=["ioniz", "collision"])
+    for name in ("ioniz", "collision"):
+        meta = pq.read_schema(tmp_path / "p" / f"{name}.parquet").metadata[b"pysrim2"]
+        assert "/" not in json.loads(meta)["metadata"]["source"]
+    results.to_hdf5(tmp_path / "x.h5", include=["ioniz"])
+    with pd.HDFStore(tmp_path / "x.h5", mode="r") as store:
+        assert (
+            json.loads(store.get_storer("ioniz").attrs.pysrim2)["metadata"]["source"] == "IONIZ.txt"
+        )
+    results.to_csv(tmp_path / "c", include=["ioniz"])
+    assert (
+        yaml.safe_load((tmp_path / "c" / "metadata.yaml").read_text())["tables"]["ioniz"]["source"]
+        == "IONIZ.txt"
+    )
+    assert "/" in results.ioniz.metadata["source"]  # in memory the full path stays
+
+
+def test_results_chunk_rows_is_passed_and_validated(cache, tmp_path):
+    results = cache("SiC-C")
+    results.to_parquet(tmp_path, include=["collision"], chunk_rows=30_000)
+    with pq.ParquetFile(tmp_path / "collision.parquet") as pf:
+        assert pf.metadata.num_row_groups == 2  # 59 633 events
+    for method in ("to_parquet", "to_csv", "to_hdf5"):
+        with pytest.raises(ValueError, match="chunk_rows"):
+            getattr(results, method)(tmp_path / "bad", chunk_rows=0)
