@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-04
+
+pysrim2 can now set up SRIM itself: `uv tool install pysrim2 && pysrim2 install` on Windows and Linux, or the `ghcr.io/fsibt/pysrim2` container (Podman/Docker).
+
 ### Added
 
 - Documentation for the installer, the container, the command line and the agent skill (`docs/installation.rst`, `container.md`, `cli.md`, `agents.md`); the README and `AGENTS.md` describe the 0.7.0 setup. Example scripts for the current API in `examples/scripts/` (reference case, multilayer damage profile, stopping table) and an agent example in `examples/agents/`.
@@ -19,9 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Container image `ghcr.io/fsibt/pysrim2` (linux/amd64: pysrim2, SRIM-2013 and wine, non-root) built and tested by CI. Run it as its default user (do not pass `-u`).
 - Agent skill `pysrim2` (`skills/pysrim2/SKILL.md` with a runnable example, shipped inside the wheel): `pysrim2 install skill [--agent claude|all] [--scope user|project]` copies it to `~/.claude/skills/`, `<project>/.claude/skills/` (and `~/.agents/skills/` for `--agent all`); it never overwrites a differing skill it did not write unless `--yes`. `skill` is part of the default `pysrim2 install` set and `pysrim2 doctor` checks an installed copy is current.
 
-### Removed
+### Changed
 
-- The obsolete `costrouc/pysrim` Docker example (`examples/docker/`), the historical Docker benchmark page (`docs/benchmarks.rst`), `examples/input/` and unused generated files in `examples/images/`.
+- Linux: pysrim2 always runs SRIM in its own private wine prefix. If you used pysrim with `/tmp/srim` and `~/.wine`, run `pysrim2 install wine` once (an existing `/tmp/srim` is still found).
+- The source distribution no longer includes `CLAUDE.md`, `docs/superpowers/`, `.github/` or `tests/`.
+- The `srim.plot` functions take a `Results` object and read its attributes; passing a dict no longer works.
 
 ### Fixed
 
@@ -42,16 +48,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Wine setup finds `wineserver` where Ubuntu installs it.
 - `TRIM.run()` and `SR.run()` delete old output first and raise `SRIMRunError` if SRIM wrote no result, so a crash never returns a previous run's data.
 - Winetricks downloads go to pysrim2's own cache instead of `~/.cache/winetricks`.
-- `TRIM.run` reads its results correctly when `srim_directory` is a relative path.
+- `TRIM.run` and `SR.run` read their results correctly when `srim_directory` is a relative path.
 - SR output ranges in `km` are parsed instead of raising `SRIMOutputParseError`.
 - Parsing SRIM output no longer prints debug output to stdout.
-- `SR.run` reads its results correctly when `srim_directory` is a relative path.
 
-### Changed
+### Removed
 
-- Linux: pysrim2 always runs SRIM in its own private wine prefix. If you used pysrim with `/tmp/srim` and `~/.wine`, run `pysrim2 install wine` once (an existing `/tmp/srim` is still found).
-- The source distribution no longer includes `CLAUDE.md`, `docs/superpowers/`, `.github/` or `tests/`.
-- The `srim.plot` functions take a `Results` object and read its attributes; passing a dict no longer works.
+- The obsolete `costrouc/pysrim` Docker example (`examples/docker/`), the historical Docker benchmark page (`docs/benchmarks.rst`), `examples/input/` and unused generated files in `examples/images/`.
 
 ## [0.6.0] - 2026-11-03
 
@@ -97,5 +100,6 @@ Changes since pysrim 0.5.10. See
 
 Versions up to and including 0.5.10 were released as `pysrim` by Chris Ostrouchov.
 
-[Unreleased]: https://github.com/FSIBT/pysrim2/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/FSIBT/pysrim2/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/FSIBT/pysrim2/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/FSIBT/pysrim2/compare/0421575...v0.6.0
