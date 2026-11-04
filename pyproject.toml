@@ -72,6 +72,8 @@ docs = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "-m 'not srim'"
+markers = ["srim: runs the real SRIM programs (needs SRIM; run with pytest -m srim)"]
 
 [tool.ruff]
 line-length = 100

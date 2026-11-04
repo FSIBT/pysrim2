@@ -240,7 +240,7 @@ def distro_wine_commands(os_release: Path = Path("/etc/os-release")) -> list[str
         return [
             "sudo dpkg --add-architecture i386",
             "sudo apt-get update",
-            "sudo apt-get install -y wine wine32:i386 xvfb xauth cabextract unzip curl",
+            "sudo apt-get install -y wine wine32:i386 xvfb xauth 7zip cabextract unzip curl",
         ]
     if "fedora" in ids:
         return ["sudo dnf install -y wine xorg-x11-server-Xvfb cabextract unzip curl"]

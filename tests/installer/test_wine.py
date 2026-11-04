@@ -195,7 +195,7 @@ def test_distro_wine_commands(tmp_path, content, first, count):
     if count == 3:
         assert (
             commands[2]
-            == "sudo apt-get install -y wine wine32:i386 xvfb xauth cabextract unzip curl"
+            == "sudo apt-get install -y wine wine32:i386 xvfb xauth 7zip cabextract unzip curl"
         )
 
 
