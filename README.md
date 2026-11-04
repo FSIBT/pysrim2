@@ -10,6 +10,11 @@
 [![CI](https://github.com/FSIBT/pysrim2/actions/workflows/ci.yml/badge.svg)](https://github.com/FSIBT/pysrim2/actions/workflows/ci.yml)
 [![Documentation](https://readthedocs.org/projects/pysrim2/badge/?version=latest)](https://pysrim2.readthedocs.io/en/latest/)
 [![License](https://img.shields.io/pypi/l/pysrim2.svg)](https://github.com/FSIBT/pysrim2/blob/main/LICENSE)
+[![Python versions](https://img.shields.io/pypi/pyversions/pysrim2.svg)](https://pypi.org/project/pysrim2/)
+[![Downloads](https://img.shields.io/pypi/dm/pysrim2.svg)](https://pypistats.org/packages/pysrim2)
+[![uv](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/uv/main/assets/badge/v0.json)](https://github.com/astral-sh/uv)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+[![pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit)](https://github.com/pre-commit/pre-commit)
 
 `pysrim2` is a Python package that wraps and extends SRIM, a popular
 tool for simulating ions traveling through a material. It addresses
