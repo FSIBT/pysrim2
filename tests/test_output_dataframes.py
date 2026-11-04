@@ -116,3 +116,19 @@ def test_results_to_dataframes_omits_missing_novac():
     res = Results(os.path.join(D, "1"))
     res.novac = None
     assert "novac" not in res.to_dataframes()
+
+
+def test_unreadable_element_header_warns_and_falls_back_to_numbers(tmp_path):
+    with open(os.path.join(D, "SiC-C", "VACANCY.txt"), "rb") as f:
+        data = f.read()
+    header = b"   DEPTH          C            C           Si       "
+    assert header in data
+    (tmp_path / "VACANCY.txt").write_bytes(data.replace(header, b"   DEPTH" + b" " * 43))
+    with pytest.warns(UserWarning, match="element names"):
+        df = Vacancy(str(tmp_path)).df
+    assert list(df.columns) == [
+        "depth_A",
+        "knock_ons_per_A_per_ion",
+        "vacancies_1_per_A_per_ion",
+        "vacancies_2_per_A_per_ion",
+    ]

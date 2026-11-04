@@ -161,7 +161,8 @@ class Vacancy(SRIM_Output):
     df : :class:`pandas.DataFrame`
         One row per depth bin. Columns:
           - ``depth_A``: depth of bin [Ang]
-          - ``knock_ons_per_A_per_ion``: primary knock-ons by the ion [Vacancies/(Angstrom-Ion)]
+          - ``knock_ons_per_A_per_ion``: primary knock-ons by the ion
+            [knock-ons/(Angstrom-Ion)]
           - ``vacancies_<element>_per_A_per_ion``: vacancies of each target element,
             in file order (a repeated element becomes ``Si``, ``Si_2``, ...)
     metadata : :obj:`dict`
@@ -182,7 +183,7 @@ class Vacancy(SRIM_Output):
         self._depth = data[:, 0]
         self._ion_knock_ons = data[:, 1]
         self._vacancies = data[:, 2:]
-        self._elements = _element_names(symbols[1:], self._vacancies.shape[1])
+        self._element_names = _element_names(symbols[1:], self._vacancies.shape[1])
 
     @property
     def ion(self):
@@ -204,7 +205,7 @@ class Vacancy(SRIM_Output):
 
     @property
     def knock_ons(self):
-        """Vacancies produced [Vacancies/(Angstrom-Ion) by ion]"""
+        """Primary knock-ons produced by the ion [knock-ons/(Angstrom-Ion)]"""
         return self._ion_knock_ons
 
     @property
@@ -216,7 +217,7 @@ class Vacancy(SRIM_Output):
         return [
             ("depth_A", self._depth),
             ("knock_ons_per_A_per_ion", self._ion_knock_ons),
-            ([f"vacancies_{e}_per_A_per_ion" for e in self._elements], self._vacancies),
+            ([f"vacancies_{e}_per_A_per_ion" for e in self._element_names], self._vacancies),
         ]
 
 
@@ -326,7 +327,7 @@ class EnergyToRecoils(SRIM_Output):
         self._depth = data[:, 0]
         self._ions = data[:, 1]
         self._recoils = data[:, 2:]
-        self._elements = _element_names(symbols, self._recoils.shape[1])
+        self._element_names = _element_names(symbols, self._recoils.shape[1])
 
     @property
     def ion(self):
@@ -363,7 +364,7 @@ class EnergyToRecoils(SRIM_Output):
         return [
             ("depth_A", self._depth),
             ("ions_eV_per_A_per_ion", self._ions),
-            ([f"absorbed_{e}_eV_per_A_per_ion" for e in self._elements], self._recoils),
+            ([f"absorbed_{e}_eV_per_A_per_ion" for e in self._element_names], self._recoils),
         ]
 
 

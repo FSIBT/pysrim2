@@ -1,6 +1,7 @@
 """Shared helpers and base class for SRIM output parsers"""
 
 import re
+import warnings
 from io import BytesIO
 
 import numpy as np
@@ -55,6 +56,13 @@ def _element_names(names, count):
     """Column names for target elements: header ``names`` made unique
     (``Si``, ``Si_2``) if they match the number of columns, else ``1, 2, ...``."""
     if len(names) != count:
+        # Kinchin-Pease tables have a single column and no element names: no warning
+        if names or count > 1:
+            warnings.warn(
+                f"found {len(names)} element names in the table header for {count} columns; "
+                "naming the element columns 1, 2, ...",
+                stacklevel=2,
+            )
         return [str(i + 1) for i in range(count)]
     seen = {}
     unique = []
