@@ -62,8 +62,6 @@ Changes since pysrim 0.5.10. See
 
 ### Fixed
 
-- SRIM and the wine setup run under a 1024x768x24 virtual screen; the default 8-bit `xvfb-run` screen made `wineboot` hang on wine 11.
-- Container image: documented that Docker 29+ needs `--security-opt seccomp=unconfined` (its default seccomp profile blocks 32-bit sockets, so wine fails with "socket: Function not implemented").
 - Removed the `distutils` import so the package imports on Python 3.12 and later (lievcm).
 - Regular expressions use raw strings, removing invalid escape sequence warnings (lievcm).
 - Ion energies with a leading or trailing decimal point (such as `.3 keV`) are parsed (Mirochill, George Apostolopoulos, SimonF24).
