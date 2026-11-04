@@ -8,6 +8,7 @@ from io import BytesIO
 import numpy as np
 
 from ..core.ion import Ion
+from ._chunks import concat_chunks, iter_lines, iter_row_chunks
 
 # Valid double_regex 4, 4.0, .4, 4.0e100, and comma decimals (4,0 / 4,0E+02)
 # as written by SRIM under locales that use a comma as decimal separator
@@ -97,52 +98,44 @@ def _read_table(path, header_end, row_regex, columns, name, chunk_rows=50000):
     """
     header = []
     found = False
-    pending = [[] for _ in columns]
-    done = [[] for _ in columns]
     bad = 0
     first_bad = None
 
-    def flush():
-        for store, values in zip(done, pending, strict=True):
-            store.append(np.array(values, dtype=float))
-        for values in pending:
-            values.clear()
-
-    with open(path, "rb") as f:
-        for line in f:
+    def rows():
+        nonlocal found, bad, first_bad
+        for raw in iter_lines(path, None, keepends=True):
+            line = raw.rstrip(b"\r\n")
             if not found:
-                header.append(line)
-                if header_end.fullmatch(line.rstrip(b"\r\n")):
+                header.append(raw)
+                if header_end.fullmatch(line):
                     found = True
                 elif len(header) >= _MAX_HEADER_LINES:
-                    break
+                    return
                 continue
-            match = row_regex.fullmatch(line.rstrip(b"\r\n"))
+            match = row_regex.fullmatch(line)
             if match:
                 groups = match.groups()
-                for values, (index, kind) in zip(pending, columns, strict=True):
-                    token = groups[index]
-                    values.append(int(token) if kind == "i" else _to_float(_squeeze(token)))
-                if len(pending[0]) >= chunk_rows:
-                    flush()
-            elif line.strip() and line.endswith(b"\n"):
+                yield [
+                    int(groups[i]) if kind == "i" else _to_float(_squeeze(groups[i]))
+                    for i, kind in columns
+                ]
+            elif line.strip() and raw.endswith(b"\n"):
                 bad += 1
                 first_bad = first_bad or line.strip()[:60]
+
+    names = [str(j) for j in range(len(columns))]
+    dtypes = [int if kind == "i" else float for _, kind in columns]
+    frame = concat_chunks(iter_row_chunks(rows(), names, dtypes), names, dtypes)
     header = b"".join(header)
     if not found:
         return header, None
-    flush()
     if bad:
         warnings.warn(
             f"{bad} line(s) in the {name} data section could not be parsed and were skipped "
             f"(first: {first_bad.decode('latin-1')!r})",
             stacklevel=4,
         )
-    arrays = []
-    for j, (_, kind) in enumerate(columns):
-        joined = np.concatenate(done[j])
-        arrays.append(joined.astype(int) if kind == "i" else joined)
-    return header, arrays
+    return header, [frame[n].to_numpy() for n in names]
 
 
 def _squeeze(token):
