@@ -60,6 +60,17 @@ SETTINGS_SCHEMA = {
     "version": (int, 0),
 }
 #: settings that are always written to the file
+_SETTING_HINTS = {
+    "ranges": " (must be 0 or 1)",
+    "backscattered": " (must be 0 or 1)",
+    "transmit": " (must be 0 or 1)",
+    "sputtered": " (must be 0 or 1)",
+    "reminders": " (must be 0 or 1)",
+    "version": " (must be 0 or 1)",
+    "collisions": " (must be 0, 1 or 2)",
+    "plot_mode": " (must be 0..5)",
+    "description": ' (must not contain a double quote ")',
+}
 ALWAYS_SETTINGS = ("description", "ranges")
 
 _ION = {"symbol": str, "mass_amu": float, "energy_keV": float, "angle_deg": float}
@@ -197,14 +208,14 @@ class RunSpec:
                     "elements": elements,
                 }
             )
+        ion = {"symbol": self.ion.symbol}
+        if self.ion.mass_amu != _db_mass(self.ion.symbol):
+            ion["mass_amu"] = self.ion.mass_amu
+        ion["energy_keV"] = self.ion.energy_keV
+        ion["angle_deg"] = self.ion.angle_deg
         return {
             "version": self.version,
-            "ion": {
-                "symbol": self.ion.symbol,
-                "mass_amu": self.ion.mass_amu,
-                "energy_keV": self.ion.energy_keV,
-                "angle_deg": self.ion.angle_deg,
-            },
+            "ion": ion,
             "number_ions": self.number_ions,
             "calculation": self.calculation,
             "seed": self.seed,
@@ -262,11 +273,17 @@ class RunSpec:
         (``target.0.thickness_nm=50``).
         """
         data = self.to_dict()
+        touched = {}  # id(mapping) -> (mapping, keys set in this call)
         for item in assignments:
             key, sep, raw = item.partition("=")
             if not sep or not key.strip():
                 raise SpecError(f"override {item!r} must look like dotted.key=value")
-            _assign(data, key.strip(), raw)
+            node, name = _assign(data, key.strip(), raw)
+            touched.setdefault(id(node), (node, set()))[1].add(name)
+        # A new element symbol means the old mass no longer applies (unless set as well).
+        for node, names in touched.values():
+            if "symbol" in names and "mass_amu" not in names:
+                node.pop("mass_amu", None)
         return RunSpec.from_dict(data)
 
 
@@ -315,6 +332,16 @@ def _mapping(value, key):
     if not isinstance(value, dict):
         raise SpecError(f"{key} must be a mapping, got {value!r}")
     return value
+
+
+def _db_mass(symbol):
+    """Mass from the element table, or None if ``symbol`` is not an element"""
+    from .core.elementdb import ElementDB
+
+    try:
+        return ElementDB.lookup(symbol)["mass"]
+    except (KeyError, ValueError):
+        return None
 
 
 def _symbol_mass(symbol, key):
@@ -459,10 +486,17 @@ def _check_values(spec, prefix=""):
     # Delegate the remaining settings checks (ranges of the integer flags ...) to TRIMSettings.
     from .srim import TRIMSettings
 
-    try:
-        TRIMSettings(**spec.settings)
-    except ValueError as exc:
-        raise SpecError(f"{prefix}settings: {exc} ({spec.settings})") from None
+    if spec.settings.get("plot_xmin", 0.0) > spec.settings.get("plot_xmax", 0.0):
+        raise SpecError(f"{prefix}settings.plot_xmin must be <= settings.plot_xmax")
+    for key, value in spec.settings.items():
+        try:
+            # plot_xmin must not exceed plot_xmax; checked separately above
+            TRIMSettings(**{"plot_xmax": 1e18, **{key: value}})
+        except ValueError:
+            raise SpecError(
+                f"{prefix}settings.{key} has an invalid value {value!r}"
+                + _SETTING_HINTS.get(key, "")
+            ) from None
 
 
 # --- --set support ---------------------------------------------------------------
@@ -470,8 +504,10 @@ def _check_values(spec, prefix=""):
 
 def _assign(data, dotted, raw):
     """Set ``dotted`` (``ion.energy_keV``, ``target.0.elements.1.stoich`` ...) to the
-    schema-converted value of the string ``raw`` inside the plain-data spec ``data``."""
-    parts = dotted.split(".")
+    schema-converted value of the string ``raw`` inside the plain-data spec ``data``.
+    ``target[0].thickness_nm`` is accepted for ``target.0.thickness_nm``. Returns the
+    mapping that was changed and the key."""
+    parts = re.sub(r"\[(\d+)\]", r".\1", dotted).replace("..", ".").split(".")
     node, kind = data, "root"
     schema = {"root": _TOP, "ion": _ION, "layer": _LAYER, "element": _ELEMENT}
     for depth, part in enumerate(parts):
@@ -501,7 +537,7 @@ def _assign(data, dotted, raw):
             kind = part
             continue
         node[part] = _convert(raw, target_type, dotted)
-    return data
+        return node, part
 
 
 def _convert(raw, kind, key):

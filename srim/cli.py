@@ -215,7 +215,7 @@ def _run(args) -> int:
 
 
 def _import(args) -> int:
-    from srim.spec import RunSpec, SpecError, parse_trim_in
+    from srim.spec import SpecError, parse_trim_in
 
     target = Path(args.output or "run.yaml")
     if args.output is None and target.exists():
@@ -223,7 +223,6 @@ def _import(args) -> int:
         return EXIT_FAILED
     try:
         spec = parse_trim_in(args.trim_in)
-        RunSpec.validate(spec)
         spec.to_yaml(
             target,
             {"imported_from": Path(args.trim_in).name, "pysrim2_version": srim.__version__},

@@ -436,3 +436,79 @@ def test_results_spec_is_default_for_exports(tmp_path):
     results.to_csv(tmp_path, include=["range"])
     exported = yaml.safe_load((tmp_path / "metadata.yaml").read_text())
     assert exported["spec"] == spec
+
+
+# --- review fixes ------------------------------------------------------------------------
+
+
+def test_set_ion_symbol_takes_the_new_mass():
+    spec = reference_trim().to_spec().with_overrides(["ion.symbol=Au"])
+    assert spec.ion.symbol == "Au" and spec.ion.mass_amu == pytest.approx(196.967, abs=0.01)
+    spec = reference_trim().to_spec().with_overrides(["ion.symbol=Au", "ion.mass_amu=197"])
+    assert spec.ion.mass_amu == 197.0
+    spec = reference_trim().to_spec().with_overrides(["target[0].elements[0].symbol=Ag"])
+    assert spec.target[0].elements[0].mass_amu is None
+
+
+def test_set_element_symbol_drops_custom_mass():
+    spec = parse_trim_in(TEST_FILES / "3" / "TRIM.IN")
+    assert spec.target[0].elements[0].mass_amu == 183.0
+    spec = spec.with_overrides(["target.0.elements.0.symbol=Mo"])
+    assert spec.target[0].elements[0].mass_amu is None
+
+
+def test_ion_mass_written_only_when_not_database_value():
+    assert "mass_amu" not in reference_trim().to_spec().to_dict()["ion"]
+    custom = three_layer_trim().to_spec()
+    assert custom.to_dict()["ion"]["mass_amu"] == 58.7
+    assert RunSpec.from_dict(custom.to_dict()) == custom
+    data = reference_trim().to_spec().to_dict()
+    data["ion"]["symbol"] = "Au"  # edited file without mass: database mass
+    assert RunSpec.from_dict(data).ion.mass_amu > 190
+
+
+def test_set_accepts_bracket_keys():
+    spec = (
+        three_layer_trim()
+        .to_spec()
+        .with_overrides(["target[0].thickness_nm=50", "target[1].elements[1].stoich=3"])
+    )
+    assert spec.target[0].thickness_nm == 50.0
+    assert spec.target[1].elements[1].stoich == 3.0
+
+
+def test_settings_errors_name_the_key():
+    data = good()
+    data["settings"]["plot_mode"] = 9
+    with pytest.raises(SpecError, match=r"settings\.plot_mode has an invalid value 9"):
+        RunSpec.from_dict(data)
+    data = good()
+    data["settings"].update(plot_xmin=5.0, plot_xmax=1.0)
+    with pytest.raises(SpecError, match="settings.plot_xmin must be <="):
+        RunSpec.from_dict(data)
+
+
+def test_run_keeps_results_if_run_yaml_cannot_be_written(fake_srim, monkeypatch):
+    def fail(self, path, provenance=None):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(RunSpec, "to_yaml", fail)
+    with pytest.warns(RuntimeWarning, match="could not write run.yaml"):
+        results = reference_trim().run(srim_directory=str(fake_srim))
+    assert results.spec["seed"] == 12345
+
+
+def test_backend_is_native_on_windows(fake_srim, monkeypatch):
+    import shutil
+    import sys
+
+    monkeypatch.setattr(shutil, "which", lambda name: "/x/wine")
+    monkeypatch.setattr(sys, "platform", "win32")
+    from datetime import UTC, datetime
+
+    from srim.srim import _provenance
+
+    now = datetime.now(UTC)
+    assert _provenance(str(fake_srim), now, now, 1)["backend"] == "native"
+    monkeypatch.setattr(sys, "platform", "linux")
+    assert _provenance(str(fake_srim), now, now, 1)["backend"] == "wine"

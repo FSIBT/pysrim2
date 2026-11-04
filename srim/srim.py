@@ -8,6 +8,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import warnings
 from datetime import UTC, datetime
 
 from .core import Element, Ion, Layer, Target
@@ -503,10 +504,13 @@ class TRIM:
             _require_output(srim_directory, "RANGE.txt")
             spec = self.to_spec()
             if write_spec:
-                spec.to_yaml(
-                    os.path.join(srim_directory, "run.yaml"),
-                    _provenance(srim_directory, started, finished, spec.seed),
-                )
+                try:
+                    spec.to_yaml(
+                        os.path.join(srim_directory, "run.yaml"),
+                        _provenance(srim_directory, started, finished, spec.seed),
+                    )
+                except Exception as exc:  # the run itself succeeded; keep its results
+                    warnings.warn(f"could not write run.yaml: {exc}", RuntimeWarning, stacklevel=2)
             os.chdir(current_directory)
             results = Results(srim_directory)
             results.spec = spec.to_dict()
@@ -533,7 +537,7 @@ def _provenance(srim_directory, started, finished, seed):
         "pysrim2_version": __version__,
         "srim_sha256": sha,
         "platform": sys.platform,
-        "backend": "wine" if shutil.which("wine") else "native",
+        "backend": "wine" if sys.platform != "win32" and shutil.which("wine") else "native",
         "started_utc": stamp(started),
         "finished_utc": stamp(finished),
         "host": socket.gethostname(),
