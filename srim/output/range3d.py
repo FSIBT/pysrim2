@@ -6,7 +6,14 @@ import re
 import numpy as np
 
 from ..core.ion import Ion
-from ._common import SRIM_Output, SRIMOutputParseError, _to_float, double_regex, symbol_regex
+from ._common import (
+    SRIM_Output,
+    SRIMOutputParseError,
+    _to_float,
+    _warn_unparsed_rows,
+    double_regex,
+    symbol_regex,
+)
 
 
 class Range3D(SRIM_Output):
@@ -65,6 +72,10 @@ class Range3D(SRIM_Output):
         )
         if not rows:
             raise SRIMOutputParseError("unable to extract ion positions from file")
+        dashes = re.search(rb"^-+(?:[ \t]+-+)+[ \t]*\r?$", output, re.MULTILINE)
+        if dashes:
+            row_regex = rb"[ \t]*\d{7}(?:[ \t]+" + number + rb"){3}[ \t]*\r?"
+            _warn_unparsed_rows(output, dashes.end(), row_regex, "RANGE_3D")
 
         self._source = os.path.join(directory, filename)
         self._ion = Ion(symbol, 1000.0 * energy)

@@ -25,7 +25,9 @@ def implant_summary(df):
           deviation (``ddof=1``) of ``depth_A`` (``nan`` for one ion)
         - ``lateral_range_A``: mean of ``(|y| + |z|) / 2``
         - ``lateral_straggle_A``: sample standard deviation of the signed
-          ``y`` and ``z`` values taken together (2N values, ``ddof=1``)
+          ``y`` and ``z`` values taken together (2N values, ``ddof=1``). Agrees
+          with SRIM's ``RANGE.txt`` header within ~1 % on the reference data;
+          SRIM's exact formula is undocumented.
         - ``radial_range_A``: mean of ``r = sqrt(y**2 + z**2)``
         - ``radial_straggle_A``: sample standard deviation of ``r``
         - ``skewness``, ``kurtosis``: third and fourth standardized moments

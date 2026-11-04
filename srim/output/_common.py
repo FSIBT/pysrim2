@@ -1,5 +1,6 @@
 """Shared helpers and base class for SRIM output parsers"""
 
+import os
 import re
 import warnings
 from io import BytesIO
@@ -70,6 +71,32 @@ def _element_names(names, count):
         seen[name] = seen.get(name, 0) + 1
         unique.append(name if seen[name] == 1 else f"{name}_{seen[name]}")
     return unique
+
+
+def _warn_unparsed_rows(output, start, row_regex, name, stacklevel=3):
+    """Warn about non-blank lines after ``start`` that do not match ``row_regex``.
+
+    A final line without a line break is exempt: SRIM sometimes leaves it truncated.
+    """
+    lines = output[start:].split(b"\n")
+    lines.pop()  # unterminated final line, or "" after the last line break
+    pattern = re.compile(row_regex)
+    bad = [ln for ln in lines if ln.strip() and not pattern.fullmatch(ln)]
+    if bad:
+        warnings.warn(
+            f"{len(bad)} line(s) in the {name} data section could not be parsed and were "
+            f"skipped (first: {bad[0].strip()[:60].decode('latin-1')!r})",
+            stacklevel=stacklevel,
+        )
+
+
+def _find_output(directory, filename):
+    """Directory holding ``filename``: ``directory`` first, then its ``SRIM Outputs``
+    subfolder (where some SRIM installs write it); ``None`` if it is in neither."""
+    for folder in (directory, os.path.join(directory, "SRIM Outputs")):
+        if os.path.isfile(os.path.join(folder, filename)):
+            return folder
+    return None
 
 
 class SRIM_Output:

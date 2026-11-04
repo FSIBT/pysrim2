@@ -56,7 +56,9 @@ class Results:
         self.phonons = Phonons(directory)
         self.range = Range(directory)
 
-        # SRIM writes RANGE_3D.txt into "SRIM Outputs" in some installs
+        # SRIM writes RANGE_3D.txt into "SRIM Outputs" in some installs. The main
+        # directory takes precedence: it holds copies made by TRIM.copy_output_files
+        # or older installs, and a fresh run removes stale files from both places.
         self.range3d = None
         for folder in (directory, os.path.join(directory, "SRIM Outputs")):
             if os.path.isfile(os.path.join(folder, "RANGE_3D.txt")):

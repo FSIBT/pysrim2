@@ -115,3 +115,31 @@ def test_results_range3d_found_in_srim_outputs_subfolder(tmp_path):
     (tmp_path / "SRIM Outputs").mkdir()
     shutil.copy(os.path.join(D, "1", "RANGE_3D.txt"), tmp_path / "SRIM Outputs")
     assert len(Results(str(tmp_path)).range3d.df) == N_ROWS
+
+
+def _fixture_bytes():
+    with open(os.path.join(D, "1", "RANGE_3D.txt"), "rb") as f:
+        return f.read()
+
+
+def test_corrupted_middle_line_warns(tmp_path):
+    data = _fixture_bytes()
+    start = data.index(b"0000500")
+    corrupted = data[:start] + b"0000500   garbage here\r\n" + data[data.index(b"\n", start) + 1 :]
+    (tmp_path / "RANGE_3D.txt").write_bytes(corrupted)
+    with pytest.warns(UserWarning, match="could not be parsed"):
+        r = Range3D(str(tmp_path))
+    assert r.num_ions == N_ROWS - 1
+
+
+def test_truncated_last_line_does_not_warn(recwarn):
+    assert len(Range3D(os.path.join(D, "1")).df) == N_ROWS
+    assert not [w for w in recwarn if "could not be parsed" in str(w.message)]
+
+
+def test_truncated_mantissa_last_line_does_not_warn(tmp_path, recwarn):
+    data = _fixture_bytes().rstrip(b" ")
+    assert not data.endswith(b"\n")
+    (tmp_path / "RANGE_3D.txt").write_bytes(data[:-3] + b"-0.")
+    assert len(Range3D(str(tmp_path)).df) == N_ROWS
+    assert not [w for w in recwarn if "could not be parsed" in str(w.message)]
