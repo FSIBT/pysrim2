@@ -30,6 +30,7 @@ WINETRICKS_URL = (
 WINETRICKS_SHA256 = "431f82fc74000e6c864409f1d8fb495d696c03928808e3e8acffc45179312a7b"
 WINETRICKS_VERBS = ("comdlg32ocx", "msflxgrd", "richtx32", "comctl32ocx", "tabctl32")
 SETUP_TIMEOUT_SECONDS = 600
+OUTPUT_TAIL_LINES = 20
 DLLS = ("msvbvm50.dll", "comcat.dll")
 MARKER_NAME = ".pysrim2-vb5"
 WINE_DOCS = "https://wiki.winehq.org/Download"
@@ -131,10 +132,26 @@ def setup_wine_prefix(prefix: Path) -> None:
 
 
 def _run(cmd: list[str], env: dict[str, str]) -> None:
+    """Run ``cmd``; on failure raise WineSetupError with the tail of its output."""
     try:
-        subprocess.run(cmd, env=env, check=True, timeout=SETUP_TIMEOUT_SECONDS)
+        subprocess.run(
+            cmd,
+            env=env,
+            check=True,
+            timeout=SETUP_TIMEOUT_SECONDS,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
     except (OSError, subprocess.SubprocessError) as exc:
-        raise WineSetupError(f"{' '.join(cmd)} failed: {exc}") from exc
+        message = f"{' '.join(cmd)} failed: {exc}"
+        output = getattr(exc, "output", None)
+        if isinstance(output, bytes):
+            output = output.decode(errors="replace")
+        if output:
+            tail = "\n".join(output.strip().splitlines()[-OUTPUT_TAIL_LINES:])
+            message += f"\nLast output:\n{tail}"
+        raise WineSetupError(message) from exc
 
 
 def _winetricks_command() -> list[str]:
@@ -146,7 +163,10 @@ def _winetricks_command() -> list[str]:
     if not script.is_file() or _sha256(script) != WINETRICKS_SHA256:
         script.parent.mkdir(parents=True, exist_ok=True)
         _fetch(WINETRICKS_URL, script, WINETRICKS_SHA256, "winetricks")
-    return ["sh", str(script)]
+    bash = shutil.which("bash")
+    if not bash:
+        raise WineSetupError("bash is required to run winetricks but was not found")
+    return [bash, str(script)]
 
 
 def _sha256(path: Path) -> str:

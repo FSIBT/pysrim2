@@ -30,7 +30,7 @@ def fake_system(monkeypatch, tmp_path):
     calls = []
     monkeypatch.setenv("PYSRIM2_HOME", str(tmp_path / "home"))
     monkeypatch.setattr(wine, "WINETRICKS_SHA256", hashlib.sha256(FAKE_EXE).hexdigest())
-    monkeypatch.setattr(shutil, "which", fake_which({"wine", "xvfb-run", "7z"}))
+    monkeypatch.setattr(shutil, "which", fake_which({"wine", "xvfb-run", "7z", "bash"}))
     monkeypatch.setattr(wine, "MSVBVM50_SHA256", hashlib.sha256(FAKE_EXE).hexdigest())
     monkeypatch.setattr(wine, "_download", lambda url, dest: dest.write_bytes(FAKE_EXE))
 
@@ -55,7 +55,7 @@ def test_setup_runs_recipe_and_copies_dlls(tmp_path, fake_system):
     assert cmds[0][:3] == ["7z", "e", "-y"]
     assert cmds[1] == ["xvfb-run", "-a", "wineboot", "-i"]
     assert cmds[2] == ["wineserver", "-w"]
-    assert cmds[3][:4] == ["xvfb-run", "-a", "sh", cmds[3][3]]
+    assert cmds[3][:4] == ["xvfb-run", "-a", "/usr/bin/bash", cmds[3][3]]
     assert cmds[3][3].endswith("winetricks-" + wine.WINETRICKS_TAG)
     assert cmds[3][4:] == ["-q", "comdlg32ocx", "msflxgrd", "richtx32", "comctl32ocx", "tabctl32"]
     assert cmds[4] == ["wineserver", "-w"]
@@ -197,3 +197,28 @@ def test_distro_wine_commands(tmp_path, content, first, count):
 
 def test_distro_wine_commands_missing_file(tmp_path):
     assert distro_wine_commands(tmp_path / "nope") == []
+
+
+def test_failure_message_includes_command_output(tmp_path, fake_system, monkeypatch):
+    extract = subprocess.run
+
+    def run(cmd, **kwargs):
+        if cmd[0] == "7z":
+            return extract(cmd, **kwargs)
+        out = "\n".join(f"line {i}" for i in range(50))
+        raise subprocess.CalledProcessError(1, cmd, output=out)
+
+    monkeypatch.setattr(subprocess, "run", run)
+    with pytest.raises(WineSetupError) as info:
+        setup_wine_prefix(tmp_path / "wine")
+    message = str(info.value)
+    assert "line 49" in message
+    assert "line 30" in message
+    assert "line 29" not in message
+
+
+def test_winetricks_download_needs_bash(tmp_path, fake_system, monkeypatch):
+    monkeypatch.setattr(shutil, "which", fake_which({"wine", "7z"}))
+    with pytest.raises(WineSetupError, match="bash"):
+        setup_wine_prefix(tmp_path / "wine")
+    assert fake_system == []
