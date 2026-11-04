@@ -2,8 +2,10 @@
 
 import os
 import random
+import re
 import shutil
 import subprocess
+import sys
 
 from .core.utils import (
     check_input,
@@ -46,6 +48,43 @@ def _launch_command(executable):
             return ["xvfb-run", *XVFB_ARGS, "wine", exe]
         return ["wine", exe]
     return [exe]
+
+
+XVFB_NOISE = re.compile(r"X connection to :\d+ broken")
+
+
+class SRIMProcessError(subprocess.CalledProcessError):
+    """SRIM exited with an error; ``str()`` includes what it wrote to stderr."""
+
+    def __str__(self):
+        text = super().__str__()
+        return f"{text}\n{self.stderr}" if self.stderr else text
+
+
+def _run_srim(executable):
+    """Run a SRIM executable and wait for it.
+
+    Under ``xvfb-run`` the child's stderr is captured so xvfb's harmless
+    "X connection to :N broken" line at exit is dropped; other stderr lines
+    are passed on to ``sys.stderr`` after the run (or included in the error if
+    SRIM fails). Without ``xvfb-run`` (Windows) the child is run unchanged.
+    """
+    command = _launch_command(executable)
+    if command[0] != "xvfb-run":
+        subprocess.check_call(command, env=_launch_env())
+        return
+    done = subprocess.run(
+        command, env=_launch_env(), stderr=subprocess.PIPE, text=True, errors="replace"
+    )
+    kept = "".join(
+        line
+        for line in (done.stderr or "").splitlines(keepends=True)
+        if not XVFB_NOISE.search(line)
+    )
+    if done.returncode:
+        raise SRIMProcessError(done.returncode, command, stderr=kept.strip() or None)
+    if kept:
+        sys.stderr.write(kept)
 
 
 def _launch_env():
@@ -315,7 +354,7 @@ class TRIM:
             _remove_stale(srim_directory, TRIM_OUTPUT_FILES, "SRIM Outputs")
             self._write_input_files()
             # Make sure compatible with Windows, OSX, and Linux
-            subprocess.check_call(_launch_command("TRIM.exe"), env=_launch_env())
+            _run_srim("TRIM.exe")
             _require_output(srim_directory, "RANGE.txt")
             os.chdir(current_directory)
             return Results(srim_directory)
@@ -422,7 +461,7 @@ class SR:
             _remove_stale(sr_directory, [self.settings.output_filename])
             self._write_input_file()
             # Make sure compatible with Windows, OSX, and Linux
-            subprocess.check_call(_launch_command("SRModule.exe"), env=_launch_env())
+            _run_srim("SRModule.exe")
             _require_output(sr_directory, self.settings.output_filename)
 
             return SRResults(sr_directory)

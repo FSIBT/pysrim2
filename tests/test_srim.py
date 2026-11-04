@@ -247,3 +247,64 @@ def test_sr_run_removes_stale_output_and_fails_if_none_written(tmp_path, monkeyp
 def test_sr_output_filename_must_be_plain(name):
     with pytest.raises(ValueError, match="output_filename"):
         SR(Layer.from_formula("Si", 2.33, 1000.0), Ion("He", energy=1.0e6), output_filename=name)
+
+
+NOISE = "X connection to :99 broken (explicit kill or server shutdown).\n"
+
+
+def _fake_xvfb(monkeypatch, returncode=0, stderr=""):
+    import srim.srim as srim_module
+
+    seen = {}
+    monkeypatch.setattr(srim_module, "_launch_command", lambda exe: ["xvfb-run", "wine", exe])
+
+    def fake_run(cmd, **kw):
+        seen.update(cmd=cmd, kw=kw)
+        return subprocess.CompletedProcess(cmd, returncode, stdout=None, stderr=stderr)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    return seen
+
+
+def test_run_srim_drops_xvfb_noise_and_keeps_other_stderr(monkeypatch, capsys):
+    from srim.srim import _run_srim
+
+    seen = _fake_xvfb(monkeypatch, stderr="wine: something odd\n" + NOISE)
+    _run_srim("TRIM.exe")
+    captured = capsys.readouterr()
+    assert captured.err == "wine: something odd\n"
+    assert captured.out == ""
+    assert seen["kw"]["stderr"] == subprocess.PIPE
+    assert "stdout" not in seen["kw"]
+
+
+def test_run_srim_silent_when_only_noise(monkeypatch, capsys):
+    from srim.srim import _run_srim
+
+    _fake_xvfb(monkeypatch, stderr=NOISE)
+    _run_srim("TRIM.exe")
+    assert capsys.readouterr().err == ""
+
+
+def test_run_srim_failure_includes_remaining_stderr(monkeypatch, capsys):
+    from srim.srim import _run_srim
+
+    _fake_xvfb(monkeypatch, returncode=3, stderr="boom happened\n" + NOISE)
+    with pytest.raises(subprocess.CalledProcessError) as info:
+        _run_srim("TRIM.exe")
+    assert info.value.returncode == 3
+    assert "boom happened" in str(info.value)
+    assert "X connection" not in str(info.value)
+    assert capsys.readouterr().err == ""
+
+
+def test_run_srim_without_xvfb_is_unchanged(monkeypatch):
+    import srim.srim as srim_module
+
+    calls = []
+    monkeypatch.setattr(srim_module, "_launch_command", lambda exe: [exe])
+    monkeypatch.setattr(subprocess, "check_call", lambda cmd, **kw: calls.append((cmd, kw)))
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: pytest.fail("must not capture"))
+    srim_module._run_srim("TRIM.exe")
+    assert calls[0][0] == ["TRIM.exe"]
+    assert "stderr" not in calls[0][1]
