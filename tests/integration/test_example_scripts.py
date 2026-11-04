@@ -1,4 +1,4 @@
-"""Run the scripts in ``examples/scripts`` with tiny inputs so they cannot rot (``pytest -m srim``)."""
+"""Run the scripts in `examples/scripts` with tiny inputs so they cannot rot (`pytest -m srim`)."""
 
 import importlib.util
 from pathlib import Path
