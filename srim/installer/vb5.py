@@ -18,6 +18,7 @@ DLLS = {"MSVBVM50.DLL": "MSVBVM50.dl_", "COMCAT.DLL": "ComCat.dl_"}
 OCXS = ("ComDlg32.ocx", "MSFlxGrd.ocx", "RichTx32.ocx", "ComCtl32.ocx", "TabCtl32.ocx")
 TARGETS = ("", "SR Module")
 REGSVR_TIMEOUT_SECONDS = 120
+REGISTERED_MARKER = ".pysrim2-vb5-registered"
 
 
 class Vb5SetupError(RuntimeError):
@@ -26,7 +27,7 @@ class Vb5SetupError(RuntimeError):
 
 def szdd_expand(data: bytes) -> bytes:
     """Decompress a file in Microsoft's SZDD format (what ``expand.exe`` reads)."""
-    if data[:8] != b"SZDD\x88\xf0\x27\x33" or len(data) < 14:
+    if data[:8] != b"SZDD\x88\xf0\x27\x33" or len(data) < 14 or data[8:9] != b"A":
         raise Vb5SetupError("not an SZDD compressed file")
     (size,) = struct.unpack("<I", data[10:14])
     window = bytearray(b" " * 4096)
@@ -56,6 +57,8 @@ def szdd_expand(data: bytes) -> bytes:
                     out.append(byte)
                     window[pos] = byte
                     pos = (pos + 1) & 4095
+    if len(out) < size:
+        raise Vb5SetupError(f"SZDD data is truncated or corrupt ({len(out)} of {size} bytes)")
     return bytes(out[:size])
 
 
@@ -64,7 +67,9 @@ def _targets(srim_directory: Path) -> list[Path]:
 
 
 def vb5_ready(srim_directory: Path) -> bool:
-    """True if every runtime file sits next to TRIM.exe and in ``SR Module``."""
+    """True if every runtime file is in place and the controls were registered."""
+    if not (Path(srim_directory) / REGISTERED_MARKER).is_file():
+        return False
     return all((d / name).is_file() for d in _targets(srim_directory) for name in (*DLLS, *OCXS))
 
 
@@ -105,4 +110,7 @@ def register_controls(files: list[Path]) -> None:
 
 def install_vb5(srim_directory: Path) -> None:
     """Put the VB5 runtime in place for the SRIM install at ``srim_directory``."""
-    register_controls(copy_runtime_files(Path(srim_directory)))
+    srim_directory = Path(srim_directory)
+    (srim_directory / REGISTERED_MARKER).unlink(missing_ok=True)
+    register_controls(copy_runtime_files(srim_directory))
+    (srim_directory / REGISTERED_MARKER).write_text("1\n")

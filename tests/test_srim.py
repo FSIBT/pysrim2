@@ -233,3 +233,11 @@ def test_sr_run_removes_stale_output_and_fails_if_none_written(tmp_path, monkeyp
         sr.run(srim_directory=str(tmp_path))
 
     assert not (sr_module / "SR_OUTPUT.txt").exists()
+
+
+@pytest.mark.parametrize(
+    "name", ["/etc/passwd", "../x.txt", "sub/x.txt", "..\\x.txt", "", ".", ".."]
+)
+def test_sr_output_filename_must_be_plain(name):
+    with pytest.raises(ValueError, match="output_filename"):
+        SR(Layer.from_formula("Si", 2.33, 1000.0), Ion("He", energy=1.0e6), output_filename=name)

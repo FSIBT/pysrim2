@@ -323,6 +323,15 @@ class TRIM:
             os.chdir(current_directory)
 
 
+def _check_output_filename(name):
+    """Return ``name`` if it is a plain file name (no directories), else raise ValueError."""
+    if not isinstance(name, str) or name in ("", ".", "..") or os.path.basename(name) != name:
+        raise ValueError(f"output_filename must be a plain file name, got {name!r}")
+    if "\\" in name or "/" in name or os.path.isabs(name):
+        raise ValueError(f"output_filename must be a plain file name, got {name!r}")
+    return name
+
+
 class SRSettings:
     """SR Settings
 
@@ -357,7 +366,7 @@ class SRSettings:
         self._settings = {
             "energy_min": check_input(float, is_positive, args.get("energy_min", 1.0e3)),
             "output_type": check_input(int, is_one_to_eight, args.get("output_type", 1)),
-            "output_filename": args.get("output_filename", "SR_OUTPUT.txt"),
+            "output_filename": _check_output_filename(args.get("output_filename", "SR_OUTPUT.txt")),
             "correction": check_input(float, is_positive, args.get("correction", 1.0)),
         }
 

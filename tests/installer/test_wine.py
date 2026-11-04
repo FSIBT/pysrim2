@@ -283,5 +283,24 @@ def test_wait_for_wineserver_falls_back_to_end_session(monkeypatch):
     calls = []
     monkeypatch.setattr(wine, "_wineserver", lambda: None)
     monkeypatch.setattr(wine, "_run", lambda cmd, env: calls.append(cmd))
+    monkeypatch.setattr(wine, "_wait_until_no_wineserver", lambda: calls.append("polled"))
     wine._wait_for_wineserver({}, ["xvfb-run", "-a"])
-    assert calls == [["xvfb-run", "-a", "wine", "wineboot", "--end-session"]]
+    assert calls == [["xvfb-run", "-a", "wine", "wineboot", "--end-session"], "polled"]
+
+
+def test_wait_until_no_wineserver_polls_until_gone(monkeypatch):
+    codes = iter([0, 0, 1])
+    monkeypatch.setattr(wine.shutil, "which", lambda name: "/usr/bin/pgrep")
+    monkeypatch.setattr(wine.time, "sleep", lambda s: None)
+    monkeypatch.setattr(
+        subprocess, "run", lambda cmd, **kw: subprocess.CompletedProcess(cmd, next(codes))
+    )
+    wine._wait_until_no_wineserver()
+    assert next(codes, None) is None
+
+
+def test_wait_until_no_wineserver_gives_up_after_timeout(monkeypatch):
+    monkeypatch.setattr(wine.shutil, "which", lambda name: "/usr/bin/pgrep")
+    monkeypatch.setattr(wine.time, "sleep", lambda s: None)
+    monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0))
+    wine._wait_until_no_wineserver(timeout=0)

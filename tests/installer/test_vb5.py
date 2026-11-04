@@ -30,6 +30,18 @@ def test_szdd_expand_rejects_other_data():
         vb5.szdd_expand(b"MZ\x90\x00" + b"\x00" * 20)
 
 
+def test_szdd_expand_rejects_truncated_stream():
+    with pytest.raises(Vb5SetupError, match="truncated"):
+        vb5.szdd_expand(szdd(b"0123456789abcdef")[:-5])
+
+
+def test_szdd_expand_rejects_bad_mode_byte():
+    data = bytearray(szdd(b"abc"))
+    data[8] = ord("B")
+    with pytest.raises(Vb5SetupError):
+        vb5.szdd_expand(bytes(data))
+
+
 @pytest.fixture
 def srim_tree(tmp_path):
     root = tmp_path / "srim"
@@ -45,7 +57,8 @@ def srim_tree(tmp_path):
 
 def test_copy_runtime_files_is_app_local(srim_tree):
     registered = vb5.copy_runtime_files(srim_tree)
-    assert not vb5.vb5_ready(srim_tree.parent)
+    assert not vb5.vb5_ready(srim_tree)  # not registered yet
+    (srim_tree / vb5.REGISTERED_MARKER).write_text("1")
     assert vb5.vb5_ready(srim_tree)
     assert (srim_tree / "MSVBVM50.DLL").read_bytes() == b"vbruntime"
     assert (srim_tree / "SR Module" / "COMCAT.DLL").read_bytes() == b"comcat"
@@ -63,6 +76,20 @@ def test_install_vb5_registers_controls(srim_tree, monkeypatch):
     vb5.install_vb5(srim_tree)
     assert len(calls) == 2 * len(vb5.OCXS)
     assert calls[0][:2] == ["regsvr32", "/s"]
+    assert vb5.vb5_ready(srim_tree)
+
+
+def test_failed_registration_is_retried(srim_tree, monkeypatch):
+    monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: None)
+    vb5.install_vb5(srim_tree)
+
+    def boom(cmd, **kw):
+        raise subprocess.CalledProcessError(5, cmd)
+
+    monkeypatch.setattr(subprocess, "run", boom)
+    with pytest.raises(Vb5SetupError):
+        vb5.install_vb5(srim_tree)
+    assert not vb5.vb5_ready(srim_tree)
 
 
 def test_register_failure_is_reported(monkeypatch, tmp_path):

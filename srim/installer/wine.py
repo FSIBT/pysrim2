@@ -14,6 +14,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -180,6 +181,24 @@ def _wait_for_wineserver(env: dict[str, str], xvfb: list[str]) -> None:
         _run([server, "-w"], env)
     else:
         _run([*xvfb, "wine", "wineboot", "--end-session"], env)
+        _wait_until_no_wineserver()
+
+
+def _wait_until_no_wineserver(timeout: float = 30.0) -> None:
+    """Poll (at most ``timeout`` seconds) until no ``wineserver`` process is left.
+
+    Needs ``pgrep``; without it there is nothing to poll and we return. It may
+    also wait for servers of other prefixes, which is harmless: it is capped.
+    """
+    pgrep = shutil.which("pgrep")
+    if not pgrep:
+        return
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        found = subprocess.run([pgrep, "-x", "wineserver"], stdout=subprocess.DEVNULL)
+        if found.returncode != 0:
+            return
+        time.sleep(0.5)
 
 
 def _run(cmd: list[str], env: dict[str, str]) -> None:
