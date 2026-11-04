@@ -303,3 +303,15 @@ def test_windows_prints_hint(monkeypatch, capsys):
 def test_runtime_summary_mentions_stopped_docker(monkeypatch):
     monkeypatch.setattr(container, "installed_runtimes", lambda: ["docker"])
     assert "installed but not running" in steps.plan(["runtime"])[0].summary
+
+
+def test_windows_hint_skipped_when_machine_exists(monkeypatch, capsys):
+    monkeypatch.setattr(steps, "current_platform", lambda: "windows")
+    monkeypatch.setattr(container.subprocess, "run", Machine("podman-machine-default* false\n"))
+    container.install_runtime()
+    assert "podman machine init" not in capsys.readouterr().out
+
+
+def test_pull_text_does_not_name_podman_without_runtime(monkeypatch):
+    monkeypatch.setattr(container, "find_runtime", lambda: None)
+    assert container._pull_command_text()[0].startswith("<podman or docker> pull")

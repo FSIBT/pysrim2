@@ -252,7 +252,7 @@ def test_sr_output_filename_must_be_plain(name):
 NOISE = "X connection to :99 broken (explicit kill or server shutdown).\n"
 
 
-def _fake_xvfb(monkeypatch, returncode=0, stderr=""):
+def _fake_xvfb(monkeypatch, returncode=0, stderr="", stdout=""):
     import srim.srim as srim_module
 
     seen = {}
@@ -261,6 +261,7 @@ def _fake_xvfb(monkeypatch, returncode=0, stderr=""):
     def fake_run(cmd, **kw):
         seen.update(cmd=cmd, kw=kw)
         kw["stderr"].write(stderr.encode())
+        kw["stdout"].write(stdout.encode())
         return subprocess.CompletedProcess(cmd, returncode)
 
     monkeypatch.setattr(subprocess, "run", fake_run)
@@ -277,7 +278,7 @@ def test_run_srim_drops_xvfb_noise_and_keeps_other_stderr(monkeypatch, capsys):
     assert captured.out == ""
     assert seen["kw"]["stderr"] not in (subprocess.PIPE, subprocess.DEVNULL, None)
     assert hasattr(seen["kw"]["stderr"], "fileno")
-    assert "stdout" not in seen["kw"]
+    assert hasattr(seen["kw"]["stdout"], "fileno")
 
 
 def test_run_srim_silent_when_only_noise(monkeypatch, capsys):
@@ -312,3 +313,25 @@ def test_run_srim_without_xvfb_is_unchanged(monkeypatch):
     srim_module._run_srim("TRIM.exe")
     assert calls[0][0] == ["TRIM.exe"]
     assert "stderr" not in calls[0][1]
+
+
+def test_run_srim_drops_mesa_noise_on_both_streams(monkeypatch, capsys):
+    from srim.srim import _run_srim
+
+    mesa = "MESA-EGL: warning: pci id for fd 5: 1af4:1050, driver (null)\n"
+    _fake_xvfb(monkeypatch, stdout=mesa + "result line\n" + NOISE, stderr=mesa + NOISE)
+    _run_srim("TRIM.exe")
+    captured = capsys.readouterr()
+    assert captured.out == "result line\n"
+    assert captured.err == ""
+
+
+def test_launch_env_quiets_egl_and_mesa(monkeypatch):
+    import srim.srim as srim_module
+
+    monkeypatch.delenv("EGL_LOG_LEVEL", raising=False)
+    monkeypatch.delenv("LIBGL_DEBUG", raising=False)
+    monkeypatch.setattr(srim_module.shutil, "which", lambda name: "/usr/bin/wine")
+    env = srim_module._launch_env()
+    assert env["EGL_LOG_LEVEL"] == "fatal"
+    assert env["LIBGL_DEBUG"] == "quiet"

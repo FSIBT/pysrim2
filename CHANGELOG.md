@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `TRIM.run()`/`SR.run()` no longer print Mesa/EGL ("MESA-EGL", "pci id for fd") warnings; xvfb/EGL noise is dropped from both stdout and stderr and EGL/Mesa logging is turned down in wine's environment.
+- `pysrim2 install runtime` shows the Windows "open a new terminal" hint only when no Podman machine exists; `pysrim2 install --dry-run` no longer names podman in the pull command when no runtime is installed.
 - Wine setup always runs its own pinned, checksum-verified winetricks instead of one found on `PATH` (old copies do not know the OCX verbs).
 - `pysrim2 install wine` no longer hangs when a wine driver host crashes (openSUSE, wine 11): the USB/controller/Bluetooth drivers and Mono/Gecko prompts are disabled through `WINEDLLOVERRIDES`, wine's crash debugger is emptied, and a wineserver that does not exit within 60 s is stopped.
 - `pysrim2 install wine` no longer hangs after `wineboot` finishes: wine output is captured in a temporary file, so the background `wineserver` cannot keep a pipe open (same for `TRIM.run()`/`SR.run()` stderr).

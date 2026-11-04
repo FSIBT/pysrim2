@@ -51,7 +51,10 @@ def _launch_command(executable):
     return [exe]
 
 
-XVFB_NOISE = re.compile(r"X connection to :\d+ broken")
+# Harmless lines from xvfb and Mesa/EGL that real Linux machines print at SRIM exit.
+XVFB_NOISE = re.compile(
+    r"X connection to :\d+ broken|MESA-EGL|libEGL warning|pci id for fd|MESA: error: ZINK"
+)
 
 
 class SRIMProcessError(subprocess.CalledProcessError):
@@ -66,25 +69,34 @@ def _run_srim(executable):
     """Run a SRIM executable and wait for it.
 
     Under ``xvfb-run`` the child's stderr is captured so xvfb's harmless
-    "X connection to :N broken" line at exit is dropped; other stderr lines
-    are passed on to ``sys.stderr`` after the run (or included in the error if
-    SRIM fails). Without ``xvfb-run`` (Windows) the child is run unchanged.
+    "X connection to :N broken" and Mesa/EGL warning lines are dropped from
+    stdout and stderr; other lines are passed on to ``sys.stdout``/``sys.stderr``
+    after the run (stderr is included in the error if SRIM fails). Without ``xvfb-run`` (Windows) the child is run unchanged.
     """
     command = _launch_command(executable)
     if command[0] != "xvfb-run":
         subprocess.check_call(command, env=_launch_env())
         return
-    # stderr goes to a temp file, not a pipe: wine's daemonised wineserver would
+    # Output goes to temp files, not pipes: wine's daemonised wineserver would
     # keep a pipe open and block us. It is shown only after the run ends, not live.
-    with tempfile.TemporaryFile() as log:
-        done = subprocess.run(command, env=_launch_env(), stderr=log)
-        log.seek(0)
-        text = log.read().decode(errors="replace")
-    kept = "".join(line for line in text.splitlines(keepends=True) if not XVFB_NOISE.search(line))
+    with tempfile.TemporaryFile() as out_log, tempfile.TemporaryFile() as err_log:
+        done = subprocess.run(command, env=_launch_env(), stdout=out_log, stderr=err_log)
+        out_log.seek(0)
+        err_log.seek(0)
+        out_text = out_log.read().decode(errors="replace")
+        err_text = err_log.read().decode(errors="replace")
+    kept_out = _drop_noise(out_text)
+    kept_err = _drop_noise(err_text)
     if done.returncode:
-        raise SRIMProcessError(done.returncode, command, stderr=kept.strip() or None)
-    if kept:
-        sys.stderr.write(kept)
+        raise SRIMProcessError(done.returncode, command, stderr=kept_err.strip() or None)
+    if kept_out:
+        sys.stdout.write(kept_out)
+    if kept_err:
+        sys.stderr.write(kept_err)
+
+
+def _drop_noise(text):
+    return "".join(line for line in text.splitlines(keepends=True) if not XVFB_NOISE.search(line))
 
 
 def _launch_env():
@@ -95,7 +107,10 @@ def _launch_env():
     environment only. Otherwise it is a plain copy of ``os.environ``.
     """
     if shutil.which("wine"):
-        return wine_env(wine_prefix())
+        env = wine_env(wine_prefix())
+        env.setdefault("EGL_LOG_LEVEL", "fatal")
+        env.setdefault("LIBGL_DEBUG", "quiet")
+        return env
     return dict(os.environ)
 
 

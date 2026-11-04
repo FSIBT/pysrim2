@@ -171,7 +171,7 @@ def install_runtime() -> None:
         if command == "podman machine start" and _machine_state()[1]:
             continue
         steps.run_admin_commands([command], ContainerError, "podman", PODMAN_DOCS)
-    if steps.current_platform() == "windows":
+    if steps.current_platform() == "windows" and not _machine_state()[0]:
         print(WINDOWS_HINT)
 
 
@@ -234,7 +234,8 @@ def _image_present() -> bool:
 
 
 def _pull_command_text() -> list[str]:
-    return [" ".join(pull_command(find_runtime() or "podman", image_tag()))]
+    runtime = find_runtime() or "<podman or docker>"
+    return [" ".join(pull_command(runtime, image_tag()))]
 
 
 def _pull() -> None:
