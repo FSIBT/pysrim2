@@ -22,7 +22,7 @@ def test_skill_example_mean_depth(tmp_path):
     spec = importlib.util.spec_from_file_location("skill_example", example_path())
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    result = module.run(200, tmp_path / "srim-output")
+    result = module.run(200, tmp_path / "output")
     assert 0.7 * REFERENCE_MEAN_DEPTH_A <= result["mean_depth_A"] <= 1.3 * REFERENCE_MEAN_DEPTH_A
     assert result["lateral_straggle_A"] > 0
-    assert (tmp_path / "srim-output" / "RANGE_3D.txt").is_file()
+    assert (tmp_path / "output" / "RANGE_3D.txt").is_file()

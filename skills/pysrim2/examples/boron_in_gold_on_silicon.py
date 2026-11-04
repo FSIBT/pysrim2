@@ -7,7 +7,7 @@ Run natively (``python boron_in_gold_on_silicon.py``) or in the container::
 
 Quick Kinchin-Pease with 200 ions takes seconds (about a minute under QEMU). With
 seed 12345 the mean depth is about 282 angstrom. Copies of the SRIM output files
-are written to ``./srim-output`` so they survive the container.
+are written to ``./output`` so they survive the container.
 
 Until pysrim2 0.8.0 adds DataFrames to ``Results``, per-ion final positions come
 from ``RANGE_3D.txt``, parsed by ``read_range_3d`` below.
@@ -93,5 +93,5 @@ def run(number_ions: int = 200, outdir=None) -> dict:
 
 if __name__ == "__main__":
     n = int(sys.argv[1]) if len(sys.argv) > 1 else 200
-    for key, value in run(n, Path.cwd() / "srim-output").items():
+    for key, value in run(n, Path.cwd() / "output").items():
         print(f"{key}: {value:.1f}")

@@ -47,7 +47,7 @@ podman run --rm -v "$PWD:/data:Z" ghcr.io/fsibt/pysrim2:<tag> python /data/run.p
   prints the exact command: `docker run --rm --security-opt seccomp=<path> -v "$PWD:/data" ...`.
 - Never pass `-u`: the image's own non-root user owns what it needs.
 - `/data` is the working directory. SRIM writes its raw output inside the container, so have
-  the script copy what you need under `/data` (the example does this into `srim-output/`).
+  the script copy what you need under `/data` (the example does this into `output/`).
 - Apple silicon runs the amd64 image under emulation; expect it to be several times slower.
 
 ## 3. Building and running a calculation
@@ -82,7 +82,7 @@ power tables: `from srim import SR` (see `SR(layer, ion, output_type=5).run()`).
 
 `examples/boron_in_gold_on_silicon.py` (next to this file): 200 B ions at 20 keV, 7 degrees,
 into 100 nm Au on Si, quick KP, seed 12345. It prints the mean depth (about 282 A) and the
-lateral straggle, and copies the output files to `./srim-output/`.
+lateral straggle, and copies the output files to `./output/`.
 
 Per-ion final positions are in `RANGE_3D.txt` (needs `ranges=1`). Until pysrim2 0.8.0 adds
 DataFrames to `Results`, parse the file yourself; the example's `read_range_3d(directory)`

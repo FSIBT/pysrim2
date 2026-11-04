@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Documentation for the installer, the container, the command line and the agent skill (`docs/installation.rst`, `container.md`, `cli.md`, `agents.md`); the README and `AGENTS.md` describe the 0.7.0 setup. The legacy `costrouc/pysrim` Docker example is marked as such.
+- Documentation for the installer, the container, the command line and the agent skill (`docs/installation.rst`, `container.md`, `cli.md`, `agents.md`); the README and `AGENTS.md` describe the 0.7.0 setup. Example scripts for the current API in `examples/scripts/` (reference case, multilayer damage profile, stopping table) and an agent example in `examples/agents/`.
 - `pysrim2 install [COMPONENT ...]` (with `--dry-run` and `--yes`) and `pysrim2 doctor [--json]` set up and check SRIM.
 - `srim.installer.install_srim()` downloads SRIM-2013 from pinned sources and verifies its checksum.
 - `srim.installer.wine` sets up a private wine prefix with the VB5 runtime and OCX components for SRIM on Linux; it never touches `~/.wine` or `$WINEPREFIX`.
@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - SRIM location defaults to pysrim2's data directory (override with `PYSRIM2_SRIM_DIR`); an existing `/tmp/srim` is still used.
 - Container image `ghcr.io/fsibt/pysrim2` (linux/amd64: pysrim2, SRIM-2013 and wine, non-root) built and tested by CI. Run it as its default user (do not pass `-u`).
 - Agent skill `pysrim2` (`skills/pysrim2/SKILL.md` with a runnable example, shipped inside the wheel): `pysrim2 install skill [--agent claude|all] [--scope user|project]` copies it to `~/.claude/skills/`, `<project>/.claude/skills/` (and `~/.agents/skills/` for `--agent all`); it never overwrites a differing skill it did not write unless `--yes`. `skill` is part of the default `pysrim2 install` set and `pysrim2 doctor` checks an installed copy is current.
+
+### Removed
+
+- The obsolete `costrouc/pysrim` Docker example (`examples/docker/`), the historical Docker benchmark page (`docs/benchmarks.rst`), `examples/input/` and unused generated files in `examples/images/`.
 
 ### Fixed
 

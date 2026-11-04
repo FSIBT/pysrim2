@@ -20,6 +20,8 @@ The import name is ``srim``. See :doc:`installation` for getting
 to get started. For a more advanced example see the `SiC ion damage
 production jupyter notebook
 <https://github.com/FSIBT/pysrim2/blob/main/examples/notebooks/SiC.ipynb>`_.
+Runnable example scripts are in `examples/scripts
+<https://github.com/FSIBT/pysrim2/tree/main/examples/scripts>`_.
 Use :ref:`modindex` to search the API documentation.
 
 .. toctree::
@@ -31,7 +33,6 @@ Use :ref:`modindex` to search the API documentation.
    cli
    agents
    tutorial
-   benchmarks
    changes-from-pysrim
    changelog
 

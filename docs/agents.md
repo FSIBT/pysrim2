@@ -25,3 +25,11 @@ pass `--yes`. `pysrim2 doctor` reports an installed copy that is out of date.
 The skill is for agents that *use* pysrim2. If you want an agent to *work on*
 pysrim2 itself, it should read `AGENTS.md` in the repository, which is
 for contributors.
+
+## Examples
+
+[examples/agents](https://github.com/FSIBT/pysrim2/blob/main/examples/agents/README.md)
+has example prompts, what the agent is expected to do and the expected result
+for the reference case (about 282 angstrom mean depth for 200 boron ions).
+Runnable scripts for the current API, natively or in the container, are in
+[examples/scripts](https://github.com/FSIBT/pysrim2/tree/main/examples/scripts).

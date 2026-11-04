@@ -52,6 +52,9 @@ is gone when the container exits. Copy the files you need into `/data`
 before your script ends (`TRIM.copy_output_files(srim_dir(), "/data/out")`);
 the bundled skill example does exactly this, see {doc}`agents`.
 
+The scripts in [examples/scripts](https://github.com/FSIBT/pysrim2/tree/main/examples/scripts)
+write their results to a local `output` folder and are meant to be run this way.
+
 ## Tags
 
 | Tag | Meaning |
