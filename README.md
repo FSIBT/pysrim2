@@ -27,6 +27,10 @@ The import name is unchanged: `import srim`. Because both packages
 provide the `srim` module, `pysrim2` cannot be installed alongside the
 original `pysrim`.
 
+Container: `docker run --rm -v "$PWD:/data" ghcr.io/fsibt/pysrim2 python run.py`
+(linux/amd64; pysrim2, SRIM-2013 and wine). Run it as the image's default
+user (uid 1000); do not pass `-u`, because wine and SRIM files belong to that user.
+
 Documentation: <https://pysrim2.readthedocs.io/en/latest/>
 
 # Installation

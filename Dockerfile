@@ -7,7 +7,7 @@ LABEL org.opencontainers.image.source="https://github.com/FSIBT/pysrim2" \
       org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.description="pysrim2 + SRIM-2013 (SRIM © SRIM.com (James F. Ziegler) — free for non-commercial use only; see /opt/srim/Data/LEGAL.rtf)"
 
-ENV DEBIAN_FRONTEND=noninteractive
+ARG DEBIAN_FRONTEND=noninteractive
 RUN dpkg --add-architecture i386 \
  && apt-get update \
  && apt-get install -y --no-install-recommends \
@@ -38,8 +38,8 @@ USER srim
 # Python 3.15 and pysrim2 from the build context (plus pytest, so that
 # `docker run IMAGE pytest -m srim` works with the tests mounted).
 RUN uv venv /opt/venv --python 3.15
-COPY --chown=srim:srim . /tmp/src
-RUN uv pip install /tmp/src pytest pytest-mock && rm -rf /tmp/src
+RUN --mount=type=bind,source=.,target=/tmp/src,rw \
+    uv pip install /tmp/src pytest pytest-mock
 
 # The same code path users run: wine prefix (OCX + VB5 runtimes) and SRIM-2013.
 RUN xvfb-run -a pysrim2 install wine srim --yes \

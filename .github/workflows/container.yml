@@ -38,17 +38,20 @@ jobs:
           load: true
           tags: pysrim2:ci
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to: type=gha,mode=min
 
       - name: pysrim2 doctor
         run: docker run --rm pysrim2:ci pysrim2 doctor
 
-      # The image contains no tests; mount the checkout. The image user has
-      # uid 1000 (the uid of the runner user), so the bind mount is writable.
+      # The image contains no tests. Mount the checkout read-only and copy the
+      # tests into the container: the image must run as its own user (srim,
+      # uid 1000, which owns the wine prefix and SRIM), whatever the uid of the
+      # runner is, so nothing may be written into the mount.
       - name: Run the SRIM tests inside the image
         run: >
-          docker run --rm -v "$PWD:/work" -w /work pysrim2:ci
-          pytest -m srim -p no:cacheprovider tests/integration
+          docker run --rm -v "$PWD/tests:/tests-src:ro"
+          -e PYTHONDONTWRITEBYTECODE=1 -w /data pysrim2:ci
+          sh -c 'cp -r /tests-src /data/tests && pytest -m srim -p no:cacheprovider tests/integration'
 
   publish:
     name: publish image
