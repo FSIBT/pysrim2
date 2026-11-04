@@ -142,10 +142,11 @@ def test_runtime_install_commands_unknown_distro(monkeypatch, tmp_path):
     assert container.PODMAN_DOCS in hint
 
 
-def test_run_hint_podman_relabels_and_has_no_seccomp_flag():
+def test_run_hint_podman_relabels_maps_the_user_and_has_no_seccomp_flag():
     hint = container.run_hint("podman", "0.7.0")
     assert hint == (
-        'podman run --rm -v "$PWD:/data:Z" ghcr.io/fsibt/pysrim2:0.7.0 python /data/run.py'
+        'podman run --rm --userns=keep-id:uid=1000,gid=1000 -v "$PWD:/data:Z" '
+        "ghcr.io/fsibt/pysrim2:0.7.0 python /data/run.py"
     )
     assert "seccomp" not in hint
 

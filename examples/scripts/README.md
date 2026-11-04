@@ -31,8 +31,12 @@ python stopping_table.py
 Run from this folder. With Podman (`:Z` relabels the mount on SELinux hosts):
 
 ```shell
-podman run --rm -v "$PWD:/data:Z" ghcr.io/fsibt/pysrim2:main python /data/stopping_table.py /data/output
+podman run --rm --userns=keep-id:uid=1000,gid=1000 -v "$PWD:/data:Z" ghcr.io/fsibt/pysrim2:main python /data/stopping_table.py /data/output
 ```
+
+`--userns=keep-id:uid=1000,gid=1000` (Podman 4.3 or newer) maps the container
+user to your own user, so the script can write `output/` and the results belong
+to you.
 
 With Docker 29 or newer, add the seccomp profile that `pysrim2 install image`
 copies to pysrim2's data directory (or use `srim/data/seccomp-docker.json`):

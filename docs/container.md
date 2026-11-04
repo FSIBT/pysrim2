@@ -16,11 +16,15 @@ Put `run.py` in a folder and run from that folder. Podman is the default
 runtime:
 
 ```shell
-podman run --rm -v "$PWD:/data:Z" ghcr.io/fsibt/pysrim2:main python /data/run.py
+podman run --rm --userns=keep-id:uid=1000,gid=1000 -v "$PWD:/data:Z" \
+  ghcr.io/fsibt/pysrim2:main python /data/run.py
 ```
 
 `/data` is the working directory. The `:Z` relabels the mount for SELinux
-(Fedora, openSUSE, ...); it is harmless elsewhere.
+(Fedora, openSUSE, ...); it is harmless elsewhere. `--userns=keep-id:uid=1000,gid=1000`
+makes rootless Podman map the container user (uid 1000) to your own user, so the
+container can write to the mounted folder and the results in `/data` belong to
+you. It needs Podman 4.3 or newer.
 
 ### Docker 29 and newer
 
@@ -41,9 +45,13 @@ Do not use `seccomp=unconfined`.
 ## Users and files
 
 Run the image as its default user (uid 1000): do not pass `-u`, because the
-wine prefix and SRIM files belong to that user. With Podman rootless this
-just works. With Docker on Linux the mounted folder must be writable by
+wine prefix and SRIM files belong to that user. With rootless Podman use
+`--userns=keep-id:uid=1000,gid=1000` (shown above), which maps uid 1000 to
+your own user. With Docker on Linux the mounted folder must be writable by
 uid 1000 (use a dedicated folder and `chmod a+rwx` it, or `chown 1000`).
+
+Without that flag, rootless Podman fails with a permission error when the
+script writes to `/data`.
 
 ## Outputs
 

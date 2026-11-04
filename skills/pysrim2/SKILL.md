@@ -39,12 +39,13 @@ part of the PyPI package.
 The image `ghcr.io/fsibt/pysrim2` (linux/amd64) has pysrim2, SRIM and wine. Prefer Podman:
 
 ```bash
-podman run --rm -v "$PWD:/data:Z" ghcr.io/fsibt/pysrim2:<tag> python /data/run.py
+podman run --rm --userns=keep-id:uid=1000,gid=1000 -v "$PWD:/data:Z" ghcr.io/fsibt/pysrim2:<tag> python /data/run.py
 ```
 
 - `<tag>`: `latest`, `X.Y.Z` or `X.Y` (release; no `v` prefix), `main` (development). `pysrim2 install image` pulls it.
 - Docker 29+ needs a seccomp profile for 32-bit wine; `pysrim2 install image` writes it and
   prints the exact command: `docker run --rm --security-opt seccomp=<path> -v "$PWD:/data" ...`.
+- `--userns=keep-id:uid=1000,gid=1000` (Podman 4.3+) maps the container user to your own user, so results in `/data` belong to you.
 - Never pass `-u`: the image's own non-root user owns what it needs.
 - `/data` is the working directory. SRIM writes its raw output inside the container, so have
   the script copy what you need under `/data` (the example does this into `output/`).

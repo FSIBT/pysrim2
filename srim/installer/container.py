@@ -192,8 +192,10 @@ def seccomp_profile_path() -> Path:
 def run_hint(runtime: str, tag: str | None = None) -> str:
     """Return the command that runs a script in the image, using ``runtime``.
 
-    Podman mounts ``/data`` with ``:Z`` (SELinux relabel); Docker needs the
-    seccomp profile from ``seccomp_profile_path()``.
+    Podman mounts ``/data`` with ``:Z`` (SELinux relabel) and maps the host user
+    to the image user (uid 1000) with ``--userns=keep-id`` (Podman 4.3 or newer),
+    so that rootless Podman can write to ``/data``; Docker needs the seccomp
+    profile from ``seccomp_profile_path()``.
     """
     ref = image_ref(tag or image_tag())
     if runtime == "docker":
@@ -202,7 +204,8 @@ def run_hint(runtime: str, tag: str | None = None) -> str:
             f'docker run --rm --security-opt seccomp="{profile}" '
             f'-v "$PWD:/data" {ref} python /data/run.py'
         )
-    return f'{runtime} run --rm -v "$PWD:/data:Z" {ref} python /data/run.py'
+    userns = " --userns=keep-id:uid=1000,gid=1000" if runtime == "podman" else ""
+    return f'{runtime} run --rm{userns} -v "$PWD:/data:Z" {ref} python /data/run.py'
 
 
 # --- steps ------------------------------------------------------------------
