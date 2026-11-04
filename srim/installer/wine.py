@@ -136,7 +136,9 @@ def setup_wine_prefix(prefix: Path) -> None:
         prefix.mkdir(parents=True, exist_ok=True)
         _run([*xvfb, "wineboot", "-i"], env)
         _run(["wineserver", "-w"], env)
-        _run([*xvfb, *winetricks, "-q", *WINETRICKS_VERBS], env)
+        cache = data_dir() / "cache" / "winetricks"
+        cache.mkdir(parents=True, exist_ok=True)
+        _run([*xvfb, *winetricks, "-q", *WINETRICKS_VERBS], {**env, "W_CACHE": str(cache)})
         _run(["wineserver", "-w"], env)
 
         system32 = _system32(prefix)

@@ -117,7 +117,7 @@ def test_setup_prefers_system_winetricks(tmp_path, fake_system, monkeypatch):
     setup_wine_prefix(tmp_path / "wine")
     cmds = [c for c, _ in fake_system]
     assert cmds[3][0] == "/usr/bin/winetricks"
-    assert not (tmp_path / "home" / "cache").exists()
+    assert not list((tmp_path / "home" / "cache").glob("winetricks-*"))
 
 
 def test_download_failure_happens_before_wine_is_touched(tmp_path, fake_system, monkeypatch):
@@ -242,3 +242,14 @@ def test_setup_requires_downloader_before_touching_wine(tmp_path, fake_system, m
         setup_wine_prefix(tmp_path / "wine")
     assert fake_system == []
     assert not (tmp_path / "wine").exists()
+
+
+def test_winetricks_uses_private_cache(tmp_path, fake_system):
+    setup_wine_prefix(tmp_path / "wine")
+
+    expected = str(tmp_path / "home" / "cache" / "winetricks")
+    envs = [kw["env"] for c, kw in fake_system if "-q" in c]
+    assert len(envs) == 1
+    assert envs[0]["W_CACHE"] == expected
+    other = [kw["env"] for c, kw in fake_system if c[0] != "7z" and "-q" not in c]
+    assert all(e.get("W_CACHE") != expected for e in other)

@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Winetricks downloads go to pysrim2's own cache instead of `~/.cache/winetricks`.
 - `TRIM.run` reads its results correctly when `srim_directory` is a relative path.
 - SR output ranges in `km` are parsed instead of raising `SRIMOutputParseError`.
 - Parsing SRIM output no longer prints debug output to stdout.
