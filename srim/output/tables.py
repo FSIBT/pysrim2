@@ -154,6 +154,68 @@ class Results:
         }
         return {key: out.df for key, out in outputs.items() if out is not None}
 
+    def to_parquet(self, directory, spec=None, include=None):
+        """Write the tables to ``<directory>/<name>.parquet``, one file per table
+
+        Needs ``pip install pysrim2[parquet]`` (pyarrow). The metadata of each table
+        (its ``.metadata``, the pysrim2 version, the run ``spec`` if given and the export
+        time in UTC) is stored as JSON in the Parquet schema's key-value metadata under
+        the key ``pysrim2``.
+
+        Parameters
+        ----------
+        directory : :obj:`str`
+            created if needed
+        spec : :obj:`dict`, optional
+            run specification, stored in every file's metadata
+        include : iterable of :obj:`str`, optional
+            table names (keys of :meth:`to_dataframes`) to export; default all available
+            tables except ``collision``, which can be huge and must be asked for
+            (``include=["collision"]``); it is then streamed in chunks of 500 000 events
+
+        Returns
+        -------
+        :obj:`dict`
+            table name -> path written
+        """
+        from ..export import results_to_parquet
+
+        return results_to_parquet(self, directory, spec, include)
+
+    def to_hdf5(self, path, spec=None, include=None):
+        """Write the tables to one HDF5 file, one key per table (``/ioniz`` ...)
+
+        Needs ``pip install pysrim2[hdf5]`` (PyTables). Written with pandas'
+        ``HDFStore`` in table format (read back with ``pandas.read_hdf(path, "ioniz")``).
+        The metadata (see :meth:`to_parquet`) is a JSON string in the node attribute
+        ``pysrim2`` (``store.get_storer("ioniz").attrs.pysrim2``). An existing file is
+        overwritten. ``collision`` (opt-in, see :meth:`to_parquet`) is appended in chunks.
+
+        Returns
+        -------
+        :obj:`str`
+            ``path``
+        """
+        from ..export import results_to_hdf5
+
+        return results_to_hdf5(self, path, spec, include)
+
+    def to_csv(self, directory, spec=None, include=None):
+        """Write the tables to ``<directory>/<name>.csv`` plus ``metadata.yaml``
+
+        ``metadata.yaml`` holds the pysrim2 version, export time, the run ``spec`` (if
+        given) and the ``.metadata`` of every table written. ``include`` as in
+        :meth:`to_parquet` (``collision`` is opt-in and written in chunks).
+
+        Returns
+        -------
+        :obj:`dict`
+            table name -> path written
+        """
+        from ..export import results_to_csv
+
+        return results_to_csv(self, directory, spec, include)
+
 
 class Ioniz(SRIM_Output):
     """``IONIZ.txt`` Ionization by ions and depth. Includes header information about calculation

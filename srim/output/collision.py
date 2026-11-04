@@ -373,6 +373,38 @@ class Collision:
             )
 
     @property
+    def metadata(self):
+        """:obj:`dict` with the ``source`` file of the events"""
+        return {"source": self.filename}
+
+    def to_parquet(self, path, chunk_rows=500_000, spec=None):
+        """Stream all events (see :meth:`iter_events`) into a Parquet file
+
+        Needs ``pip install pysrim2[parquet]``. Events are written ``chunk_rows`` at a
+        time (one row group each), so memory does not grow with the file. The schema is
+        fixed: ``ion`` int64, ``kind`` and ``atom`` strings, all other columns float64;
+        fields that do not apply to an event are null. The pysrim2 metadata is stored
+        under the schema key ``pysrim2`` (see :mod:`srim.export`).
+
+        Returns
+        -------
+        :obj:`int`
+            number of events written
+        """
+        from ..export import collision_to_parquet
+
+        return collision_to_parquet(self, path, chunk_rows, self.metadata, spec)
+
+    def to_csv(self, path, chunk_rows=500_000):
+        """Stream all events into a CSV file, ``chunk_rows`` at a time
+
+        Not-applicable fields are empty. Returns the number of events written.
+        """
+        from ..export import collision_to_csv
+
+        return collision_to_csv(self, path, chunk_rows)
+
+    @property
     def skipped_lines(self):
         """:obj:`dict` with the number of lines skipped as stray: ``"recoil"`` (recoil lines
         outside a cascade) and ``"summary"`` (cascade summaries without a collision).

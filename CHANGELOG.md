@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `Collision.iter_events()` streams `COLLISON.txt` line by line as flat event dicts (`ion`, `kind` = `ion` for a collision of the primary ion or `recoil` for a cascade recoil, `energy_keV`, `depth_A`, `y_A`, `z_A`, `atom`, `recoil_energy_eV`, `target_displacements`, `target_vacancies`, `target_replacements`, `target_interstitials`, plus `atomic_number`, `electronic_stopping_eV_per_A`, `vacancy`, `replacement`); `Collision.df` collects them into a DataFrame chunk-wise. `Results.collision` (lazy, `None` if absent) and `Results.to_dataframes()["collision"]` expose them.
 
+- `Results.to_parquet(directory)`, `.to_hdf5(path)` and `.to_csv(directory)` export the tables (optionally selected with `include=`; `collision` only on request) with metadata: the table's `.metadata`, pysrim2 version, export time and an optional run `spec` (Parquet: schema key `pysrim2`; HDF5: node attribute `pysrim2`; CSV: `metadata.yaml`). `Collision.to_parquet(path, chunk_rows=500_000)` and `Collision.to_csv` stream the cascade events in chunks, so memory stays small for huge `COLLISON.txt` files. New optional extras `pysrim2[parquet]` (pyarrow) and `pysrim2[hdf5]` (PyTables); `Collision.metadata`.
+
 ### Fixed
 
 - A zero-byte `RANGE_3D.txt` gives an empty `Range3D` frame (same columns) and a warning, like the event files, instead of raising.
