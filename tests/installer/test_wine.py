@@ -64,10 +64,7 @@ def test_setup_runs_recipe_and_copies_dlls(tmp_path, fake_system):
         "add",
         wine.AEDEBUG_KEY,
     ]
-    assert cmds[2][-6:] == ["/v", "Debugger", "/t", "REG_SZ", "/d", ""] or cmds[2][-2:] == [
-        "",
-        "/f",
-    ]
+    assert cmds[2][-7:] == ["/v", "Debugger", "/t", "REG_SZ", "/d", "", "/f"]
     assert cmds[3] == ["/usr/bin/wineserver", "-w"]
     assert cmds[4][:6] == ["xvfb-run", *wine.XVFB_ARGS, "/usr/bin/bash", cmds[4][5]]
     assert cmds[4][5].endswith("winetricks-" + wine.WINETRICKS_TAG)
@@ -434,13 +431,16 @@ def test_wait_timeout_kills_wineserver_and_continues(monkeypatch, server):
         raise wine.WineTimeoutError("timed out")
 
     monkeypatch.setattr(wine, "_run", run)
-    monkeypatch.setattr(wine, "_kill_wineserver", lambda env: calls.append(("kill", env)))
+    monkeypatch.setattr(
+        wine, "_kill_wineserver", lambda env: calls.append(("kill", env)) or bool(server)
+    )
     monkeypatch.setattr(wine, "_wait_until_no_wineserver", lambda: calls.append("polled"))
     wine._wait_for_wineserver({"E": "1"}, ["xvfb-run"], notes.append)
     assert calls[0][1] == 60
     assert ("kill", {"E": "1"}) in calls
     assert "polled" not in calls
-    assert notes == ["  - wine did not shut down by itself; stopped it"]
+    expected = "stopped it" if server else "carrying on (no wineserver found to stop)"
+    assert notes == [f"  - wine did not shut down by itself; {expected}"]
 
 
 def test_wait_other_errors_still_raise(monkeypatch):

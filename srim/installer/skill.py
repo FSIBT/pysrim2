@@ -88,16 +88,18 @@ def install_skill(targets: list[Path], yes: bool = False) -> list[Path]:
     never overwritten unless ``yes`` is true.
     """
     files = _files()
-    written = []
-    for target in targets:
-        target = Path(target)
-        if not yes and not _managed(target):
-            clash = _conflicts(target, files)
+    targets = [Path(t) for t in targets]
+    if not yes:
+        # Check every target first so a refusal never leaves a partial install.
+        for target in targets:
+            clash = [] if _managed(target) else _conflicts(target, files)
             if clash:
                 raise SkillInstallError(
                     f"{target} already holds different {', '.join(clash)} not written by "
                     "pysrim2; move it away or rerun with --yes to overwrite"
                 )
+    written = []
+    for target in targets:
         for rel, data in files.items():
             dest = target / rel
             dest.parent.mkdir(parents=True, exist_ok=True)

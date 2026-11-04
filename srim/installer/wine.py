@@ -120,7 +120,8 @@ def wine_env(prefix: Path) -> dict[str, str]:
     # SRIM needs no controller/USB/Bluetooth drivers (they crash without SDL on
     # some distros and keep wineserver alive) and no Mono/Gecko install prompts.
     overrides = os.environ.get("WINEDLLOVERRIDES")
-    ours = DLL_OVERRIDES if not overrides else f"{overrides};{DLL_OVERRIDES}"
+    overrides = (overrides or "").rstrip(";")
+    ours = f"{overrides};{DLL_OVERRIDES}" if overrides else DLL_OVERRIDES
     env["WINEDLLOVERRIDES"] = ours
     return env
 
@@ -211,11 +212,14 @@ def _wineserver() -> str | None:
     return None
 
 
-def _kill_wineserver(env: dict[str, str]) -> None:
-    """Stop the wineserver of the private prefix in ``env`` (``wineserver -k``); never raises."""
+def _kill_wineserver(env: dict[str, str]) -> bool:
+    """Stop the wineserver of the private prefix in ``env`` (``wineserver -k``); never raises.
+
+    Returns whether a kill was attempted (a wineserver executable was found).
+    """
     server = _wineserver()
     if not server:
-        return
+        return False
     try:
         subprocess.run(
             [server, "-k"],
@@ -227,6 +231,7 @@ def _kill_wineserver(env: dict[str, str]) -> None:
         )
     except (OSError, subprocess.SubprocessError):
         pass
+    return True
 
 
 def _disable_crash_debugger(env: dict[str, str], xvfb: list[str]) -> None:
@@ -261,9 +266,12 @@ def _wait_for_wineserver(
             )
             _wait_until_no_wineserver()
     except WineTimeoutError:
-        _kill_wineserver(env)
+        killed = _kill_wineserver(env)
         if note:
-            note("  - wine did not shut down by itself; stopped it")
+            note(
+                "  - wine did not shut down by itself; "
+                + ("stopped it" if killed else "carrying on (no wineserver found to stop)")
+            )
 
 
 def _wait_until_no_wineserver(timeout: float = 30.0) -> None:

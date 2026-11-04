@@ -129,3 +129,12 @@ def test_built_wheel_contains_skill(tmp_path):
     names = zipfile.ZipFile(wheel).namelist()
     assert "srim/_skill/SKILL.md" in names
     assert "srim/_skill/examples/boron_in_gold_on_silicon.py" in names
+
+
+def test_refusal_leaves_no_partial_install(tmp_path):
+    first, second = tmp_path / "a", tmp_path / "b"
+    second.mkdir()
+    (second / "SKILL.md").write_text("mine")
+    with pytest.raises(SkillInstallError):
+        install_skill([first, second])
+    assert not first.exists()

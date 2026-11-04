@@ -253,12 +253,13 @@ def collect_checks() -> list[dict]:
     )
     installed = [t for t in candidates if (t / skill.MARKER).is_file()]
     stale = [t for t in installed if not skill.skill_current([t])]
+    # Stale copies carry the marker, so they are ours to update without --yes.
     checks.append(
         _check(
             "agent-skill",
             not stale,
             ", ".join(str(t) for t in installed) or "not installed (optional)",
-            "run: pysrim2 install skill --yes",
+            "run: pysrim2 install skill",
         )
     )
     native_possible = system == "windows" or (status is not None and status.wine)

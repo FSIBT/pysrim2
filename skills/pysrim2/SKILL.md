@@ -26,9 +26,10 @@ that need admin rights ask for confirmation or `--yes`):
 
 | Platform | Command | What it does |
 |---|---|---|
-| Windows | `pysrim2 install` | `vb5` + `srim`: VB5 runtime, OCX controls, SRIM-2013 |
-| Linux | `pysrim2 install` | `wine-packages` + `wine` + `srim`: private wine prefix, SRIM-2013 |
-| macOS | `pysrim2 install` | container only: installs Podman if needed, pulls the image |
+| Windows | `pysrim2 install` | `vb5` + `srim` + `skill`: VB5 runtime, OCX controls, SRIM-2013 |
+| Linux with wine, or with no container runtime | `pysrim2 install` | `wine-packages` + `wine` + `srim` + `skill`: private wine prefix, SRIM-2013 |
+| Linux with a container runtime and no wine | `pysrim2 install` | `image` + `skill`: pulls the container image |
+| macOS | `pysrim2 install` | container only: `image` + `skill`, plus `runtime` (Podman) first if none is installed |
 
 SRIM is downloaded to pysrim2's data directory (override: `PYSRIM2_SRIM_DIR`); it is never
 part of the PyPI package.
@@ -41,7 +42,7 @@ The image `ghcr.io/fsibt/pysrim2` (linux/amd64) has pysrim2, SRIM and wine. Pref
 podman run --rm -v "$PWD:/data:Z" ghcr.io/fsibt/pysrim2:<tag> python /data/run.py
 ```
 
-- `<tag>`: `latest` or `vX.Y.Z` (release), `main` (development). `pysrim2 install image` pulls it.
+- `<tag>`: `latest`, `X.Y.Z` or `X.Y` (release; no `v` prefix), `main` (development). `pysrim2 install image` pulls it.
 - Docker 29+ needs a seccomp profile for 32-bit wine; `pysrim2 install image` writes it and
   prints the exact command: `docker run --rm --security-opt seccomp=<path> -v "$PWD:/data" ...`.
 - Never pass `-u`: the image's own non-root user owns what it needs.
@@ -54,25 +55,26 @@ podman run --rm -v "$PWD:/data:Z" ghcr.io/fsibt/pysrim2:<tag> python /data/run.p
 ```python
 from srim import TRIM, Ion, Layer, Target
 
-au = Layer.from_formula("Au", density=19.3, width=1000.0)    # g/cm3, angstrom
+au = Layer.from_formula("Au", density=19.3, width=1000.0)  # g/cm3, angstrom
 si = Layer.from_formula("Si", density=2.33, width=10000.0)
-target = Target([au, si])                                     # first layer is hit first
-ion = Ion("B", energy=20e3)                                   # energy in eV
+target = Target([au, si])  # first layer is hit first
+ion = Ion("B", energy=20e3)  # energy in eV
 results = TRIM(
-    target, ion,
+    target,
+    ion,
     number_ions=200,
-    calculation=1,     # 1 = quick Kinchin-Pease, 2 = full damage cascade
-    angle_ions=7.0,    # degrees from the surface normal
-    ranges=1,          # also write RANGE_3D.txt (per-ion final positions)
-    random_seed=12345, # reproducible runs
+    calculation=1,  # 1 = quick Kinchin-Pease, 2 = full damage cascade
+    angle_ions=7.0,  # degrees from the surface normal
+    ranges=1,  # also write RANGE_3D.txt (per-ion final positions)
+    random_seed=12345,  # reproducible runs
 ).run()
 ```
 
 Units: widths in angstrom (1 nm = 10 A, 100 nm = 1000 A), energies in eV (20 keV = 20e3),
 densities in g/cm3. Compounds: `Layer.from_formula("SiO2", density=2.65, width=...)`.
 
-`run()` returns `Results` with `.range` (ion distribution vs depth: `.depth`, `.ions`,
-`.recoils`), `.vacancy` (`.depth`, `.knock_ons`, `.vacancies`), `.ioniz`, `.phonons`,
+`run()` returns `Results` with `.range` (ion distribution vs depth: `.ion`, `.num_ions`, `.depth`, `.ions`,
+`.elements`), `.vacancy` (`.depth`, `.knock_ons`, `.vacancies`), `.ioniz`, `.phonons`,
 `.etorecoils` and `.novac` (full cascade only, else `None`). Stopping
 power tables: `from srim import SR` (see `SR(layer, ion, output_type=5).run()`).
 
