@@ -132,7 +132,7 @@ def test_sr_run_reads_results_from_relative_srim_directory(tmp_path, monkeypatch
     sr = SR(layer, ion, output_type=5)
 
     commands = []
-    monkeypatch.setattr(subprocess, "check_call", lambda cmd: commands.append(cmd))
+    monkeypatch.setattr(subprocess, "check_call", lambda cmd, **kw: commands.append(cmd))
     monkeypatch.chdir(tmp_path)
 
     results = sr.run(srim_directory="srim")
@@ -140,3 +140,21 @@ def test_sr_run_reads_results_from_relative_srim_directory(tmp_path, monkeypatch
     assert isinstance(results, SRResults)
     assert len(commands) == 1
     assert os.getcwd() == os.path.realpath(tmp_path)
+
+
+def test_launch_env_uses_private_prefix_only_with_wine(tmp_path, monkeypatch):
+    from srim import srim as srim_module
+
+    monkeypatch.setenv("WINEPREFIX", "/home/user/.wine")
+    monkeypatch.setenv("PYSRIM2_WINEPREFIX", str(tmp_path / "wine"))
+    before = dict(os.environ)
+
+    monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/wine" if name == "wine" else None)
+    env = srim_module._launch_env()
+    assert env["WINEPREFIX"] == str(tmp_path / "wine")
+    assert env["WINEARCH"] == "win32"
+    assert env["WINEDEBUG"] == "-all"
+    assert dict(os.environ) == before
+
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    assert srim_module._launch_env() == before

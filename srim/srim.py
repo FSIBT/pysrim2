@@ -17,8 +17,9 @@ from .core.utils import (
     is_zero_to_two,
 )
 from .input import AutoTRIM, SRInput, TRIMInput
+from .installer.wine import wine_env
 from .output import Results, SRResults
-from .paths import srim_dir
+from .paths import srim_dir, wine_prefix
 
 
 def _launch_command(executable):
@@ -45,6 +46,18 @@ def _launch_command(executable):
             return ["xvfb-run", "-a", "wine", exe]
         return ["wine", exe]
     return [exe]
+
+
+def _launch_env():
+    """Return the environment for the SRIM child process.
+
+    With ``wine`` on the PATH this points wine at pysrim2's private prefix
+    (never the user's ``$WINEPREFIX`` or ``~/.wine``), in the child's
+    environment only. Otherwise it is a plain copy of ``os.environ``.
+    """
+    if shutil.which("wine"):
+        return wine_env(wine_prefix())
+    return dict(os.environ)
 
 
 class TRIMSettings:
@@ -259,7 +272,7 @@ class TRIM:
             os.chdir(srim_directory)
             self._write_input_files()
             # Make sure compatible with Windows, OSX, and Linux
-            subprocess.check_call(_launch_command("TRIM.exe"))
+            subprocess.check_call(_launch_command("TRIM.exe"), env=_launch_env())
             os.chdir(current_directory)
             return Results(srim_directory)
         finally:
@@ -355,7 +368,7 @@ class SR:
             os.chdir(sr_directory)
             self._write_input_file()
             # Make sure compatible with Windows, OSX, and Linux
-            subprocess.check_call(_launch_command("SRModule.exe"))
+            subprocess.check_call(_launch_command("SRModule.exe"), env=_launch_env())
 
             return SRResults(sr_directory)
         finally:
