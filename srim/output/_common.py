@@ -43,7 +43,63 @@ class SRIMOutputParseError(Exception):
     pass
 
 
+def _header_symbols(output, pattern):
+    """Element symbols (as in the file, repeats included) from a table header."""
+    match = re.search(pattern, output, re.MULTILINE)
+    if not match:
+        return []
+    return [raw.decode("ascii") for raw in re.findall(rb"[A-Z][a-z]?", match.group(1))]
+
+
+def _element_names(names, count):
+    """Column names for target elements: header ``names`` made unique
+    (``Si``, ``Si_2``) if they match the number of columns, else ``1, 2, ...``."""
+    if len(names) != count:
+        return [str(i + 1) for i in range(count)]
+    seen = {}
+    unique = []
+    for name in names:
+        seen[name] = seen.get(name, 0) + 1
+        unique.append(name if seen[name] == 1 else f"{name}_{seen[name]}")
+    return unique
+
+
 class SRIM_Output:
+    _source = None
+
+    def _dataframe_columns(self):
+        """Ordered ``(column name, array)`` pairs for :attr:`df`; set by subclasses."""
+        raise NotImplementedError()
+
+    @property
+    def df(self):
+        """:class:`pandas.DataFrame` with one row per depth bin.
+
+        The first column is ``depth_A``; the others are documented in the
+        class docstring. Values equal the array properties of the object.
+        """
+        import pandas as pd
+
+        data = {}
+        for name, values in self._dataframe_columns():
+            values = np.asarray(values)
+            if values.ndim == 2:
+                for j in range(values.shape[1]):
+                    data[name[j]] = values[:, j]
+            else:
+                data[name] = values
+        return pd.DataFrame(data)
+
+    @property
+    def metadata(self):
+        """:obj:`dict` with ``ion`` (symbol), ``energy_eV``, ``num_ions`` and ``source`` (file path)"""
+        return {
+            "ion": self.ion.symbol,
+            "energy_eV": self.ion.energy,
+            "num_ions": self.num_ions,
+            "source": self._source,
+        }
+
     def _read_name(self, output):
         raise NotImplementedError()
 

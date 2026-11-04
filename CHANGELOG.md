@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `.df` (a pandas DataFrame, first column `depth_A`, columns named with SRIM units) and `.metadata` on `Ioniz`, `Vacancy`, `NoVacancy`, `EnergyToRecoils`, `Phonons` and `Range`; `Results.to_dataframes()` returns them as a dict.
+
 ### Fixed
 
 - `pysrim2 install` exits 130 with a `[skip] ... cancelled` line on Ctrl-C during a step instead of printing a traceback.

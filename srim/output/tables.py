@@ -5,6 +5,8 @@ import re
 
 from ._common import (
     SRIM_Output,
+    _element_names,
+    _header_symbols,
 )
 
 
@@ -41,6 +43,26 @@ class Results:
         self.phonons = Phonons(directory)
         self.range = Range(directory)
 
+    def to_dataframes(self):
+        """Depth-profile outputs as :class:`pandas.DataFrame` objects
+
+        Returns
+        -------
+        :obj:`dict`
+            Keys ``ioniz``, ``vacancy``, ``novac``, ``e2recoil``, ``phonon``,
+            ``range``; outputs that are missing (e.g. ``novac`` for
+            Kinchin-Pease calculations) are omitted.
+        """
+        outputs = {
+            "ioniz": self.ioniz,
+            "vacancy": self.vacancy,
+            "novac": self.novac,
+            "e2recoil": self.etorecoils,
+            "phonon": self.phonons,
+            "range": self.range,
+        }
+        return {key: out.df for key, out in outputs.items() if out is not None}
+
 
 class Ioniz(SRIM_Output):
     """``IONIZ.txt`` Ionization by ions and depth. Includes header information about calculation
@@ -51,6 +73,16 @@ class Ioniz(SRIM_Output):
          directory of calculation
     filename : :obj:`str`, optional
          filename for Ioniz. Default ``IONIZ.txt``
+
+    Attributes
+    ----------
+    df : :class:`pandas.DataFrame`
+        One row per depth bin. Columns:
+          - ``depth_A``: depth of bin [Ang]
+          - ``ions_eV_per_A_per_ion``: ionization by ions [eV/(Angstrom-Ion)]
+          - ``recoils_eV_per_A_per_ion``: ionization by recoils [eV/(Angstrom-Ion)]
+    metadata : :obj:`dict`
+        ``ion``, ``energy_eV``, ``num_ions``, ``source``
     """
 
     def __init__(self, directory, filename="IONIZ.txt"):
@@ -60,6 +92,7 @@ class Ioniz(SRIM_Output):
             num_ions = self._read_num_ions(output)
             data = self._read_table(output)
 
+        self._source = os.path.join(directory, filename)
         self._ion = ion
         self._num_ions = num_ions
         self._depth = data[:, 0]
@@ -96,6 +129,13 @@ class Ioniz(SRIM_Output):
         in recoil ions"""
         return self._recoils
 
+    def _dataframe_columns(self):
+        return [
+            ("depth_A", self._depth),
+            ("ions_eV_per_A_per_ion", self._ions),
+            ("recoils_eV_per_A_per_ion", self._recoils),
+        ]
+
 
 class Vacancy(SRIM_Output):
     """``VACANCY.txt`` Table of the final distribution of vacancies vs depth
@@ -106,6 +146,17 @@ class Vacancy(SRIM_Output):
          directory of calculation
     filename : :obj:`str`, optional
          filename for Vacancy. Default ``VACANCY.txt``
+
+    Attributes
+    ----------
+    df : :class:`pandas.DataFrame`
+        One row per depth bin. Columns:
+          - ``depth_A``: depth of bin [Ang]
+          - ``knock_ons_per_A_per_ion``: primary knock-ons by the ion [Vacancies/(Angstrom-Ion)]
+          - ``vacancies_<element>_per_A_per_ion``: vacancies of each target element,
+            in file order (a repeated element becomes ``Si``, ``Si_2``, ...)
+    metadata : :obj:`dict`
+        ``ion``, ``energy_eV``, ``num_ions``, ``source``
     """
 
     def __init__(self, directory, filename="VACANCY.txt"):
@@ -114,12 +165,15 @@ class Vacancy(SRIM_Output):
             ion = self._read_ion(output)
             num_ions = self._read_num_ions(output)
             data = self._read_table(output)
+            symbols = _header_symbols(output, rb"^\s*DEPTH((?:\s+[A-Z][a-z]?)+)\s*$")
 
+        self._source = os.path.join(directory, filename)
         self._ion = ion
         self._num_ions = num_ions
         self._depth = data[:, 0]
         self._ion_knock_ons = data[:, 1]
         self._vacancies = data[:, 2:]
+        self._elements = _element_names(symbols[1:], self._vacancies.shape[1])
 
     @property
     def ion(self):
@@ -149,6 +203,13 @@ class Vacancy(SRIM_Output):
         """Vacancies [Vacancies/(Angstrom-Ion)] produced of element in layer"""
         return self._vacancies
 
+    def _dataframe_columns(self):
+        return [
+            ("depth_A", self._depth),
+            ("knock_ons_per_A_per_ion", self._ion_knock_ons),
+            ([f"vacancies_{e}_per_A_per_ion" for e in self._elements], self._vacancies),
+        ]
+
 
 class NoVacancy(SRIM_Output):
     """``NOVAC.txt`` Table of Replacement Collisions
@@ -159,6 +220,15 @@ class NoVacancy(SRIM_Output):
          directory of calculation
     filename : :obj:`str`, optional
          filename for NoVacancy. Default ``NOVAC.txt``
+
+    Attributes
+    ----------
+    df : :class:`pandas.DataFrame`
+        One row per depth bin. Columns:
+          - ``depth_A``: depth of bin [Ang]
+          - ``replacements_per_A_per_ion``: replacement collisions [Number/(Angstrom-Ion)]
+    metadata : :obj:`dict`
+        ``ion``, ``energy_eV``, ``num_ions``, ``source``
     """
 
     def __init__(self, directory, filename="NOVAC.txt"):
@@ -173,6 +243,7 @@ class NoVacancy(SRIM_Output):
             num_ions = self._read_num_ions(output)
             data = self._read_table(output)
 
+        self._source = os.path.join(directory, filename)
         self._ion = ion
         self._num_ions = num_ions
         self._depth = data[:, 0]
@@ -201,6 +272,12 @@ class NoVacancy(SRIM_Output):
         """Replacement Collisions [Number/(Angstrom-Ion)]"""
         return self._number
 
+    def _dataframe_columns(self):
+        return [
+            ("depth_A", self._depth),
+            ("replacements_per_A_per_ion", self._number),
+        ]
+
 
 class EnergyToRecoils(SRIM_Output):
     """``E2RECOIL.txt`` Energy transfered to atoms through binary collision
@@ -211,6 +288,17 @@ class EnergyToRecoils(SRIM_Output):
          directory of calculation
     filename : :obj:`str`, optional
          filename for EnergyToRecoils. Default ``E2RECOIL.txt``
+
+    Attributes
+    ----------
+    df : :class:`pandas.DataFrame`
+        One row per depth bin. Columns:
+          - ``depth_A``: depth of bin [Ang]
+          - ``ions_eV_per_A_per_ion``: energy from ions [eV/(Angstrom-Ion)]
+          - ``absorbed_<element>_eV_per_A_per_ion``: energy absorbed by each target
+            element [eV/(Angstrom-Ion)]
+    metadata : :obj:`dict`
+        ``ion``, ``energy_eV``, ``num_ions``, ``source``
     """
 
     def __init__(self, directory, filename="E2RECOIL.txt"):
@@ -219,12 +307,17 @@ class EnergyToRecoils(SRIM_Output):
             ion = self._read_ion(output)
             num_ions = self._read_num_ions(output)
             data = self._read_table(output)
+            symbols = _header_symbols(
+                output, rb"^\s*\(Ang\.\)\s+IONS((?:\s+by\s+[A-Z][a-z]?)+)\s*$"
+            )
 
+        self._source = os.path.join(directory, filename)
         self._ion = ion
         self._num_ions = num_ions
         self._depth = data[:, 0]
         self._ions = data[:, 1]
         self._recoils = data[:, 2:]
+        self._elements = _element_names(symbols, self._recoils.shape[1])
 
     @property
     def ion(self):
@@ -257,6 +350,13 @@ class EnergyToRecoils(SRIM_Output):
         """
         return self._recoils
 
+    def _dataframe_columns(self):
+        return [
+            ("depth_A", self._depth),
+            ("ions_eV_per_A_per_ion", self._ions),
+            ([f"absorbed_{e}_eV_per_A_per_ion" for e in self._elements], self._recoils),
+        ]
+
 
 class Phonons(SRIM_Output):
     """``PHONON.txt``  Distribution of Phonons
@@ -267,6 +367,16 @@ class Phonons(SRIM_Output):
          directory of calculation
     filename : :obj:`str`, optional
          filename for Phonons. Default ``PHONON.txt``
+
+    Attributes
+    ----------
+    df : :class:`pandas.DataFrame`
+        One row per depth bin. Columns:
+          - ``depth_A``: depth of bin [Ang]
+          - ``ions_phonons_per_A_per_ion``: phonons from ions [Phonons/(Angstrom-Ion)]
+          - ``recoils_phonons_per_A_per_ion``: phonons from recoils [Phonons/(Angstrom-Ion)]
+    metadata : :obj:`dict`
+        ``ion``, ``energy_eV``, ``num_ions``, ``source``
     """
 
     def __init__(self, directory, filename="PHONON.txt"):
@@ -276,6 +386,7 @@ class Phonons(SRIM_Output):
             num_ions = self._read_num_ions(output)
             data = self._read_table(output)
 
+        self._source = os.path.join(directory, filename)
         self._ion = ion
         self._num_ions = num_ions
         self._depth = data[:, 0]
@@ -311,6 +422,13 @@ class Phonons(SRIM_Output):
         resulting from ion collisions"""
         return self._recoils
 
+    def _dataframe_columns(self):
+        return [
+            ("depth_A", self._depth),
+            ("ions_phonons_per_A_per_ion", self._ions),
+            ("recoils_phonons_per_A_per_ion", self._recoils),
+        ]
+
 
 class Range(SRIM_Output):
     """``RANGE.txt`` Table of the final distribution of the ions, and any recoiling target atoms
@@ -321,6 +439,18 @@ class Range(SRIM_Output):
          directory of calculation
     filename : :obj:`str`, optional
          filename for Range. Default ``RANGE.txt``
+
+    Attributes
+    ----------
+    df : :class:`pandas.DataFrame`
+        One row per depth bin. Columns:
+          - ``depth_A``: depth of bin [Ang]
+          - ``ions_atoms_per_cm3_per_atoms_per_cm2``: final ion distribution
+            [(Atoms/cm3)/(Atoms/cm2)]
+          - ``<element>_atoms_per_cm3_per_atoms_per_cm2``: target atoms of each
+            element, in file order [(Atoms/cm3)/(Atoms/cm2)]
+    metadata : :obj:`dict`
+        ``ion``, ``energy_eV``, ``num_ions``, ``source``
     """
 
     def __init__(self, directory, filename="RANGE.txt"):
@@ -329,12 +459,15 @@ class Range(SRIM_Output):
             ion = self._read_ion(output)
             num_ions = self._read_num_ions(output)
             data = self._read_table(output)
+            symbols = _header_symbols(output, rb"^\s*DEPTH((?:\s+[A-Z][a-z]?)+)\s*$")
 
+        self._source = os.path.join(directory, filename)
         self._ion = ion
         self._num_ions = num_ions
         self._depth = data[:, 0]
         self._ions = data[:, 1]
         self._elements = data[:, 2:]
+        self._element_names = _element_names(symbols[1:], self._elements.shape[1])
 
     @property
     def ion(self):
@@ -363,3 +496,10 @@ class Range(SRIM_Output):
     def elements(self):
         """Per elements [(Atoms/cm3)/(Atoms/cm2)] distribution of each element"""
         return self._elements
+
+    def _dataframe_columns(self):
+        return [
+            ("depth_A", self._depth),
+            ("ions_atoms_per_cm3_per_atoms_per_cm2", self._ions),
+            ([f"{e}_atoms_per_cm3_per_atoms_per_cm2" for e in self._element_names], self._elements),
+        ]
