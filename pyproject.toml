@@ -71,6 +71,9 @@ dev = [
     "ruff",
     "pre-commit",
     "matplotlib",
+    "nbclient",
+    "ipykernel",
+    "nbformat",
     "pysrim2[parquet,hdf5]",
 ]
 docs = [
