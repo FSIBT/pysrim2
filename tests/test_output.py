@@ -258,3 +258,18 @@ def test_sr_range_in_kilometres_converted_to_micrometres(tmp_path):
     (tmp_path / "SR_OUTPUT.txt").write_bytes(raw.replace(old, new))
     results = SRResults(str(tmp_path))
     assert results.data[3][2] == pytest.approx(5e8)  # 0.5 km -> um
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "Backscat", "Collision", "EnergyToRecoils", "Ioniz", "NoVacancy", "Phonons", "Range",
+        "Results", "SRIM_Output", "SRIMOutputParseError", "SRResults", "Sputter", "Transmit",
+        "Vacancy", "buffered_findall", "double_regex", "int_regex", "symbol_regex",
+        "energy_prefixes", "length_prefixes", "_to_float", "_prefix_factor",
+    ],
+)  # fmt: skip
+def test_output_package_exposes_public_names(name):
+    import srim.output
+
+    assert hasattr(srim.output, name)
