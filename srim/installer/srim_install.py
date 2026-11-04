@@ -23,7 +23,7 @@ TIMEOUT_SECONDS = 60
 CHUNK_SIZE = 1 << 16
 MARKER_NAME = ".pysrim2-installed"
 MANUAL_SOURCE = "https://github.com/FSIBT/pysrim2/releases/tag/srim-2013"
-NOTICE = "SRIM © SRIM.com (J. F. Ziegler) — free for non-commercial use only; see LEGAL.rtf."
+NOTICE = "SRIM © SRIM.com (James F. Ziegler) — free for non-commercial use only; see LEGAL.rtf"
 
 
 class SrimInstallError(RuntimeError):
@@ -33,14 +33,15 @@ class SrimInstallError(RuntimeError):
 def install_srim(dest: Path, asset: Asset = SRIM_ASSET, *, cache: Path | None = None) -> Path:
     """Install SRIM into ``dest`` and return ``dest``.
 
-    Does nothing if ``dest`` already holds this asset's install. Raises
-    ``SrimInstallError`` if ``dest`` exists but is not such an install, which is
-    never removed or overwritten.
+    Returns immediately if ``dest`` already holds ``TRIM.exe``, for example an
+    install that was copied in by hand. Raises ``SrimInstallError`` if ``dest``
+    is a non-empty directory without ``TRIM.exe``; such a directory is never
+    removed or overwritten.
     """
     dest = Path(dest)
-    if _is_installed(dest, asset):
+    if (dest / "TRIM.exe").is_file():
         return dest
-    _refuse_existing(dest, asset)
+    _refuse_existing(dest)
 
     cache = Path(cache) if cache is not None else data_dir() / "cache"
     zip_path = _fetch(asset, cache, dest)
@@ -50,28 +51,28 @@ def install_srim(dest: Path, asset: Asset = SRIM_ASSET, *, cache: Path | None = 
     try:
         top = _unpack(zip_path, staging, asset)
         _write_markers(top, asset)
-        _refuse_existing(dest, asset)
-        os.replace(top, dest)
+        _refuse_existing(dest)
+        _replace(top, dest)
     finally:
         shutil.rmtree(staging, ignore_errors=True)
     return dest
 
 
-def _is_installed(dest: Path, asset: Asset) -> bool:
-    marker = dest / MARKER_NAME
+def _refuse_existing(dest: Path) -> None:
+    """Refuse a non-empty ``dest`` that does not hold ``TRIM.exe``."""
+    if not dest.exists() or (dest.is_dir() and not any(dest.iterdir())):
+        return
+    raise SrimInstallError(
+        f"{dest} already exists and is not a SRIM install (no TRIM.exe). Remove it, "
+        "or set PYSRIM2_SRIM_DIR to an existing SRIM install."
+    )
+
+
+def _replace(src: Path, dst: Path) -> None:
     try:
-        recorded = marker.read_text().strip()
-    except OSError:
-        return False
-    return recorded == asset.sha256 and (dest / "TRIM.exe").is_file()
-
-
-def _refuse_existing(dest: Path, asset: Asset) -> None:
-    if dest.exists() and not _is_installed(dest, asset):
-        raise SrimInstallError(
-            f"{dest} already exists and is not a pysrim2 SRIM install. Remove it, "
-            "or set PYSRIM2_SRIM_DIR to an existing SRIM install."
-        )
+        os.replace(src, dst)
+    except OSError as exc:
+        raise SrimInstallError(f"could not move {src} to {dst}: {exc}") from exc
 
 
 def _fetch(asset: Asset, cache: Path, dest: Path) -> Path:
@@ -92,7 +93,7 @@ def _fetch(asset: Asset, cache: Path, dest: Path) -> Path:
             _download(url, part)
             problem = _problem(part, asset)
             if problem is None:
-                os.replace(part, cached)
+                _replace(part, cached)
                 return cached
             failures.append((url, problem))
         except (OSError, http.client.HTTPException, ValueError) as exc:
@@ -104,7 +105,8 @@ def _fetch(asset: Asset, cache: Path, dest: Path) -> Path:
     lines += [f"  {url}: {problem}" for url, problem in failures]
     lines.append(
         f"Download {asset.name} manually from {MANUAL_SOURCE}, check its SHA-256 "
-        f"({asset.sha256}), and unzip it to {dest}."
+        f"({asset.sha256}), unzip it and copy the contents of its top-level srim/ folder "
+        f"into {dest}, or unzip it anywhere and set PYSRIM2_SRIM_DIR to that srim/ folder."
     )
     lines.append(NOTICE)
     raise SrimInstallError("\n".join(lines))
@@ -145,6 +147,8 @@ def _unpack(zip_path: Path, staging: Path, asset: Asset) -> Path:
             archive.extractall(staging)
     except zipfile.BadZipFile as exc:
         raise SrimInstallError(f"{asset.name} is not a valid zip file: {exc}") from exc
+    except OSError as exc:
+        raise SrimInstallError(f"could not extract {asset.name} into {staging}: {exc}") from exc
 
     top_names = {parts[0] for _, parts in parts_by_member}
     if len(top_names) == 1 and all(

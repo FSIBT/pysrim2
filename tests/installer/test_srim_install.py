@@ -1,13 +1,15 @@
 import hashlib
 import http.server
+import os
 import threading
 import zipfile
+from pathlib import Path
 
 import pytest
 
 from srim.installer import srim_install
 from srim.installer.assets import Asset
-from srim.installer.srim_install import SrimInstallError, install_srim
+from srim.installer.srim_install import MARKER_NAME, SrimInstallError, install_srim
 
 ZIP_NAME = "srim.2013.zip"
 MANUAL_URL = "https://github.com/FSIBT/pysrim2/releases/tag/srim-2013"
@@ -271,8 +273,14 @@ def test_all_urls_failing_gives_manual_instructions(tmp_path, fake_zip, http_ser
         assert url in message
     assert f"Download {ZIP_NAME} manually from {MANUAL_URL}" in message
     assert f"check its SHA-256 ({asset.sha256})" in message
-    assert f"unzip it to {dest}." in message
-    assert message.count("SRIM © SRIM.com (J. F. Ziegler) — free for non-commercial use only") == 1
+    assert (
+        "unzip it and copy the contents of its top-level srim/ folder "
+        f"into {dest}, or unzip it anywhere and set PYSRIM2_SRIM_DIR to that srim/ folder."
+    ) in message
+    assert message.count("SRIM © SRIM.com (James F. Ziegler)") == 1
+    assert message.endswith(
+        "SRIM © SRIM.com (James F. Ziegler) — free for non-commercial use only; see LEGAL.rtf"
+    )
     assert not dest.exists()
 
 
@@ -287,3 +295,85 @@ def test_corrupt_zip_with_matching_hash_raises_and_leaves_no_dest(tmp_path):
         install_srim(tmp_path / "install", asset, cache=tmp_path / "cache")
 
     assert not (tmp_path / "install").exists()
+
+
+def test_wrong_hash_from_first_url_falls_back_to_good_second(tmp_path, fake_zip, http_server):
+    good = fake_zip.read_bytes()
+    http_server.routes["/bad.zip"] = (200, b"\0" * len(good), None)  # same size, wrong bytes
+    http_server.routes["/good.zip"] = (200, good, None)
+    asset = make_asset(
+        fake_zip, [url_for(http_server, "/bad.zip"), url_for(http_server, "/good.zip")]
+    )
+    dest = tmp_path / "install"
+    cache = tmp_path / "cache"
+
+    install_srim(dest, asset, cache=cache)
+
+    assert (dest / "TRIM.exe").is_file()
+    assert sorted(p.name for p in cache.iterdir()) == [ZIP_NAME]
+    assert sha256_of(cache / ZIP_NAME) == asset.sha256
+    assert leftover_temp_dirs(tmp_path) == []
+
+
+def test_manual_copy_with_trim_exe_is_accepted_without_writing(tmp_path, fake_zip, monkeypatch):
+    dest = tmp_path / "manual"
+    (dest / "Data").mkdir(parents=True)
+    (dest / "TRIM.exe").write_bytes(b"MZ manual copy")
+    asset = make_asset(fake_zip, [fake_zip.as_uri()])
+
+    def no_network(*args, **kwargs):
+        raise AssertionError("network used for an existing install")
+
+    monkeypatch.setattr(srim_install.urllib.request, "urlopen", no_network)
+
+    assert install_srim(dest, asset, cache=tmp_path / "cache") == dest
+    assert (dest / "TRIM.exe").read_bytes() == b"MZ manual copy"
+    assert not (dest / MARKER_NAME).exists()
+    assert not (dest / "TRIMAUTO").exists()
+
+
+def test_empty_dest_directory_is_installed_into(tmp_path, fake_zip):
+    dest = tmp_path / "empty"
+    dest.mkdir()
+    asset = make_asset(fake_zip, [fake_zip.as_uri()])
+
+    install_srim(dest, asset, cache=tmp_path / "cache")
+
+    assert (dest / "TRIM.exe").is_file()
+
+
+def test_replace_os_error_becomes_install_error(tmp_path, fake_zip, monkeypatch):
+    dest = tmp_path / "install"
+    asset = make_asset(fake_zip, [fake_zip.as_uri()])
+    real_replace = os.replace
+
+    def failing_replace(src, dst):
+        if Path(dst) == dest:
+            raise OSError(28, "No space left on device")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(srim_install.os, "replace", failing_replace)
+
+    with pytest.raises(SrimInstallError, match="No space left on device") as info:
+        install_srim(dest, asset, cache=tmp_path / "cache")
+
+    assert str(dest) in str(info.value)
+    assert not dest.exists()
+    assert leftover_temp_dirs(tmp_path) == []
+
+
+def test_extract_os_error_becomes_install_error(tmp_path, fake_zip, monkeypatch):
+    dest = tmp_path / "install"
+    asset = make_asset(fake_zip, [fake_zip.as_uri()])
+
+    def locked(self, path=None, *args, **kwargs):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(zipfile.ZipFile, "extractall", locked)
+
+    with pytest.raises(SrimInstallError, match="Permission denied") as info:
+        install_srim(dest, asset, cache=tmp_path / "cache")
+
+    assert "could not extract srim.2013.zip" in str(info.value)
+    assert not dest.exists()
+    assert leftover_temp_dirs(tmp_path) == []
