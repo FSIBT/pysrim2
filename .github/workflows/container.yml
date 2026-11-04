@@ -52,9 +52,9 @@ jobs:
       # runner is, so nothing may be written into the mount.
       - name: Run the SRIM tests inside the image
         run: >
-          docker run --rm --security-opt seccomp=srim/data/seccomp-docker.json -v "$PWD/tests:/tests-src:ro"
+          docker run --rm --security-opt seccomp=srim/data/seccomp-docker.json -v "$PWD/tests:/tests-src:ro" -v "$PWD/examples:/examples-src:ro"
           -e PYTHONDONTWRITEBYTECODE=1 -w /data pysrim2:ci
-          sh -c 'cp -r /tests-src /data/tests && pytest -m srim -p no:cacheprovider tests/integration'
+          sh -c 'cp -r /tests-src /data/tests && cp -r /examples-src /data/examples && pytest -m srim -p no:cacheprovider tests/integration'
 
   publish:
     name: publish image
