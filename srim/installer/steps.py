@@ -6,6 +6,7 @@ factory with ``register``; ``plan`` turns component names into steps. Other
 modules register further components (``image``, ``runtime``, ``skill``).
 """
 
+import shlex
 import shutil
 import subprocess
 import sys
@@ -142,8 +143,12 @@ def _run_wine_packages() -> None:
             f"unknown distribution; install wine and xvfb yourself, see {WINE_DOCS}"
         )
     for command in commands:
+        if not command.strip() or command.lstrip().startswith("#"):
+            raise WineSetupError(
+                f"refusing to run {command!r}; install wine yourself, see {WINE_DOCS}"
+            )
         try:
-            subprocess.run(command, shell=True, check=True, timeout=PACKAGE_TIMEOUT_SECONDS)
+            subprocess.run(shlex.split(command), check=True, timeout=PACKAGE_TIMEOUT_SECONDS)
         except (OSError, subprocess.SubprocessError) as exc:
             raise WineSetupError(f"{command} failed: {exc}") from exc
 

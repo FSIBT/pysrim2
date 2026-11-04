@@ -2,12 +2,13 @@
 
 import argparse
 import json
+import subprocess
 import sys
 
 import srim
 from srim.installer import steps as steps_module
 from srim.installer.srim_install import NOTICE, SrimInstallError
-from srim.installer.steps import COMPONENTS, ComponentUnavailable, Step
+from srim.installer.steps import COMPONENTS, ComponentUnavailable
 from srim.installer.wine import WineSetupError, wine_status
 from srim.paths import srim_dir
 
@@ -48,11 +49,9 @@ def _print_commands(commands: list[str]) -> None:
         print(f"    {command}")
 
 
-def _confirm(step: Step) -> bool:
-    if not sys.stdin.isatty():
-        return False
+def _confirm() -> bool:
     try:
-        return input(f"Run these commands for {step.name}? [y/N] ").strip().lower() == "y"
+        return input("> ").strip().lower() == "y"
     except EOFError:
         return False
 
@@ -98,9 +97,15 @@ def _install(args) -> int:
             _print_commands(commands)
             continue
         if step.needs_admin and not args.yes:
-            print(f"[skip] {step.name}: needs admin rights — rerun with --yes or run:")
-            _print_commands(commands)
-            if not _confirm(step):
+            if sys.stdin.isatty():
+                print(f"[ask] {step.name}: needs admin rights — run these commands? [y/N]")
+                _print_commands(commands)
+                confirmed = _confirm()
+            else:
+                confirmed = False
+            if not confirmed:
+                print(f"[skip] {step.name}: needs admin rights — rerun with --yes or run:")
+                _print_commands(commands)
                 admin_skipped = True
                 unmet.add(step.name)
                 continue
@@ -109,7 +114,7 @@ def _install(args) -> int:
             _print_commands(commands)
         try:
             step.run()
-        except (SrimInstallError, WineSetupError, OSError) as exc:
+        except (SrimInstallError, WineSetupError, subprocess.SubprocessError, OSError) as exc:
             print(f"[fail] {step.name}: {exc}", file=sys.stderr)
             failed = True
             break

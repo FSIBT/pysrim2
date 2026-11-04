@@ -2,7 +2,7 @@ import pytest
 
 from srim.installer import steps
 from srim.installer.steps import ComponentUnavailable, Step, plan
-from srim.installer.wine import WineStatus
+from srim.installer.wine import WineSetupError, WineStatus
 
 
 def _step(name):
@@ -83,9 +83,41 @@ def test_wine_component_not_on_macos(monkeypatch):
         plan(["wine"])
 
 
-def test_wine_packages_run_executes_commands(monkeypatch):
+def test_wine_packages_run_executes_argv_without_shell(monkeypatch):
     seen = []
-    monkeypatch.setattr(steps, "distro_wine_commands", lambda: ["a", "b"])
-    monkeypatch.setattr(steps.subprocess, "run", lambda cmd, **kw: seen.append(cmd))
+    monkeypatch.setattr(
+        steps, "distro_wine_commands", lambda: ["sudo apt-get install -y 'a b'", "b"]
+    )
+    monkeypatch.setattr(steps.subprocess, "run", lambda cmd, **kw: seen.append((cmd, kw)))
     steps._run_wine_packages()
-    assert seen == ["a", "b"]
+    assert [c for c, _ in seen] == [["sudo", "apt-get", "install", "-y", "a b"], ["b"]]
+    assert all("shell" not in kw for _, kw in seen)
+
+
+def test_wine_packages_stop_after_first_failure(monkeypatch):
+    seen = []
+
+    def run(cmd, **kw):
+        seen.append(cmd)
+        raise steps.subprocess.CalledProcessError(1, cmd)
+
+    monkeypatch.setattr(steps, "distro_wine_commands", lambda: ["a", "b"])
+    monkeypatch.setattr(steps.subprocess, "run", run)
+    with pytest.raises(WineSetupError):
+        steps._run_wine_packages()
+    assert seen == [["a"]]
+
+
+def test_wine_packages_unknown_distro(monkeypatch):
+    monkeypatch.setattr(steps, "distro_wine_commands", lambda: [])
+    called = []
+    monkeypatch.setattr(steps.subprocess, "run", lambda *a, **k: called.append(a))
+    with pytest.raises(WineSetupError, match="unknown distribution"):
+        steps._run_wine_packages()
+    assert called == []
+
+
+def test_wine_packages_refuse_comment_lines(monkeypatch):
+    monkeypatch.setattr(steps, "distro_wine_commands", lambda: ["# note"])
+    with pytest.raises(WineSetupError, match="refusing"):
+        steps._run_wine_packages()

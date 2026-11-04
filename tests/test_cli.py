@@ -134,3 +134,27 @@ def test_doctor_all_ok(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(steps, "current_platform", lambda: "windows")
     assert cli.main(["doctor"]) == 0
     assert "[!!]" not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("answer", "code", "ran"), [("y", 0, ["wine-packages", "wine"]), ("n", 2, [])]
+)
+def test_interactive_confirmation(rec, monkeypatch, capsys, answer, code, ran):
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda prompt="": answer)
+    assert cli.main(["install", "wine"]) == code
+    out = capsys.readouterr().out
+    assert "[ask] wine-packages: needs admin rights — run these commands? [y/N]" in out
+    assert ("[skip] wine-packages" in out) == (answer == "n")
+    assert rec.ran == ran
+
+
+def test_subprocess_error_is_reported(rec, capsys):
+    import subprocess
+
+    def boom():
+        raise subprocess.TimeoutExpired("cmd", 1)
+
+    steps.register("srim", lambda: Step("srim", "s", lambda: False, lambda: [], boom))
+    assert cli.main(["install", "srim"]) == 1
+    assert "[fail] srim:" in capsys.readouterr().err
