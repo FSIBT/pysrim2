@@ -36,6 +36,9 @@ WINETRICKS_VERBS = ("comdlg32ocx", "msflxgrd", "richtx32", "comctl32ocx", "tabct
 SETUP_TIMEOUT_SECONDS = 600
 OUTPUT_TAIL_LINES = 20
 KILL_TIMEOUT_SECONDS = 15
+SHUTDOWN_TIMEOUT_SECONDS = 60
+DLL_OVERRIDES = "winebus.sys,wineusb.sys,winebth.sys=d;mscoree,mshtml="
+AEDEBUG_KEY = r"HKLM\Software\Microsoft\Windows NT\CurrentVersion\AeDebug"
 DLLS = ("msvbvm50.dll", "comcat.dll")
 MARKER_NAME = ".pysrim2-vb5"
 WINE_DOCS = "https://wiki.winehq.org/Download"
@@ -46,6 +49,10 @@ WINE_MANUAL_HINT = (
 
 class WineSetupError(RuntimeError):
     """The wine prefix could not be set up."""
+
+
+class WineTimeoutError(WineSetupError):
+    """A wine command did not finish in time."""
 
 
 @dataclass(frozen=True)
@@ -101,6 +108,11 @@ def wine_env(prefix: Path) -> dict[str, str]:
     env["WINEPREFIX"] = str(prefix)
     env["WINEARCH"] = "win32"
     env["WINEDEBUG"] = "-all"
+    # SRIM needs no controller/USB/Bluetooth drivers (they crash without SDL on
+    # some distros and keep wineserver alive) and no Mono/Gecko install prompts.
+    overrides = os.environ.get("WINEDLLOVERRIDES")
+    ours = DLL_OVERRIDES if not overrides else f"{overrides};{DLL_OVERRIDES}"
+    env["WINEDLLOVERRIDES"] = ours
     return env
 
 
@@ -147,14 +159,15 @@ def setup_wine_prefix(prefix: Path, progress: Callable[[str], None] | None = Non
         try:
             note("  - creating wine prefix (wineboot)…")
             _run([*xvfb, "wineboot", "-i"], env)
-            _wait_for_wineserver(env, xvfb)
+            _disable_crash_debugger(env, xvfb)
+            _wait_for_wineserver(env, xvfb, note)
             note(
                 "  - installing OCX controls with winetricks (downloads; can take several minutes)…"
             )
             cache = data_dir() / "cache" / "winetricks"
             cache.mkdir(parents=True, exist_ok=True)
             _run([*xvfb, *winetricks, "-q", *WINETRICKS_VERBS], {**env, "W_CACHE": str(cache)})
-            _wait_for_wineserver(env, xvfb)
+            _wait_for_wineserver(env, xvfb, note)
         except BaseException:
             # Failure or Ctrl-C: do not leave this prefix's wine processes running.
             _kill_wineserver(env)
@@ -207,18 +220,41 @@ def _kill_wineserver(env: dict[str, str]) -> None:
         pass
 
 
-def _wait_for_wineserver(env: dict[str, str], xvfb: list[str]) -> None:
+def _disable_crash_debugger(env: dict[str, str], xvfb: list[str]) -> None:
+    """Empty wine's ``AeDebug`` debugger so a crashing wine process never waits on winedbg.
+
+    Best effort: a failure here is not an error (Ctrl-C still propagates).
+    """
+    cmd = [*xvfb, "wine", "reg", "add", AEDEBUG_KEY, "/v", "Debugger", "/t", "REG_SZ"]
+    try:
+        _run([*cmd, "/d", "", "/f"], env, timeout=SHUTDOWN_TIMEOUT_SECONDS)
+    except WineSetupError:
+        pass
+
+
+def _wait_for_wineserver(
+    env: dict[str, str], xvfb: list[str], note: Callable[[str], None] | None = None
+) -> None:
     """Wait until wine's background processes finish (``wineserver -w``).
 
     Ubuntu does not put ``wineserver`` on PATH; if it cannot be found, ask
-    wine to end its session instead.
+    wine to end its session instead. If wine does not shut down within
+    ``SHUTDOWN_TIMEOUT_SECONDS`` (a crashed driver host can keep it alive),
+    stop it with ``wineserver -k`` and carry on.
     """
     server = _wineserver()
-    if server:
-        _run([server, "-w"], env)
-    else:
-        _run([*xvfb, "wine", "wineboot", "--end-session"], env)
-        _wait_until_no_wineserver()
+    try:
+        if server:
+            _run([server, "-w"], env, timeout=SHUTDOWN_TIMEOUT_SECONDS)
+        else:
+            _run(
+                [*xvfb, "wine", "wineboot", "--end-session"], env, timeout=SHUTDOWN_TIMEOUT_SECONDS
+            )
+            _wait_until_no_wineserver()
+    except WineTimeoutError:
+        _kill_wineserver(env)
+        if note:
+            note("  - wine did not shut down by itself; stopped it")
 
 
 def _wait_until_no_wineserver(timeout: float = 30.0) -> None:
@@ -238,7 +274,7 @@ def _wait_until_no_wineserver(timeout: float = 30.0) -> None:
         time.sleep(0.5)
 
 
-def _run(cmd: list[str], env: dict[str, str]) -> None:
+def _run(cmd: list[str], env: dict[str, str], timeout: float = SETUP_TIMEOUT_SECONDS) -> None:
     """Run ``cmd``; on failure raise WineSetupError with the tail of its output.
 
     Output goes to a temporary file, not a pipe: wine starts ``wineserver`` as a
@@ -251,7 +287,7 @@ def _run(cmd: list[str], env: dict[str, str]) -> None:
                 cmd,
                 env=env,
                 check=True,
-                timeout=SETUP_TIMEOUT_SECONDS,
+                timeout=timeout,
                 stdout=log,
                 stderr=subprocess.STDOUT,
             )
@@ -266,7 +302,10 @@ def _run(cmd: list[str], env: dict[str, str]) -> None:
             if output.strip():
                 tail = "\n".join(output.strip().splitlines()[-OUTPUT_TAIL_LINES:])
                 message += f"\nLast output:\n{tail}"
-            raise WineSetupError(message) from exc
+            error = (
+                WineTimeoutError if isinstance(exc, subprocess.TimeoutExpired) else WineSetupError
+            )
+            raise error(message) from exc
 
 
 def _winetricks_command() -> list[str]:

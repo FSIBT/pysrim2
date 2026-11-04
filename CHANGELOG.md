@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `pysrim2 install wine` no longer hangs when a wine driver host crashes (openSUSE, wine 11): the USB/controller/Bluetooth drivers and Mono/Gecko prompts are disabled through `WINEDLLOVERRIDES`, wine's crash debugger is emptied, and a wineserver that does not exit within 60 s is stopped.
 - `pysrim2 install wine` no longer hangs after `wineboot` finishes: wine output is captured in a temporary file, so the background `wineserver` cannot keep a pipe open (same for `TRIM.run()`/`SR.run()` stderr).
 - `TRIM.run()` and `SR.run()` no longer print xvfb's "X connection to :N broken" line when SRIM exits under wine; other stderr output is kept and shown after the run. A failing run raises `srim.srim.SRIMProcessError` (a `subprocess.CalledProcessError`) whose message includes that stderr.
 - `pysrim2 install` prints `[ok] <step>: installed` (with the SRIM directory for `srim`) after each step succeeds.

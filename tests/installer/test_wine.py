@@ -56,16 +56,31 @@ def test_setup_runs_recipe_and_copies_dlls(tmp_path, fake_system):
     cmds = [c for c, _ in fake_system]
     assert cmds[0][:3] == ["7z", "e", "-y"]
     assert cmds[1] == ["xvfb-run", *wine.XVFB_ARGS, "wineboot", "-i"]
-    assert cmds[2] == ["/usr/bin/wineserver", "-w"]
-    assert cmds[3][:6] == ["xvfb-run", *wine.XVFB_ARGS, "/usr/bin/bash", cmds[3][5]]
-    assert cmds[3][5].endswith("winetricks-" + wine.WINETRICKS_TAG)
-    assert cmds[3][6:] == ["-q", "comdlg32ocx", "msflxgrd", "richtx32", "comctl32ocx", "tabctl32"]
-    assert cmds[4] == ["/usr/bin/wineserver", "-w"]
-    assert all(kw["timeout"] == 600 for c, kw in fake_system if c[0] != "7z")
+    assert cmds[2][: len(wine.XVFB_ARGS) + 5] == [
+        "xvfb-run",
+        *wine.XVFB_ARGS,
+        "wine",
+        "reg",
+        "add",
+        wine.AEDEBUG_KEY,
+    ]
+    assert cmds[2][-6:] == ["/v", "Debugger", "/t", "REG_SZ", "/d", ""] or cmds[2][-2:] == [
+        "",
+        "/f",
+    ]
+    assert cmds[3] == ["/usr/bin/wineserver", "-w"]
+    assert cmds[4][:6] == ["xvfb-run", *wine.XVFB_ARGS, "/usr/bin/bash", cmds[4][5]]
+    assert cmds[4][5].endswith("winetricks-" + wine.WINETRICKS_TAG)
+    assert cmds[4][6:] == ["-q", "comdlg32ocx", "msflxgrd", "richtx32", "comctl32ocx", "tabctl32"]
+    assert cmds[5] == ["/usr/bin/wineserver", "-w"]
+    timeouts = {tuple(c[-2:]): kw["timeout"] for c, kw in fake_system if c[0] != "7z"}
+    assert timeouts[("/usr/bin/wineserver", "-w")] == wine.SHUTDOWN_TIMEOUT_SECONDS
+    assert all(kw["timeout"] in (600, 60) for c, kw in fake_system if c[0] != "7z")
     env = fake_system[1][1]["env"]
     assert env["WINEPREFIX"] == str(prefix)
     assert env["WINEARCH"] == "win32"
     assert env["WINEDEBUG"] == "-all"
+    assert env["WINEDLLOVERRIDES"] == "winebus.sys,wineusb.sys,winebth.sys=d;mscoree,mshtml="
     system32 = prefix / "drive_c" / "windows" / "system32"
     assert (system32 / "msvbvm50.dll").read_bytes() == b"vb5"
     assert (system32 / "comcat.dll").read_bytes() == b"comcat"
@@ -118,7 +133,7 @@ def test_setup_prefers_system_winetricks(tmp_path, fake_system, monkeypatch):
     monkeypatch.setattr(shutil, "which", fake_which({"wine", "7z", "winetricks", "curl"}))
     setup_wine_prefix(tmp_path / "wine")
     cmds = [c for c, _ in fake_system]
-    assert cmds[3][0] == "/usr/bin/winetricks"
+    assert cmds[4][0] == "/usr/bin/winetricks"
     assert not list((tmp_path / "home" / "cache").glob("winetricks-*"))
 
 
@@ -282,7 +297,7 @@ def test_wineserver_found_in_known_location(monkeypatch, tmp_path):
 def test_wait_for_wineserver_uses_wineserver_when_found(monkeypatch):
     calls = []
     monkeypatch.setattr(wine, "_wineserver", lambda: "/usr/lib/wine/wineserver")
-    monkeypatch.setattr(wine, "_run", lambda cmd, env: calls.append(cmd))
+    monkeypatch.setattr(wine, "_run", lambda cmd, env, timeout=600: calls.append(cmd))
     wine._wait_for_wineserver({}, ["xvfb-run", *wine.XVFB_ARGS])
     assert calls == [["/usr/lib/wine/wineserver", "-w"]]
 
@@ -290,7 +305,7 @@ def test_wait_for_wineserver_uses_wineserver_when_found(monkeypatch):
 def test_wait_for_wineserver_falls_back_to_end_session(monkeypatch):
     calls = []
     monkeypatch.setattr(wine, "_wineserver", lambda: None)
-    monkeypatch.setattr(wine, "_run", lambda cmd, env: calls.append(cmd))
+    monkeypatch.setattr(wine, "_run", lambda cmd, env, timeout=600: calls.append(cmd))
     monkeypatch.setattr(wine, "_wait_until_no_wineserver", lambda: calls.append("polled"))
     wine._wait_for_wineserver({}, ["xvfb-run", *wine.XVFB_ARGS])
     assert calls == [["xvfb-run", *wine.XVFB_ARGS, "wine", "wineboot", "--end-session"], "polled"]
@@ -386,3 +401,62 @@ def test_wine_output_is_captured_in_a_file_not_a_pipe(tmp_path, fake_system):
         assert kwargs["stdout"] not in (subprocess.PIPE, subprocess.DEVNULL, None), cmd
         assert hasattr(kwargs["stdout"], "fileno"), cmd
         assert kwargs["stderr"] == subprocess.STDOUT
+
+
+def test_wine_env_appends_to_user_dll_overrides(monkeypatch, tmp_path):
+    monkeypatch.setenv("WINEDLLOVERRIDES", "foo=n")
+    assert wine.wine_env(tmp_path)["WINEDLLOVERRIDES"] == f"foo=n;{wine.DLL_OVERRIDES}"
+    monkeypatch.delenv("WINEDLLOVERRIDES")
+    assert wine.wine_env(tmp_path)["WINEDLLOVERRIDES"] == wine.DLL_OVERRIDES
+
+
+@pytest.mark.parametrize("server", ["/usr/lib/wine/wineserver", None])
+def test_wait_timeout_kills_wineserver_and_continues(monkeypatch, server):
+    calls, notes = [], []
+    monkeypatch.setattr(wine, "_wineserver", lambda: server)
+
+    def run(cmd, env, timeout=600):
+        calls.append((cmd, timeout))
+        raise wine.WineTimeoutError("timed out")
+
+    monkeypatch.setattr(wine, "_run", run)
+    monkeypatch.setattr(wine, "_kill_wineserver", lambda env: calls.append(("kill", env)))
+    monkeypatch.setattr(wine, "_wait_until_no_wineserver", lambda: calls.append("polled"))
+    wine._wait_for_wineserver({"E": "1"}, ["xvfb-run"], notes.append)
+    assert calls[0][1] == 60
+    assert ("kill", {"E": "1"}) in calls
+    assert "polled" not in calls
+    assert notes == ["  - wine did not shut down by itself; stopped it"]
+
+
+def test_wait_other_errors_still_raise(monkeypatch):
+    monkeypatch.setattr(wine, "_wineserver", lambda: "/w")
+
+    def run(cmd, env, timeout=600):
+        raise WineSetupError("boom")
+
+    monkeypatch.setattr(wine, "_run", run)
+    with pytest.raises(WineSetupError):
+        wine._wait_for_wineserver({}, [], None)
+
+
+def test_run_raises_timeout_error_on_timeout(monkeypatch):
+    def run(cmd, **kwargs):
+        raise subprocess.TimeoutExpired(cmd, 1)
+
+    monkeypatch.setattr(subprocess, "run", run)
+    with pytest.raises(wine.WineTimeoutError):
+        wine._run(["x"], {}, timeout=1)
+
+
+def test_crash_debugger_failure_is_not_fatal(tmp_path, fake_system, monkeypatch):
+    real = subprocess.run
+
+    def run(cmd, **kwargs):
+        if "reg" in cmd:
+            raise subprocess.CalledProcessError(1, cmd)
+        return real(cmd, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", run)
+    setup_wine_prefix(tmp_path / "wine")
+    assert (tmp_path / "wine" / MARKER_NAME).exists()
