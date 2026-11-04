@@ -102,6 +102,7 @@ def test_repeated_element_names_are_unique():
     ]
 
 
+@pytest.mark.filterwarnings("ignore:.*stray recoil")
 @pytest.mark.parametrize("directory", list(CASES))
 def test_results_to_dataframes(directory):
     dfs = Results(os.path.join(D, directory)).to_dataframes()

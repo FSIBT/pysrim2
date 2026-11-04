@@ -33,15 +33,18 @@ def iter_row_chunks(rows, columns, dtypes, chunk_rows=50_000):
 
     Parameters
     ----------
-    rows : iterable of sequences with one value per column (``None`` becomes ``NaN`` in a
-        float column)
+    rows : iterable of sequences with one value per column. ``None`` becomes ``NaN`` in a
+        float column; integer columns cannot hold ``None``, so use float (or object) dtype
+        for nullable fields
     columns : list of column names
     dtypes : list of numpy dtypes (``int``, ``float``, ``object`` ...), one per column
     chunk_rows : rows per chunk; the arrays of one chunk are preallocated
 
     Yields
     ------
-    :class:`pandas.DataFrame` — at least one chunk is yielded only if there were rows.
+    :class:`pandas.DataFrame` — one per ``chunk_rows`` rows, the last one possibly
+    shorter; nothing is yielded if ``rows`` is empty
+    (:func:`concat_chunks` then gives an empty frame).
     """
     import pandas as pd
 

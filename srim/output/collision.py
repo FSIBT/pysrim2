@@ -2,6 +2,7 @@
 
 import os
 import re
+import warnings
 
 import numpy as np
 
@@ -88,12 +89,14 @@ def _parse_footer(first, lines):
     return footer
 
 
-def _records(lines):
+def _records(lines, skipped=None):
     """Walk the lines of COLLISON.txt, yielding ``("ion", collision, recoils, summary)``
     for every ion collision (with the recoils of its cascade and the cascade summary line,
     ``None`` if SRIM wrote none) and ``("footer", dict)`` for every ion footer.
 
     Lines are consumed one at a time; only the cascade of one collision is held.
+    ``skipped``, if given, is a dict whose ``"recoil"`` and ``"summary"`` counts are
+    incremented for each stray recoil line / orphan summary line that is skipped.
     """
     collision = None
     recoils = []
@@ -120,7 +123,10 @@ def _records(lines):
             if tokens and "Summary of Above Cascade" in tokens[0]:
                 # a second summary for one collision (SRIM lost the header line of a
                 # cascade) belongs to no collision and is skipped
-                if collision is not None and summary is None and len(tokens) >= 6:
+                if collision is None or closed:
+                    if skipped is not None:
+                        skipped["summary"] += 1
+                elif len(tokens) >= 6:
                     summary = [_to_float(t) for t in tokens[1:6]]
                 closed = True
                 continue
@@ -133,6 +139,8 @@ def _records(lines):
             # belong to no collision and are skipped
             if collision is not None and not closed:
                 recoils.append(_parse_recoil(line))
+            elif skipped is not None:
+                skipped["recoil"] += 1
         elif line.startswith("- For Ion"):
             if collision is not None:
                 yield pending()
@@ -222,6 +230,7 @@ class Collision:
     def __init__(self, directory, filename="COLLISON.txt"):
         self.filename = os.path.join(directory, filename)
         self._index = None
+        self._skipped = None
 
         with open(self.filename, encoding=ENCODING) as f:
             self._read_header(f)
@@ -299,12 +308,14 @@ class Collision:
 
         Recoil lines that belong to no collision (SRIM writes some with recoil number 0
         when the header line of a cascade is lost) and summary lines without a collision
-        are skipped.
+        are skipped; their number is in :attr:`skipped_lines`, and a warning is issued once
+        per :class:`Collision` after the first complete pass.
 
         Cascade positions are printed by SRIM with fewer digits than the collision
         lines (the depth ``2718.E+00`` against ``27179.E-01``).
         """
-        for record in _records(iter_lines(self.filename, ENCODING)):
+        skipped = {"recoil": 0, "summary": 0}
+        for record in _records(iter_lines(self.filename, ENCODING), skipped):
             if record[0] != "ion":
                 continue
             _, c, recoils, summary = record
@@ -351,6 +362,29 @@ class Collision:
                     "replacement": r["repl"],
                 }
 
+        first_pass = self._skipped is None
+        self._skipped = skipped
+        if first_pass and any(skipped.values()):
+            warnings.warn(
+                f"{os.path.basename(self.filename)}: skipped {skipped['recoil']} stray recoil "
+                f"line(s) and {skipped['summary']} cascade summary line(s) that belong to no "
+                "collision (see Collision.skipped_lines)",
+                stacklevel=2,
+            )
+
+    @property
+    def skipped_lines(self):
+        """:obj:`dict` with the number of lines skipped as stray: ``"recoil"`` (recoil lines
+        outside a cascade) and ``"summary"`` (cascade summaries without a collision).
+
+        Counted over the whole file; the first access streams it once if
+        :meth:`iter_events` has not run to the end yet.
+        """
+        if self._skipped is None:
+            for _ in self.iter_events():
+                pass
+        return dict(self._skipped)
+
     @property
     def df(self):
         """:class:`pandas.DataFrame` of :meth:`iter_events`, one row per event"""
@@ -367,10 +401,7 @@ class Collision:
             raise IndexError("ion index out of range")
         start = index[i]
 
-        if i == len(index) - 1:
-            end = os.path.getsize(self.filename)
-        else:
-            end = index[i + 1]
+        end = index[i + 1]
 
         with open(self.filename, "rb") as f:
             f.seek(start)

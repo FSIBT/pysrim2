@@ -9,6 +9,9 @@ SICC = os.path.join("test_files", "SiC-C")
 STRAY = 56  # recoil lines numbered 0 that belong to no collision (see below)
 
 
+pytestmark = pytest.mark.filterwarnings("ignore:.*stray recoil")
+
+
 @pytest.fixture(scope="module")
 def collision():
     return Collision(SICC)
@@ -211,3 +214,24 @@ def test_stray_recoil_and_second_summary_do_not_overwrite_a_cascade(collision):
     (cascade,) = [c for c in collision[67]["collisions"] if c["kinetic_energy"] == 4012.0]
     assert len(cascade["cascade"]) == 1
     assert (cascade["target_disp"], cascade["target_inter"]) == (2, 2)
+
+
+def test_skipped_lines_are_counted_and_warned_about_once():
+    c = Collision(SICC)
+    with pytest.warns(UserWarning, match="skipped 56 stray recoil.*4 cascade summary") as w:
+        assert c.skipped_lines == {"recoil": 56, "summary": 4}
+        list(c.iter_events())
+        _ = c.df
+    assert len(w) == 1
+
+
+def test_clean_file_has_no_skipped_lines_and_no_warning(tmp_path, recwarn):
+    with open(os.path.join(SICC, "COLLISON.txt"), encoding="cp437", newline="") as f:
+        lines = f.readlines()
+    start = next(i for i, ln in enumerate(lines) if ln.startswith("│")) - 3
+    ion1_end = next(i for i, ln in enumerate(lines) if ln.startswith("- For Ion")) + 8
+    text = "".join(lines[:ion1_end] + lines[start : start + 3])
+    (tmp_path / "COLLISON.txt").write_bytes(text.encode("cp437"))
+    c = Collision(str(tmp_path))
+    assert c.skipped_lines == {"recoil": 0, "summary": 0}
+    assert not recwarn.list
