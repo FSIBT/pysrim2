@@ -5,7 +5,7 @@ to a local `output` folder, so it works the same natively and in the container.
 
 | Script | What it does |
 |---|---|
-| `boron_in_gold_on_silicon.py [ions]` | The reference case: 20 keV boron at 7 degrees into 100 nm Au on Si. Prints mean depth (about 282 angstrom for 200 ions, seed 12345), lateral straggle and the damage peak depth. |
+| `boron_in_gold_on_silicon.py [ions]` | The reference case: 20 keV boron at 7 degrees into 100 nm Au on Si. Prints mean depth (about 282 angstrom for 200 ions, seed 12345), depth, lateral and radial straggling (about 146, 242 and 155 angstrom) and the damage peak depth. |
 | `multilayer_damage.py [ions] [folder]` | Full-cascade run through a three-layer target (Au / Si / Al); writes the vacancy profile to `vacancy_profile.csv`. |
 | `stopping_table.py [folder]` | SRIM's SR module: stopping power and range of He in Si from 10 keV to 1 MeV, as `stopping_table.csv`. Fast. |
 

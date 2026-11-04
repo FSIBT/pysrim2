@@ -11,10 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `.df` (a pandas DataFrame, first column `depth_A`, columns named with SRIM units) and `.metadata` on `Ioniz`, `Vacancy`, `NoVacancy`, `EnergyToRecoils`, `Phonons` and `Range`; `Results.to_dataframes()` returns them as a dict.
 - `srim.output.Range3D` reads `RANGE_3D.txt` (per-ion final positions) into a DataFrame with columns `ion`, `depth_A`, `y_A`, `z_A`; `Results.range3d` holds it (`None` if the file is absent) and `Results.to_dataframes()` includes it.
-- `srim.analysis.implant_summary(df)` returns `n_ions`, mean and sample-std (`ddof=1`) depth, mean lateral distance and RMS lateral straggle of per-ion positions.
+- `Range.summary` returns the range and straggling values SRIM prints in the `RANGE.txt` header (depth, lateral, radial, skewness, kurtosis). `srim.analysis.implant_summary(df)` computes the same quantities from the per-ion positions of `Range3D` (standard deviations with `ddof=1`).
 
 ### Fixed
 
+- The reference example's "lateral straggle" (341.6 A for the boron case) was the root mean square of the radial distance, not what SRIM calls lateral straggling; the example and skill now report SRIM's definitions (lateral straggle 241.8 A, radial straggle 154.9 A).
+- `Results.range3d` also finds `RANGE_3D.txt` in the `SRIM Outputs` subfolder.
 - A table header whose element names cannot be read now warns before the element columns fall back to `1`, `2`, ...; the `Vacancy.knock_ons` docs give the correct unit (knock-ons per Angstrom per ion).
 - `pysrim2 install` exits 130 with a `[skip] ... cancelled` line on Ctrl-C during a step instead of printing a traceback.
 

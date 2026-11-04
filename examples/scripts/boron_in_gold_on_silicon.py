@@ -1,4 +1,4 @@
-"""B ions into 100 nm Au on a Si substrate: depth and lateral straggle from RANGE_3D.txt.
+"""B ions into 100 nm Au on a Si substrate: depth, lateral and radial straggling from RANGE_3D.txt.
 
 Run natively (``python boron_in_gold_on_silicon.py``) or in the container (needs Podman ≥ 4.3)::
 
@@ -31,7 +31,7 @@ def peak_vacancy_depth(results) -> float:
 
 
 def run(number_ions: int = 200, outdir=None) -> dict:
-    """Run TRIM and return mean depth and lateral straggle (angstrom)."""
+    """Run TRIM and return SRIM-style range statistics (angstrom)."""
     target = Target(
         [
             Layer.from_formula("Au", density=19.3, width=1000.0),  # 100 nm
@@ -59,7 +59,9 @@ def run(number_ions: int = 200, outdir=None) -> dict:
                     break
     return {
         "mean_depth_A": summary["mean_depth_A"],
+        "straggle_depth_A": summary["straggle_depth_A"],
         "lateral_straggle_A": summary["lateral_straggle_A"],
+        "radial_straggle_A": summary["radial_straggle_A"],
         "ions": summary["n_ions"],
         "peak_vacancy_depth_A": peak_vacancy_depth(results),
     }

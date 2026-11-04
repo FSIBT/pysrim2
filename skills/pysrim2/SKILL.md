@@ -88,8 +88,10 @@ lateral straggle, and copies the output files to `./output/`.
 Per-ion final positions (needs `ranges=1`) are `results.range3d.df` with columns
 `ion, depth_A, y_A, z_A` (depth along the surface normal, y and z lateral); `range3d` is `None`
 if `RANGE_3D.txt` was not written. `from srim.analysis import implant_summary` gives
-`n_ions`, `mean_depth_A`, `straggle_depth_A` (sample std), `mean_lateral_A` and
-`lateral_straggle_A` (root mean square of `sqrt(y**2 + z**2)`).
+`n_ions` and the quantities SRIM prints in the `RANGE.txt` header (also `results.range.summary`):
+`mean_depth_A`, `straggle_depth_A`, `lateral_range_A`, `lateral_straggle_A`, `radial_range_A`,
+`radial_straggle_A`, `skewness`, `kurtosis`. The example prints the depth, lateral and radial
+straggling (about 146, 242 and 155 A).
 
 ## 5. Run time and practical advice
 

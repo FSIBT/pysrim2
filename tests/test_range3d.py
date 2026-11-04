@@ -6,7 +6,7 @@ import pandas as pd
 import pytest
 
 from srim.analysis import implant_summary
-from srim.output import Range3D, Results
+from srim.output import Range, Range3D, Results
 from srim.output._common import SRIMOutputParseError
 
 D = "test_files"
@@ -50,16 +50,41 @@ def test_implant_summary_hand_computation():
     assert s["n_ions"] == 3
     assert s["mean_depth_A"] == pytest.approx(200.0)
     assert s["straggle_depth_A"] == pytest.approx(100.0)  # ddof=1
-    assert s["mean_lateral_A"] == pytest.approx(17 / 3)
-    assert s["lateral_straggle_A"] == pytest.approx(np.sqrt((25 + 4 + 100) / 3))
+    assert s["lateral_range_A"] == pytest.approx((3.5 + 1.0 + 7.0) / 3)
+    assert s["lateral_straggle_A"] == pytest.approx(np.std([3, 0, -6, 4, 2, 8], ddof=1))
+    assert s["radial_range_A"] == pytest.approx(17 / 3)
+    assert s["radial_straggle_A"] == pytest.approx(np.std([5, 2, 10], ddof=1))
+    assert s["skewness"] == pytest.approx(0.0)
 
 
-def test_implant_summary_fixture_matches_old_example_definition():
-    df = Range3D(os.path.join(D, "1")).df
-    s = implant_summary(df)
-    assert s["mean_depth_A"] == pytest.approx(df["depth_A"].mean())
-    assert s["lateral_straggle_A"] == pytest.approx((df["y_A"] ** 2 + df["z_A"] ** 2).mean() ** 0.5)
-    assert s["straggle_depth_A"] == pytest.approx(df["depth_A"].std())  # pandas ddof=1
+@pytest.mark.parametrize("directory", ["1", "comma"])
+def test_range_header_summary(directory):
+    s = Range(os.path.join(D, directory)).summary
+    assert s == pytest.approx(
+        {
+            "mean_depth_A": 15950.0,
+            "straggle_depth_A": 3080.0,
+            "lateral_range_A": 2843.0,
+            "lateral_straggle_A": 3560.0,
+            "radial_range_A": 4435.0,
+            "radial_straggle_A": 2284.0,
+            "skewness": -0.9924,
+            "kurtosis": 4.5863,
+        }
+    )
+
+
+def test_range_summary_nan_when_header_lines_absent():
+    s = Range(os.path.join(D, "SiC-C")).summary
+    assert s["mean_depth_A"] == 0.0
+    assert np.isnan(s["skewness"]) and np.isnan(s["kurtosis"])
+
+
+def test_implant_summary_matches_srim_header():
+    header = Range(os.path.join(D, "1")).summary
+    s = implant_summary(Range3D(os.path.join(D, "1")).df)
+    for key, value in header.items():
+        assert s[key] == pytest.approx(value, rel=0.02), key
 
 
 def test_results_range3d_present_and_in_dataframes():
@@ -81,3 +106,12 @@ def test_unparseable_file_raises(tmp_path):
     (tmp_path / "RANGE_3D.txt").write_bytes(b"nothing here\r\n")
     with pytest.raises(SRIMOutputParseError):
         Range3D(str(tmp_path))
+
+
+def test_results_range3d_found_in_srim_outputs_subfolder(tmp_path):
+    for name in os.listdir(os.path.join(D, "1")):
+        if name != "RANGE_3D.txt":
+            shutil.copy(os.path.join(D, "1", name), tmp_path / name)
+    (tmp_path / "SRIM Outputs").mkdir()
+    shutil.copy(os.path.join(D, "1", "RANGE_3D.txt"), tmp_path / "SRIM Outputs")
+    assert len(Results(str(tmp_path)).range3d.df) == N_ROWS

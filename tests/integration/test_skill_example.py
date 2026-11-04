@@ -16,6 +16,11 @@ def example_path():
 
 
 REFERENCE_MEAN_DEPTH_A = 282.0
+# SRIM-style statistics from RANGE_3D.txt of the reference run (seed 12345, 147 ions stopped
+# in the target; SRIM's own RANGE.txt header gives 145.9, 238.2 and 154.4). Checked within +-30 %.
+REFERENCE_DEPTH_STRAGGLE_A = 146.4
+REFERENCE_LATERAL_STRAGGLE_A = 241.8
+REFERENCE_RADIAL_STRAGGLE_A = 154.9
 
 
 def test_skill_example_mean_depth(tmp_path):
@@ -24,5 +29,10 @@ def test_skill_example_mean_depth(tmp_path):
     spec.loader.exec_module(module)
     result = module.run(200, tmp_path / "output")
     assert 0.7 * REFERENCE_MEAN_DEPTH_A <= result["mean_depth_A"] <= 1.3 * REFERENCE_MEAN_DEPTH_A
-    assert result["lateral_straggle_A"] > 0
+    for key, reference in (
+        ("straggle_depth_A", REFERENCE_DEPTH_STRAGGLE_A),
+        ("lateral_straggle_A", REFERENCE_LATERAL_STRAGGLE_A),
+        ("radial_straggle_A", REFERENCE_RADIAL_STRAGGLE_A),
+    ):
+        assert 0.7 * reference <= result[key] <= 1.3 * reference, key
     assert (tmp_path / "output" / "RANGE_3D.txt").is_file()

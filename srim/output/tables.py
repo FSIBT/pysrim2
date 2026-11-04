@@ -7,8 +7,17 @@ from ._common import (
     SRIM_Output,
     _element_names,
     _header_symbols,
+    _to_float,
+    double_regex,
 )
 from .range3d import Range3D
+
+_SUMMARY_LINES = {
+    rb"Average": ("mean_depth_A", "straggle_depth_A"),
+    rb"Lateral": ("lateral_range_A", "lateral_straggle_A"),
+    rb"Radial": ("radial_range_A", "radial_straggle_A"),
+}
+_SUMMARY_KEYS = [k for pair in _SUMMARY_LINES.values() for k in pair] + ["skewness", "kurtosis"]
 
 
 class Results:
@@ -29,7 +38,8 @@ class Results:
       - ``PHONON.txt`` handled by :class:`srim.output.Phonons`
       - ``RANGE.txt`` handled by :class:`srim.output.Range`
       - ``RANGE_3D.txt`` handled by :class:`srim.output.Range3D`
-        (``range3d`` is ``None`` if the file is absent)
+        (``range3d`` is ``None`` if the file is absent; the
+        ``SRIM Outputs`` subfolder is searched too)
     """
 
     def __init__(self, directory):
@@ -46,10 +56,12 @@ class Results:
         self.phonons = Phonons(directory)
         self.range = Range(directory)
 
-        try:
-            self.range3d = Range3D(directory)
-        except FileNotFoundError:
-            self.range3d = None
+        # SRIM writes RANGE_3D.txt into "SRIM Outputs" in some installs
+        self.range3d = None
+        for folder in (directory, os.path.join(directory, "SRIM Outputs")):
+            if os.path.isfile(os.path.join(folder, "RANGE_3D.txt")):
+                self.range3d = Range3D(folder)
+                break
 
     def to_dataframes(self):
         """Depth-profile outputs as :class:`pandas.DataFrame` objects
@@ -478,6 +490,42 @@ class Range(SRIM_Output):
         self._ions = data[:, 1]
         self._elements = data[:, 2:]
         self._element_names = _element_names(symbols[1:], self._elements.shape[1])
+        self._summary = self._read_summary(output)
+
+    @staticmethod
+    def _read_summary(output):
+        """Range and straggling values from the header (``nan`` if a line is absent)"""
+        nan = float("nan")
+        summary = dict.fromkeys(_SUMMARY_KEYS, nan)
+        for label, (range_key, straggle_key) in _SUMMARY_LINES.items():
+            match = re.search(
+                rb"Ion\s+" + label + rb"\s+Range\s*=\s*(" + double_regex.encode() + rb")\s*A"
+                rb"\s+Straggling\s*=\s*(" + double_regex.encode() + rb")\s*A",
+                output,
+            )
+            if match:
+                summary[range_key] = _to_float(match.group(1))
+                summary[straggle_key] = _to_float(match.group(2))
+        for key, label in (("skewness", rb"Skewne-"), ("kurtosis", rb"Kurtosis")):
+            match = re.search(
+                rb"Range\s+" + label + rb"\s*=\s*(" + double_regex.encode() + rb")", output
+            )
+            if match:
+                summary[key] = _to_float(match.group(1))
+        return summary
+
+    @property
+    def summary(self):
+        """:obj:`dict` of the statistics SRIM prints in the file header [Ang]
+
+        Keys ``mean_depth_A`` / ``straggle_depth_A`` (projected range and
+        straggling), ``lateral_range_A`` / ``lateral_straggle_A``,
+        ``radial_range_A`` / ``radial_straggle_A``, ``skewness`` and
+        ``kurtosis`` (of the depth distribution). Values not present in the
+        file are ``nan``. See :func:`srim.analysis.implant_summary` for how
+        to compute the same quantities from :class:`srim.output.Range3D`.
+        """
+        return dict(self._summary)
 
     @property
     def ion(self):

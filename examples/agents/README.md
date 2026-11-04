@@ -37,7 +37,7 @@ pysrim2 doctor             # everything should be [ok]
 ## Expected result
 
 For the first prompt (200 ions, `random_seed=12345`) the mean implantation depth is
-about **282 angstrom**; the lateral straggle is a few hundred angstrom. The agent
+about **282 angstrom**; the lateral straggling is about 240 angstrom. The agent
 can start from
 [`boron_in_gold_on_silicon.py`](../scripts/boron_in_gold_on_silicon.py), the
 same file the skill ships as its example.
