@@ -126,7 +126,7 @@ def _install(args) -> int:
                     confirmed = _confirm()
                 except KeyboardInterrupt:
                     print(f"\n[skip] {step.name}: cancelled")
-                    return EXIT_ADMIN_SKIPPED
+                    return EXIT_INTERRUPTED
             if not confirmed:
                 print(f"[skip] {step.name}: needs admin rights — rerun with --yes or run:")
                 _print_commands(commands)
@@ -150,7 +150,7 @@ def _install(args) -> int:
             failed = True
             break
         except KeyboardInterrupt:
-            print(f"\n[skip] {step.name}: cancelled", file=sys.stderr)
+            print(f"\n[skip] {step.name}: cancelled")
             return EXIT_INTERRUPTED
     if failed:
         return EXIT_FAILED

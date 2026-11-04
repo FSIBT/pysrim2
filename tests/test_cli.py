@@ -172,7 +172,7 @@ def test_keyboard_interrupt_at_prompt_cancels(rec, monkeypatch, capsys):
         raise KeyboardInterrupt
 
     _interactive(monkeypatch, interrupt)
-    assert cli.main(["install", "wine"]) == 2
+    assert cli.main(["install", "wine"]) == 130
     captured = capsys.readouterr()
     assert "[skip] wine-packages: cancelled" in captured.out
     assert "Traceback" not in captured.err
@@ -186,7 +186,7 @@ def test_keyboard_interrupt_during_step_exits_130(rec, capsys):
     steps.register("srim", lambda: Step("srim", "s", lambda: False, lambda: [], boom))
     assert cli.main(["install", "srim"]) == 130
     captured = capsys.readouterr()
-    assert "[skip] srim: cancelled" in captured.err
+    assert "[skip] srim: cancelled" in captured.out
     assert "Traceback" not in captured.err
 
 

@@ -71,3 +71,4 @@ Each check has `name`, `ok` (boolean), `detail` (what was found) and `fix`
 | 0 | Everything succeeded (`doctor`: all checks ok) |
 | 1 | A step failed, or a `doctor` check failed |
 | 2 | `install` finished but skipped a step that needs admin rights (rerun with `--yes`, or run the printed commands) |
+| 130 | Cancelled with Ctrl-C (at the admin prompt or during a step) |
