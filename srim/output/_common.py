@@ -73,21 +73,85 @@ def _element_names(names, count):
     return unique
 
 
-def _warn_unparsed_rows(output, start, row_regex, name, stacklevel=3):
-    """Warn about non-blank lines after ``start`` that do not match ``row_regex``.
+_MAX_HEADER_LINES = 200
 
-    A final line without a line break is exempt: SRIM sometimes leaves it truncated.
+
+def _read_table(path, header_end, row_regex, columns, name, chunk_rows=50000):
+    """Read a SRIM table in one streaming pass, without holding the file in memory.
+
+    Parameters
+    ----------
+    path : file to read
+    header_end : compiled regex matching the (stripped) last header line
+    row_regex : compiled regex matching a whole (stripped) data line
+    columns : list of ``(group index, "i" or "f")``; the arrays returned, in this order
+    name : used in the warning about data lines that do not match ``row_regex``
+
+    Returns
+    -------
+    ``(header, arrays)``. ``header`` is the file text up to and including the last header
+    line (the first lines if there is none). ``arrays`` is ``None`` when the file is empty
+    or the header end was not found.
+    Non-blank lines that do not match are skipped with one warning; a final line without a
+    line break (SRIM may truncate it) is parsed if it matches, otherwise ignored silently.
     """
-    lines = output[start:].split(b"\n")
-    lines.pop()  # unterminated final line, or "" after the last line break
-    pattern = re.compile(row_regex)
-    bad = [ln for ln in lines if ln.strip() and not pattern.fullmatch(ln)]
+    header = []
+    found = False
+    pending = [[] for _ in columns]
+    done = [[] for _ in columns]
+    bad = 0
+    first_bad = None
+
+    def flush():
+        for store, values in zip(done, pending, strict=True):
+            store.append(np.array(values, dtype=float))
+        for values in pending:
+            values.clear()
+
+    with open(path, "rb") as f:
+        for line in f:
+            if not found:
+                header.append(line)
+                if header_end.fullmatch(line.rstrip(b"\r\n")):
+                    found = True
+                elif len(header) >= _MAX_HEADER_LINES:
+                    break
+                continue
+            match = row_regex.fullmatch(line.rstrip(b"\r\n"))
+            if match:
+                groups = match.groups()
+                for values, (index, kind) in zip(pending, columns, strict=True):
+                    token = groups[index]
+                    values.append(int(token) if kind == "i" else _to_float(_squeeze(token)))
+                if len(pending[0]) >= chunk_rows:
+                    flush()
+            elif line.strip() and line.endswith(b"\n"):
+                bad += 1
+                first_bad = first_bad or line.strip()[:60]
+    header = b"".join(header)
+    if not found:
+        return header, None
+    flush()
     if bad:
         warnings.warn(
-            f"{len(bad)} line(s) in the {name} data section could not be parsed and were "
-            f"skipped (first: {bad[0].strip()[:60].decode('latin-1')!r})",
-            stacklevel=stacklevel,
+            f"{bad} line(s) in the {name} data section could not be parsed and were skipped "
+            f"(first: {first_bad.decode('latin-1')!r})",
+            stacklevel=4,
         )
+    arrays = []
+    for j, (_, kind) in enumerate(columns):
+        joined = np.concatenate(done[j])
+        arrays.append(joined.astype(int) if kind == "i" else joined)
+    return header, arrays
+
+
+def _squeeze(token):
+    """Remove whitespace inside a numeric token (SRIM writes ``-  6202433E-06``)"""
+    return re.sub(rb"\s+", b"", token) if (b" " in token or b"\t" in token) else token
+
+
+def _empty_arrays(columns):
+    return [np.array([], dtype=int if kind == "i" else float) for _, kind in columns]
 
 
 def _find_output(directory, filename):

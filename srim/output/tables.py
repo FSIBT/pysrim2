@@ -22,6 +22,15 @@ _SUMMARY_LINES = {
 _SUMMARY_KEYS = [k for pair in _SUMMARY_LINES.values() for k in pair] + ["skewness", "kurtosis"]
 
 
+_LAZY_OUTPUTS = (
+    ("range3d", Range3D, "RANGE_3D.txt"),
+    ("exyz", EXYZ, "EXYZ.txt"),
+    ("backscat", Backscat, "BACKSCAT.txt"),
+    ("transmit", Transmit, "TRANSMIT.txt"),
+    ("sputter", Sputter, "SPUTTER.txt"),
+)
+
+
 class Results:
     """Gathers all results from folder
 
@@ -40,7 +49,7 @@ class Results:
       - ``PHONON.txt`` handled by :class:`srim.output.Phonons`
       - ``RANGE.txt`` handled by :class:`srim.output.Range`
       - ``RANGE_3D.txt`` handled by :class:`srim.output.Range3D`
-        (``range3d`` is ``None`` if the file is absent; the
+        (``range3d`` is ``None`` if the file is absent and parsed on first access; the
         ``SRIM Outputs`` subfolder is searched too)
       - ``EXYZ.txt`` handled by :class:`srim.output.EXYZ`, ``BACKSCAT.txt`` by
         :class:`srim.output.Backscat`, ``TRANSMIT.txt`` by :class:`srim.output.Transmit`,
@@ -65,17 +74,42 @@ class Results:
         # SRIM writes some files into "SRIM Outputs" in some installs. The main directory
         # takes precedence: it holds copies made by TRIM.copy_output_files or older installs,
         # and a fresh run removes stale files from both places.
-        self.range3d = self._optional(Range3D, directory, "RANGE_3D.txt")
-        self.exyz = self._optional(EXYZ, directory, "EXYZ.txt")
-        self.backscat = self._optional(Backscat, directory, "BACKSCAT.txt")
-        self.transmit = self._optional(Transmit, directory, "TRANSMIT.txt")
-        self.sputter = self._optional(Sputter, directory, "SPUTTER.txt")
+        # The (possibly large) event files are parsed on first access, then cached.
+        self._lazy = {}
+        for key, parser, filename in _LAZY_OUTPUTS:
+            self._lazy[key] = [parser, _find_output(directory, filename), filename, None]
 
-    @staticmethod
-    def _optional(parser, directory, filename):
-        """``parser`` on ``filename`` in ``directory`` or ``SRIM Outputs``; ``None`` if absent"""
-        folder = _find_output(directory, filename)
-        return parser(folder, filename) if folder is not None else None
+    def _get_lazy(self, key):
+        entry = self._lazy[key]
+        parser, folder, filename, parsed = entry
+        if parsed is None and folder is not None:
+            parsed = entry[3] = parser(folder, filename)
+        return parsed
+
+    @property
+    def range3d(self):
+        """:class:`srim.output.Range3D`, parsed on first access; ``None`` if absent"""
+        return self._get_lazy("range3d")
+
+    @property
+    def exyz(self):
+        """:class:`srim.output.EXYZ`, parsed on first access; ``None`` if absent"""
+        return self._get_lazy("exyz")
+
+    @property
+    def backscat(self):
+        """:class:`srim.output.Backscat`, parsed on first access; ``None`` if absent"""
+        return self._get_lazy("backscat")
+
+    @property
+    def transmit(self):
+        """:class:`srim.output.Transmit`, parsed on first access; ``None`` if absent"""
+        return self._get_lazy("transmit")
+
+    @property
+    def sputter(self):
+        """:class:`srim.output.Sputter`, parsed on first access; ``None`` if absent"""
+        return self._get_lazy("sputter")
 
     def to_dataframes(self):
         """Depth-profile outputs as :class:`pandas.DataFrame` objects

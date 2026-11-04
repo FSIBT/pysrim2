@@ -9,8 +9,8 @@ from ..core.ion import Ion
 from ._common import (
     SRIM_Output,
     SRIMOutputParseError,
+    _read_table,
     _to_float,
-    _warn_unparsed_rows,
     double_regex,
     symbol_regex,
 )
@@ -44,43 +44,31 @@ class Range3D(SRIM_Output):
     """
 
     def __init__(self, directory, filename="RANGE_3D.txt"):
-        with open(os.path.join(directory, filename), "rb") as f:
-            output = f.read()
-
+        path = os.path.join(directory, filename)
+        number = double_regex.encode()
+        row = re.compile(rb"[ \t]*(\d{7})" + (rb"[ \t]+(" + number + rb")") * 3 + rb"[ \t]*")
+        header, arrays = _read_table(
+            path,
+            re.compile(rb"-+(?:[ \t]+-+)+[ \t]*"),
+            row,
+            [(0, "i"), (1, "f"), (2, "f"), (3, "f")],
+            "RANGE_3D",
+        )
         match = re.search(
             rb"Ion\s*=\s*(" + symbol_regex.encode() + rb")\s*\(\d+\).*?"
             rb"Energy\s*=\s*(" + double_regex.encode() + rb")\s*keV",
-            output,
+            header,
             re.DOTALL,
         )
         if not match:
             raise SRIMOutputParseError("unable to extract ion from file")
-        symbol = match.group(1).decode("ascii")
-        energy = _to_float(match.group(2))  # keV
-
-        number = double_regex.encode()
-        rows = re.findall(
-            rb"^[ \t]*(\d{7})[ \t]+("
-            + number
-            + rb")[ \t]+("
-            + number
-            + rb")[ \t]+("
-            + number
-            + rb")[ \t]*\r?$",
-            output,
-            re.MULTILINE,
-        )
-        if not rows:
+        if arrays is None or len(arrays[0]) == 0:
             raise SRIMOutputParseError("unable to extract ion positions from file")
-        dashes = re.search(rb"^-+(?:[ \t]+-+)+[ \t]*\r?$", output, re.MULTILINE)
-        if dashes:
-            row_regex = rb"[ \t]*\d{7}(?:[ \t]+" + number + rb"){3}[ \t]*\r?"
-            _warn_unparsed_rows(output, dashes.end(), row_regex, "RANGE_3D")
 
-        self._source = os.path.join(directory, filename)
-        self._ion = Ion(symbol, 1000.0 * energy)
-        self._ion_numbers = np.array([int(r[0]) for r in rows], dtype=int)
-        self._positions = np.array([[_to_float(t) for t in r[1:]] for r in rows])
+        self._source = path
+        self._ion = Ion(match.group(1).decode("ascii"), 1000.0 * _to_float(match.group(2)))
+        self._ion_numbers = arrays[0]
+        self._positions = np.column_stack(arrays[1:])
 
     @property
     def ion(self):

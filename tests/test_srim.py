@@ -227,6 +227,26 @@ def test_trim_run_removes_stale_output_and_fails_if_none_written(tmp_path, monke
     assert seen["left"] == []
 
 
+def test_trim_run_removes_stale_event_files_in_both_places(tmp_path, monkeypatch):
+    (tmp_path / "SRIM Outputs").mkdir()
+    names = ("EXYZ.txt", "BACKSCAT.txt", "TRANSMIT.txt", "SPUTTER.txt")
+    for name in names:
+        (tmp_path / name).write_text("old")
+        (tmp_path / "SRIM Outputs" / name).write_text("old")
+    seen = {}
+    monkeypatch.setattr(
+        subprocess,
+        "check_call",
+        lambda cmd, **kw: seen.update(left=sorted(p.name for p in tmp_path.rglob("*.txt"))),
+    )
+    monkeypatch.setattr(TRIM, "_write_input_files", lambda self: None, raising=False)
+
+    with pytest.raises(SRIMRunError):
+        _quick_trim().run(srim_directory=str(tmp_path))
+
+    assert seen["left"] == []
+
+
 def test_sr_run_removes_stale_output_and_fails_if_none_written(tmp_path, monkeypatch):
     sr_module = tmp_path / "SR Module"
     sr_module.mkdir()

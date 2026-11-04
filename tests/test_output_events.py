@@ -175,7 +175,7 @@ def test_exyz_line_corrupted_warns(tmp_path):
         lines = f.read().split(b"\r\n")
     lines[20] = b"0000002 not a number"
     (tmp_path / "EXYZ.txt").write_bytes(b"\r\n".join(lines))
-    with pytest.warns(UserWarning, match="EXYZ data section"):
+    with pytest.warns(UserWarning, match="EXYZ.txt data section"):
         assert len(EXYZ(str(tmp_path)).df) == 136
 
 
@@ -236,3 +236,75 @@ def test_results_finds_event_files_in_srim_outputs_subfolder(tmp_path):
     (tmp_path / "SRIM Outputs").mkdir()
     shutil.copy(os.path.join(_dir("thin"), "TRANSMIT.txt"), tmp_path / "SRIM Outputs")
     assert len(Results(directory).transmit.df) == 11
+
+
+FILE_PARSERS = [
+    (EXYZ, "EXYZ.txt", "exyz"),
+    (Backscat, "BACKSCAT.txt", "backscat"),
+    (Transmit, "TRANSMIT.txt", "transmit"),
+    (Sputter, "SPUTTER.txt", "sputter"),
+]
+
+
+@pytest.mark.parametrize(("cls", "name", "key"), FILE_PARSERS)
+def test_zero_byte_file_gives_empty_frame_and_warning(cls, name, key, tmp_path):
+    (tmp_path / name).write_bytes(b"")
+    with pytest.warns(UserWarning, match="is empty"):
+        o = cls(str(tmp_path))
+    expected = EXYZ(_dir("exyz")).df.columns if cls is EXYZ else Backscat(_dir("thin")).df.columns
+    assert list(o.df.columns) == list(expected)
+    assert len(o.df) == 0
+    assert o.metadata["ion"] is None
+
+
+@pytest.mark.parametrize(("cls", "name", "key"), FILE_PARSERS)
+def test_results_does_not_raise_on_bad_event_file_until_accessed(cls, name, key, tmp_path):
+    directory = _results_dir(tmp_path, [])
+    (tmp_path / name).write_bytes(b"garbage\r\n")
+    res = Results(directory)  # must not raise
+    with pytest.raises(SRIMOutputParseError):
+        getattr(res, key)
+
+
+@pytest.mark.parametrize(("cls", "name", "key"), FILE_PARSERS)
+def test_results_zero_byte_event_file(cls, name, key, tmp_path):
+    directory = _results_dir(tmp_path, [])
+    (tmp_path / name).write_bytes(b"")
+    res = Results(directory)
+    with pytest.warns(UserWarning, match="is empty"):
+        assert len(getattr(res, key).df) == 0
+
+
+def test_results_parses_lazily_and_caches(tmp_path, monkeypatch):
+    directory = _results_dir(tmp_path, [("thin", "TRANSMIT.txt")])
+    calls = []
+    original = Transmit.__init__
+
+    def counting(self, *args, **kwargs):
+        calls.append(args)
+        original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Transmit, "__init__", counting)
+    res = Results(directory)
+    assert calls == []
+    first = res.transmit
+    assert res.transmit is first
+    assert len(calls) == 1
+
+
+def test_streaming_chunks_give_same_result():
+    import re
+
+    from srim.output._common import _read_table
+
+    header_end = re.compile(rb"-+(?:[ \t]+-+)+[ \t]*")
+    row = re.compile(
+        rb"[ \t]*(\d+)[ \t]+(\S+)[ \t]+(\S+)[ \t]+(\S+)[ \t]+(\S+)[ \t]+(\S+)[ \t]+(\S+)[ \t]*"
+    )
+    cols = [(0, "i")] + [(j, "f") for j in range(1, 7)]
+    path = os.path.join(_dir("exyz"), "EXYZ.txt")
+    _, a = _read_table(path, header_end, row, cols, "x", chunk_rows=7)
+    _, b = _read_table(path, header_end, row, cols, "x")
+    for x, y in zip(a, b, strict=True):
+        np.testing.assert_array_equal(x, y)
+    assert len(a[0]) == 137

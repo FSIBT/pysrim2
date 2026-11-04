@@ -2,6 +2,7 @@
 
 import os
 import re
+import warnings
 
 import numpy as np
 
@@ -9,9 +10,10 @@ from ..core.ion import Ion
 from ._common import (
     SRIM_Output,
     SRIMOutputParseError,
+    _empty_arrays,
     _prefix_factor,
+    _read_table,
     _to_float,
-    _warn_unparsed_rows,
     double_regex,
     energy_prefixes,
     symbol_regex,
@@ -22,8 +24,20 @@ _WS = rb"[ \t]+"
 
 
 def _row_regex(*fields):
-    """Regex (one group per field, no anchors) for a line of whitespace-separated fields."""
-    return rb"[ \t]*" + _WS.join(b"(" + f + b")" for f in fields) + rb"[ \t]*\r?"
+    """Compiled regex (one group per field) for a line of whitespace-separated fields."""
+    return re.compile(rb"[ \t]*" + _WS.join(b"(" + f + b")" for f in fields) + rb"[ \t]*")
+
+
+def _read_or_empty(path, header_end, row, columns, name):
+    """``(header, arrays)`` from :func:`_read_table`; an empty file gives empty arrays and a
+    warning, a file without the table header raises :class:`SRIMOutputParseError`."""
+    header, arrays = _read_table(path, header_end, row, columns, name)
+    if arrays is None:
+        if header:
+            raise SRIMOutputParseError(f"unable to extract table from {name}")
+        warnings.warn(f"{name} is empty", stacklevel=3)
+        arrays = _empty_arrays(columns)
+    return header, arrays
 
 
 def _ion_energy_eV(value, unit):
@@ -59,37 +73,41 @@ class EXYZ(SRIM_Output):
     """
 
     def __init__(self, directory, filename="EXYZ.txt"):
-        with open(os.path.join(directory, filename), "rb") as f:
-            output = f.read()
-
-        match = re.search(
-            rb"Energy Interval[^\n]*\n\s*(" + symbol_regex.encode() + rb")\s+" + _NUMBER + rb"\s+"
-            rb"(" + _NUMBER + rb")\s*(eV|keV|MeV|GeV)\s+(" + _NUMBER + rb")\s*(eV|keV|MeV|GeV)",
-            output,
+        path = os.path.join(directory, filename)
+        header, arrays = _read_or_empty(
+            path,
+            re.compile(rb"-+(?:[ \t]+-+)+[ \t]*"),
+            _row_regex(rb"\d+", *[_NUMBER] * 6),
+            [(0, "i")] + [(j, "f") for j in range(1, 7)],
+            filename,
         )
-        if not match:
-            raise SRIMOutputParseError("unable to extract ion from file")
-        self._ion = Ion(match.group(1).decode("ascii"), _ion_energy_eV(*match.group(2, 3)))
-        self._interval = _ion_energy_eV(*match.group(4, 5))
+        self._ion = None
+        self._interval = float("nan")
+        if header:
+            match = re.search(
+                rb"Energy Interval[^\n]*\n\s*("
+                + symbol_regex.encode()
+                + rb")\s+"
+                + _NUMBER
+                + rb"\s+"
+                rb"(" + _NUMBER + rb")\s*(eV|keV|MeV|GeV)\s+(" + _NUMBER + rb")\s*(eV|keV|MeV|GeV)",
+                header,
+            )
+            if not match:
+                raise SRIMOutputParseError("unable to extract ion from file")
+            self._ion = Ion(match.group(1).decode("ascii"), _ion_energy_eV(*match.group(2, 3)))
+            self._interval = _ion_energy_eV(*match.group(4, 5))
 
-        header = re.search(rb"^-+(?:[ \t]+-+)+[ \t]*\r?$", output, re.MULTILINE)
-        if not header:
-            raise SRIMOutputParseError("unable to extract table from file")
-        regex = _row_regex(rb"\d+", *[_NUMBER] * 6)
-        rows = re.findall(b"^" + regex + b"$", output[header.end() :], re.MULTILINE)
-        _warn_unparsed_rows(output, header.end(), regex, "EXYZ")
-        if not rows:
-            raise SRIMOutputParseError("unable to extract ion paths from file")
-
-        self._source = os.path.join(directory, filename)
-        self._ion_number = np.array([int(r[0]) for r in rows], dtype=int)
-        data = np.array([[_to_float(t) for t in r[1:]] for r in rows])
-        self._energy = data[:, 0]
-        self._depth = data[:, 1]
-        self._y = data[:, 2]
-        self._z = data[:, 3]
-        self._electronic_stop = data[:, 4]
-        self._recoil_energy_loss = data[:, 5]
+        self._source = path
+        (
+            self._ion_number,
+            self._energy,
+            self._depth,
+            self._y,
+            self._z,
+            self._electronic_stop,
+            self._recoil_energy_loss,
+        ) = arrays
 
     @property
     def ion(self):
@@ -112,9 +130,13 @@ class EXYZ(SRIM_Output):
     @property
     def metadata(self):
         """:obj:`dict`: ``ion``, ``energy_eV``, ``energy_interval_eV``, ``num_ions``, ``source``"""
-        meta = super().metadata
-        meta["energy_interval_eV"] = self._interval
-        return meta
+        return {
+            "ion": self._ion.symbol if self._ion is not None else None,
+            "energy_eV": self._ion.energy if self._ion is not None else None,
+            "energy_interval_eV": self._interval,
+            "num_ions": self.num_ions,
+            "source": self._source,
+        }
 
     @property
     def ion_number(self):
@@ -170,36 +192,34 @@ class _EventFile(SRIM_Output):
 
     def __init__(self, directory, filename=None):
         filename = filename or self._filename
-        with open(os.path.join(directory, filename), "rb") as f:
-            output = f.read()
-
-        match = re.search(
-            rb"TRIM Calc\.=\s*("
-            + symbol_regex.encode()
-            + rb")\(\s*("
-            + _NUMBER
-            + rb")\s*(\w+)\s*\)",
-            output,
-        )
-        header = re.search(rb"^[ \t]*Numb[ \t]+Numb[^\n]*\n", output, re.MULTILINE)
-        if not match or not header:
-            raise SRIMOutputParseError(f"unable to extract header from {filename}")
-        self._ion = Ion(match.group(1).decode("ascii"), _ion_energy_eV(*match.group(2, 3)))
-
+        path = os.path.join(directory, filename)
         # SRIM writes the depth with an integer mantissa and an exponent (``5020011E-04``) and
         # separates a minus sign from the digits (``-  6202433E-06``)
         fields = [rb"[SBT]", rb"\d+", rb"\d+", _NUMBER, rb"-?[ \t]*" + _NUMBER] + [_NUMBER] * 5
-        regex = _row_regex(*fields)
-        rows = re.findall(b"^" + regex + b"$", output[header.end() :], re.MULTILINE)
-        _warn_unparsed_rows(output, header.end(), regex, filename)
+        header, arrays = _read_or_empty(
+            path,
+            re.compile(rb"[ \t]*Numb[ \t]+Numb.*"),
+            _row_regex(*fields),
+            [(1, "i"), (2, "i")] + [(j, "f") for j in range(3, 10)],
+            filename,
+        )
+        self._ion = None
+        if header:
+            match = re.search(
+                rb"TRIM Calc\.=\s*("
+                + symbol_regex.encode()
+                + rb")\(\s*("
+                + _NUMBER
+                + rb")\s*(\w+)\s*\)",
+                header,
+            )
+            if not match:
+                raise SRIMOutputParseError(f"unable to extract header from {filename}")
+            self._ion = Ion(match.group(1).decode("ascii"), _ion_energy_eV(*match.group(2, 3)))
 
-        self._source = os.path.join(directory, filename)
-        self._ion_number = np.array([int(r[1]) for r in rows], dtype=int)
-        self._atomic_number = np.array([int(r[2]) for r in rows], dtype=int)
-        values = np.array(
-            [[_to_float(re.sub(rb"\s+", b"", t)) for t in r[3:]] for r in rows], dtype=float
-        ).reshape(len(rows), 7)
-        self._values = values
+        self._source = path
+        self._ion_number, self._atomic_number = arrays[:2]
+        self._values = np.column_stack(arrays[2:])
 
     @property
     def ion(self):
@@ -224,8 +244,8 @@ class _EventFile(SRIM_Output):
         """:obj:`dict` with ``ion``, ``energy_eV``, ``num_events`` (lines in the file),
         ``source``"""
         return {
-            "ion": self.ion.symbol,
-            "energy_eV": self.ion.energy,
+            "ion": self.ion.symbol if self.ion is not None else None,
+            "energy_eV": self.ion.energy if self.ion is not None else None,
             "num_events": self.num_events,
             "source": self._source,
         }
