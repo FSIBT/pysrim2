@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Results.range3d` also finds `RANGE_3D.txt` in the `SRIM Outputs` subfolder.
 - A table header whose element names cannot be read now warns before the element columns fall back to `1`, `2`, ...; the `Vacancy.knock_ons` docs give the correct unit (knock-ons per Angstrom per ion).
 - `Range3D` warns when a line in the data section cannot be parsed (a truncated final line is still ignored silently).
+- `Collision` (`COLLISON.txt`) now parses every ion: the file is decoded as cp437 and split on SRIM's box-drawing column separators, so numbers no longer fail with glued separator characters (508 of 1000 ions of the SiC-C fixture raised `ValueError`/`IndexError`). Cascades without a summary line and stray recoil lines are handled; the per-ion dict API is unchanged.
 - `pysrim2 install` exits 130 with a `[skip] ... cancelled` line on Ctrl-C during a step instead of printing a traceback.
 
 ## [0.7.0] - 2026-11-04

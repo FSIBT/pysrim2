@@ -239,13 +239,9 @@ def test_collision_parsing_prints_nothing(capsys):
     collision = Collision(os.path.join(TESTDATA_DIRECTORY, "SiC-C"))
     parsed = 0
     for i in range(len(collision)):
-        try:
-            collision[i]
-        except (ValueError, IndexError):
-            # Some ions in this fixture trip over existing parser gaps; those are out of scope here.
-            continue
+        collision[i]
         parsed += 1
-    assert parsed > 0
+    assert parsed == 1000
     assert capsys.readouterr().out == ""
 
 
