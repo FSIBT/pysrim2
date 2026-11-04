@@ -5,7 +5,6 @@ import random
 import shutil
 import subprocess
 
-from .config import DEFAULT_SRIM_DIRECTORY
 from .core.utils import (
     check_input,
     is_one_to_eight,
@@ -19,6 +18,7 @@ from .core.utils import (
 )
 from .input import AutoTRIM, SRInput, TRIMInput
 from .output import Results, SRResults
+from .paths import srim_dir
 
 
 def _launch_command(executable):
@@ -237,7 +237,7 @@ class TRIM:
             ):
                 shutil.move(os.path.join(src_directory, "SRIM Outputs", known_file), dest_directory)
 
-    def run(self, srim_directory=DEFAULT_SRIM_DIRECTORY):
+    def run(self, srim_directory=None):
         """Run configured srim calculation
 
         This method:
@@ -247,10 +247,13 @@ class TRIM:
         Parameters
         ----------
         srim_directory : :obj:`str`, optional
-            path to srim directory. ``SRIM.exe`` should be located in
-            this directory. Default ``/tmp/srim/`` will absolutely
-            need to change for windows.
+            path to srim directory. ``TRIM.exe`` should be located in
+            this directory. Default is ``str(srim_dir())``, resolved when
+            this method is called: ``$PYSRIM2_SRIM_DIR``, then pysrim2's
+            data directory, then ``/tmp/srim`` if it holds an install.
         """
+        if srim_directory is None:
+            srim_directory = str(srim_dir())
         current_directory = os.getcwd()
         try:
             os.chdir(srim_directory)
@@ -329,7 +332,7 @@ class SR:
         """Write necissary SR input file for calculation"""
         SRInput(self).write()
 
-    def run(self, srim_directory=DEFAULT_SRIM_DIRECTORY):
+    def run(self, srim_directory=None):
         """Run configured srim calculation
 
         This method:
@@ -339,10 +342,13 @@ class SR:
         Parameters
         ----------
         srim_directory : :obj:`str`, optional
-            path to srim directory. ``SRIM.exe`` should be located in
-            this directory. Default ``/tmp/srim`` will absolutely need
-            to be changed for windows.
+            path to srim directory. ``TRIM.exe`` should be located in
+            this directory. Default is ``str(srim_dir())``, resolved when
+            this method is called: ``$PYSRIM2_SRIM_DIR``, then pysrim2's
+            data directory, then ``/tmp/srim`` if it holds an install.
         """
+        if srim_directory is None:
+            srim_directory = str(srim_dir())
         current_directory = os.getcwd()
         sr_directory = os.path.abspath(os.path.join(srim_directory, "SR Module"))
         try:

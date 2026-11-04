@@ -1,3 +1,5 @@
-import os
+from .paths import srim_dir
 
-DEFAULT_SRIM_DIRECTORY = os.path.join(os.sep, "tmp", "srim")
+# Kept for backward compatibility; new code should call ``srim.paths.srim_dir()``
+# (``TRIM.run`` and ``SR.run`` already do so when no directory is given).
+DEFAULT_SRIM_DIRECTORY = str(srim_dir())
