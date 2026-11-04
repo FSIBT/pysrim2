@@ -25,9 +25,11 @@ def fake_which(available):
 
 
 @pytest.fixture
-def fake_system(monkeypatch):
+def fake_system(monkeypatch, tmp_path):
     """Mock tools, download and subprocess; return the list of recorded commands."""
     calls = []
+    monkeypatch.setenv("PYSRIM2_HOME", str(tmp_path / "home"))
+    monkeypatch.setattr(wine, "WINETRICKS_SHA256", hashlib.sha256(FAKE_EXE).hexdigest())
     monkeypatch.setattr(shutil, "which", fake_which({"wine", "xvfb-run", "7z"}))
     monkeypatch.setattr(wine, "MSVBVM50_SHA256", hashlib.sha256(FAKE_EXE).hexdigest())
     monkeypatch.setattr(wine, "_download", lambda url, dest: dest.write_bytes(FAKE_EXE))
@@ -50,10 +52,15 @@ def test_setup_runs_recipe_and_copies_dlls(tmp_path, fake_system):
     setup_wine_prefix(prefix)
 
     cmds = [c for c, _ in fake_system]
-    assert cmds[0] == ["xvfb-run", "-a", "wineboot", "-i"]
-    assert cmds[1] == ["wineserver", "-w"]
-    assert cmds[2][:3] == ["7z", "e", "-y"]
-    env = fake_system[0][1]["env"]
+    assert cmds[0][:3] == ["7z", "e", "-y"]
+    assert cmds[1] == ["xvfb-run", "-a", "wineboot", "-i"]
+    assert cmds[2] == ["wineserver", "-w"]
+    assert cmds[3][:4] == ["xvfb-run", "-a", "sh", cmds[3][3]]
+    assert cmds[3][3].endswith("winetricks-" + wine.WINETRICKS_TAG)
+    assert cmds[3][4:] == ["-q", "comdlg32ocx", "msflxgrd", "richtx32", "comctl32ocx", "tabctl32"]
+    assert cmds[4] == ["wineserver", "-w"]
+    assert all(kw["timeout"] == 600 for c, kw in fake_system if c[0] != "7z")
+    env = fake_system[1][1]["env"]
     assert env["WINEPREFIX"] == str(prefix)
     assert env["WINEARCH"] == "win32"
     assert env["WINEDEBUG"] == "-all"
@@ -64,7 +71,7 @@ def test_setup_runs_recipe_and_copies_dlls(tmp_path, fake_system):
 
 
 def test_setup_without_xvfb_and_with_cabextract(tmp_path, fake_system, monkeypatch):
-    monkeypatch.setattr(shutil, "which", fake_which({"wine", "cabextract"}))
+    monkeypatch.setattr(shutil, "which", fake_which({"wine", "cabextract", "winetricks"}))
 
     def run(cmd, **kwargs):
         fake_system.append((cmd, kwargs))
@@ -77,8 +84,8 @@ def test_setup_without_xvfb_and_with_cabextract(tmp_path, fake_system, monkeypat
     monkeypatch.setattr(subprocess, "run", run)
     setup_wine_prefix(tmp_path / "wine")
     cmds = [c for c, _ in fake_system]
-    assert cmds[0] == ["wineboot", "-i"]
-    assert cmds[2][:2] == ["cabextract", "-q"]
+    assert cmds[0][:2] == ["cabextract", "-q"]
+    assert cmds[1] == ["wineboot", "-i"]
 
 
 def test_setup_is_idempotent(tmp_path, fake_system):
@@ -105,6 +112,35 @@ def test_setup_checksum_mismatch(tmp_path, fake_system, monkeypatch):
     assert not (tmp_path / "wine" / MARKER_NAME).exists()
 
 
+def test_setup_prefers_system_winetricks(tmp_path, fake_system, monkeypatch):
+    monkeypatch.setattr(shutil, "which", fake_which({"wine", "7z", "winetricks"}))
+    setup_wine_prefix(tmp_path / "wine")
+    cmds = [c for c, _ in fake_system]
+    assert cmds[3][0] == "/usr/bin/winetricks"
+    assert not (tmp_path / "home" / "cache").exists()
+
+
+def test_download_failure_happens_before_wine_is_touched(tmp_path, fake_system, monkeypatch):
+    monkeypatch.setattr(wine, "MSVBVM50_SHA256", "0" * 64)
+    with pytest.raises(WineSetupError):
+        setup_wine_prefix(tmp_path / "wine")
+    assert fake_system == []
+    assert not (tmp_path / "wine").exists()
+
+
+def test_setup_timeout_becomes_setup_error(tmp_path, fake_system, monkeypatch):
+    extract = subprocess.run
+
+    def run(cmd, **kwargs):
+        if cmd[0] == "7z":
+            return extract(cmd, **kwargs)
+        raise subprocess.TimeoutExpired(cmd, 600)
+
+    monkeypatch.setattr(subprocess, "run", run)
+    with pytest.raises(WineSetupError, match="failed"):
+        setup_wine_prefix(tmp_path / "wine")
+
+
 def test_setup_without_wine(tmp_path, monkeypatch):
     monkeypatch.setattr(shutil, "which", fake_which(set()))
     with pytest.raises(WineSetupError, match="wine"):
@@ -116,7 +152,7 @@ def test_setup_leaves_environ_and_ignores_user_wineprefix(tmp_path, fake_system,
     before = dict(os.environ)
     setup_wine_prefix(tmp_path / "wine")
     assert dict(os.environ) == before
-    for _, kwargs in fake_system[:2]:
+    for _, kwargs in fake_system[1:5]:
         assert kwargs["env"]["WINEPREFIX"] == str(tmp_path / "wine")
 
 
@@ -127,6 +163,7 @@ def test_wine_status(tmp_path, monkeypatch):
     assert status.wine == "/usr/bin/wine"
     assert status.xvfb_run is None
     assert status.extractor == "7zz"
+    assert status.winetricks is None
     assert status.prefix_ready is False
     system32 = tmp_path / "wine" / "drive_c" / "windows" / "system32"
     system32.mkdir(parents=True)
@@ -143,7 +180,7 @@ def test_wine_status(tmp_path, monkeypatch):
         ('ID=debian\nVERSION_ID="13"\n', "sudo dpkg --add-architecture i386", 3),
         ("ID=ubuntu\nID_LIKE=debian\n", "sudo dpkg --add-architecture i386", 3),
         ('ID=linuxmint\nID_LIKE="ubuntu debian"\n', "sudo dpkg --add-architecture i386", 3),
-        ("ID=fedora\n", "sudo dnf install -y wine xorg-x11-server-Xvfb cabextract", 1),
+        ("ID=fedora\n", "sudo dnf install -y wine xorg-x11-server-Xvfb cabextract unzip", 1),
         ("ID=arch\n", None, 0),
     ],
 )
@@ -155,7 +192,7 @@ def test_distro_wine_commands(tmp_path, content, first, count):
     if first:
         assert commands[0] == first
     if count == 3:
-        assert commands[2] == "sudo apt-get install -y wine wine32:i386 xvfb xauth cabextract"
+        assert commands[2] == "sudo apt-get install -y wine wine32:i386 xvfb xauth cabextract unzip"
 
 
 def test_distro_wine_commands_missing_file(tmp_path):

@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `srim.installer.install_srim()` downloads SRIM-2013 from pinned sources and verifies its checksum.
-- `srim.installer.wine` sets up a private wine prefix with the VB5 runtime for SRIM on Linux; it never touches `~/.wine` or `$WINEPREFIX`.
+- `srim.installer.wine` sets up a private wine prefix with the VB5 runtime and OCX components for SRIM on Linux; it never touches `~/.wine` or `$WINEPREFIX`.
 - SRIM location defaults to pysrim2's data directory (override with `PYSRIM2_SRIM_DIR`); an existing `/tmp/srim` is still used.
 
 ### Fixed

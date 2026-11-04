@@ -18,12 +18,18 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from srim.installer.srim_install import _download
-from srim.paths import wine_prefix
+from srim.paths import data_dir, wine_prefix
 
 MSVBVM50_URL = "https://download.microsoft.com/download/vb50pro/utility/1/win98/en-us/msvbvm50.exe"
 MSVBVM50_NAME = "msvbvm50.exe"
 MSVBVM50_SHA256 = "b5f8ea5b9d8b30822a2be2cdcb89cda99ec0149832659ad81f45360daa6e6965"
-MSVBVM50_SIZE = 992864
+WINETRICKS_TAG = "20260125"
+WINETRICKS_URL = (
+    f"https://raw.githubusercontent.com/Winetricks/winetricks/{WINETRICKS_TAG}/src/winetricks"
+)
+WINETRICKS_SHA256 = "431f82fc74000e6c864409f1d8fb495d696c03928808e3e8acffc45179312a7b"
+WINETRICKS_VERBS = ("comdlg32ocx", "msflxgrd", "richtx32", "comctl32ocx", "tabctl32")
+SETUP_TIMEOUT_SECONDS = 600
 DLLS = ("msvbvm50.dll", "comcat.dll")
 MARKER_NAME = ".pysrim2-vb5"
 WINE_DOCS = "https://wiki.winehq.org/Download"
@@ -38,6 +44,7 @@ class WineStatus:
     wine: str | None
     xvfb_run: str | None
     extractor: str | None
+    winetricks: str | None
     prefix_ready: bool
 
 
@@ -65,6 +72,7 @@ def wine_status() -> WineStatus:
         wine=shutil.which("wine"),
         xvfb_run=shutil.which("xvfb-run"),
         extractor=_find_extractor(),
+        winetricks=shutil.which("winetricks"),
         prefix_ready=_prefix_ready(wine_prefix()),
     )
 
@@ -79,55 +87,85 @@ def wine_env(prefix: Path) -> dict[str, str]:
 
 
 def setup_wine_prefix(prefix: Path) -> None:
-    """Create a 32-bit wine prefix at ``prefix`` with the VB5 runtime installed.
+    """Create a 32-bit wine prefix at ``prefix`` with what SRIM needs installed.
 
-    Does nothing if the prefix was already set up by this function.
+    That is the OCX components (via winetricks) and the VB5 runtime. Does
+    nothing if the prefix was already set up by this function.
     """
     prefix = Path(prefix)
     if _prefix_ready(prefix):
         return
-    wine = shutil.which("wine")
-    if not wine:
+    if not shutil.which("wine"):
         raise WineSetupError(f"wine is not installed; see {WINE_DOCS}")
     extractor = _find_extractor()
     if not extractor:
         raise WineSetupError("none of 7z, 7zz or cabextract is installed")
 
     env = wine_env(prefix)
-    prefix.mkdir(parents=True, exist_ok=True)
-    boot = ["wineboot", "-i"]
-    if shutil.which("xvfb-run"):
-        boot = ["xvfb-run", "-a", *boot]
-    subprocess.run(boot, env=env, check=True)
-    subprocess.run(["wineserver", "-w"], env=env, check=True)
-
+    xvfb = ["xvfb-run", "-a"] if shutil.which("xvfb-run") else []
     with tempfile.TemporaryDirectory(prefix="pysrim2-vb5-") as tmp:
+        # Fetch everything first so a network problem fails before wine is touched.
         work = Path(tmp)
         installer = work / MSVBVM50_NAME
-        _fetch_msvbvm50(installer)
+        _fetch(MSVBVM50_URL, installer, MSVBVM50_SHA256, MSVBVM50_NAME)
+        winetricks = _winetricks_command()
         extracted = work / "out"
         extracted.mkdir()
         _extract(extractor, installer, extracted)
+        found = {p.name.lower(): p for p in extracted.rglob("*") if p.is_file()}
+        missing = [dll for dll in DLLS if dll not in found]
+        if missing:
+            raise WineSetupError(f"{missing[0]} not found in {MSVBVM50_NAME}")
+
+        prefix.mkdir(parents=True, exist_ok=True)
+        _run([*xvfb, "wineboot", "-i"], env)
+        _run(["wineserver", "-w"], env)
+        _run([*xvfb, *winetricks, "-q", *WINETRICKS_VERBS], env)
+        _run(["wineserver", "-w"], env)
+
         system32 = _system32(prefix)
         system32.mkdir(parents=True, exist_ok=True)
-        found = {p.name.lower(): p for p in extracted.rglob("*") if p.is_file()}
         for dll in DLLS:
-            if dll not in found:
-                raise WineSetupError(f"{dll} not found in {MSVBVM50_NAME}")
             shutil.copyfile(found[dll], system32 / dll)
     (prefix / MARKER_NAME).write_text("1\n")
 
 
-def _fetch_msvbvm50(target: Path) -> None:
+def _run(cmd: list[str], env: dict[str, str]) -> None:
     try:
-        _download(MSVBVM50_URL, target)
+        subprocess.run(cmd, env=env, check=True, timeout=SETUP_TIMEOUT_SECONDS)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise WineSetupError(f"{' '.join(cmd)} failed: {exc}") from exc
+
+
+def _winetricks_command() -> list[str]:
+    """Return the command that runs winetricks: the system one, else a pinned download."""
+    system = shutil.which("winetricks")
+    if system:
+        return [system]
+    script = data_dir() / "cache" / f"winetricks-{WINETRICKS_TAG}"
+    if not script.is_file() or _sha256(script) != WINETRICKS_SHA256:
+        script.parent.mkdir(parents=True, exist_ok=True)
+        _fetch(WINETRICKS_URL, script, WINETRICKS_SHA256, "winetricks")
+    return ["sh", str(script)]
+
+
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _fetch(url: str, target: Path, sha256: str, name: str) -> None:
+    """Download ``url`` to ``target`` and check its SHA-256."""
+    part = target.with_name(target.name + ".part")
+    try:
+        _download(url, part)
+        actual = _sha256(part)
+        if actual != sha256:
+            raise WineSetupError(f"SHA-256 mismatch for {name}: expected {sha256}, got {actual}")
+        os.replace(part, target)
     except (OSError, ValueError) as exc:
-        raise WineSetupError(f"could not download {MSVBVM50_URL}: {exc}") from exc
-    actual = hashlib.sha256(target.read_bytes()).hexdigest()
-    if actual != MSVBVM50_SHA256:
-        raise WineSetupError(
-            f"SHA-256 mismatch for {MSVBVM50_NAME}: expected {MSVBVM50_SHA256}, got {actual}"
-        )
+        raise WineSetupError(f"could not download {url}: {exc}") from exc
+    finally:
+        part.unlink(missing_ok=True)
 
 
 def _extract(extractor: str, installer: Path, out: Path) -> None:
@@ -136,8 +174,8 @@ def _extract(extractor: str, installer: Path, out: Path) -> None:
     else:
         cmd = [extractor, "e", "-y", f"-o{out}", str(installer), "MSVBVM50.DLL", "COMCAT.DLL"]
     try:
-        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL)
-    except (OSError, subprocess.CalledProcessError) as exc:
+        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, timeout=SETUP_TIMEOUT_SECONDS)
+    except (OSError, subprocess.SubprocessError) as exc:
         raise WineSetupError(f"could not extract {MSVBVM50_NAME} with {extractor}: {exc}") from exc
 
 
@@ -159,8 +197,8 @@ def distro_wine_commands(os_release: Path = Path("/etc/os-release")) -> list[str
         return [
             "sudo dpkg --add-architecture i386",
             "sudo apt-get update",
-            "sudo apt-get install -y wine wine32:i386 xvfb xauth cabextract",
+            "sudo apt-get install -y wine wine32:i386 xvfb xauth cabextract unzip",
         ]
     if "fedora" in ids:
-        return ["sudo dnf install -y wine xorg-x11-server-Xvfb cabextract"]
+        return ["sudo dnf install -y wine xorg-x11-server-Xvfb cabextract unzip"]
     return []
