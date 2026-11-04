@@ -33,9 +33,11 @@ class Step:
     summary: str
     check: Callable[[], bool]
     commands: Callable[[], list[str]]
-    run: Callable[[], None]
+    run: Callable[..., None]
     needs_admin: bool = False
     requires: tuple[str, ...] = ()
+    # When true, ``run`` takes a ``progress(line)`` callback for per-sub-step lines.
+    wants_progress: bool = False
 
 
 class ComponentUnavailable(Exception):
@@ -117,7 +119,8 @@ def _srim_step() -> Step:
         summary=f"download SRIM-2013 (verified by SHA-256) and unpack it into {dest}",
         check=lambda: (srim_dir() / "TRIM.exe").is_file(),
         commands=lambda: [f"download srim.2013.zip, verify SHA-256, unpack into {dest}"],
-        run=lambda: install_srim(dest),
+        run=lambda progress=None: install_srim(dest, progress=progress),
+        wants_progress=True,
     )
 
 
@@ -171,7 +174,8 @@ def _wine_steps() -> list[Step]:
             summary=f"set up a private wine prefix at {prefix} (VB5 runtime and OCX components)",
             check=lambda: wine_status().prefix_ready,
             commands=lambda: [f"create wine prefix {prefix}: wineboot, winetricks, VB5 runtime"],
-            run=lambda: setup_wine_prefix(wine_prefix()),
+            run=lambda progress=None: setup_wine_prefix(wine_prefix(), progress),
+            wants_progress=True,
             requires=("wine-packages",),
         ),
     ]
@@ -182,8 +186,8 @@ def _vb5_step() -> Step:
         raise ComponentUnavailable("vb5", "component vb5 is only for Windows")
     from srim.installer.vb5 import OCXS, install_vb5, vb5_ready
 
-    def run() -> None:
-        install_srim(srim_dir())
+    def run(progress=None) -> None:
+        install_srim(srim_dir(), progress=progress)
         install_vb5(srim_dir())
 
     return Step(
@@ -200,6 +204,7 @@ def _vb5_step() -> Step:
         ],
         run=run,
         needs_admin=True,
+        wants_progress=True,
     )
 
 

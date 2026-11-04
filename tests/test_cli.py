@@ -302,3 +302,14 @@ def test_doctor_unknown_distro_does_not_say_install_wine(monkeypatch, tmp_path, 
 def test_doctor_known_distro_suggests_install_wine(monkeypatch, tmp_path, capsys):
     checks = _linux_doctor(monkeypatch, tmp_path, capsys, ["sudo zypper install wine"])
     assert checks["wine"]["fix"] == "run: pysrim2 install wine"
+
+
+def test_progress_lines_are_printed_while_a_step_runs(rec, capsys):
+    def run(progress):
+        progress("  - first sub-step…")
+
+    steps.register(
+        "srim", lambda: Step("srim", "s", lambda: False, lambda: [], run, wants_progress=True)
+    )
+    assert cli.main(["install", "srim"]) == 0
+    assert "  - first sub-step…" in capsys.readouterr().out

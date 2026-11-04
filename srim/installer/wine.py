@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -102,12 +103,14 @@ def wine_env(prefix: Path) -> dict[str, str]:
     return env
 
 
-def setup_wine_prefix(prefix: Path) -> None:
+def setup_wine_prefix(prefix: Path, progress: Callable[[str], None] | None = None) -> None:
     """Create a 32-bit wine prefix at ``prefix`` with what SRIM needs installed.
 
     That is the OCX components (via winetricks) and the VB5 runtime. Does
-    nothing if the prefix was already set up by this function.
+    nothing if the prefix was already set up by this function. ``progress`` is
+    called with one line of text as each sub-step starts.
     """
+    note = progress or (lambda _line: None)
     prefix = Path(prefix)
     if _prefix_ready(prefix):
         return
@@ -140,13 +143,16 @@ def setup_wine_prefix(prefix: Path) -> None:
             raise WineSetupError(f"{missing[0]} not found in {MSVBVM50_NAME}")
 
         prefix.mkdir(parents=True, exist_ok=True)
+        note("  - creating wine prefix (wineboot)…")
         _run([*xvfb, "wineboot", "-i"], env)
         _wait_for_wineserver(env, xvfb)
+        note("  - installing OCX controls with winetricks (downloads; can take several minutes)…")
         cache = data_dir() / "cache" / "winetricks"
         cache.mkdir(parents=True, exist_ok=True)
         _run([*xvfb, *winetricks, "-q", *WINETRICKS_VERBS], {**env, "W_CACHE": str(cache)})
         _wait_for_wineserver(env, xvfb)
 
+        note("  - installing VB5 runtime DLLs…")
         system32 = _system32(prefix)
         system32.mkdir(parents=True, exist_ok=True)
         for dll in DLLS:

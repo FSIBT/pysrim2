@@ -13,6 +13,7 @@ import shutil
 import tempfile
 import urllib.request
 import zipfile
+from collections.abc import Callable
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 import srim
@@ -30,25 +31,35 @@ class SrimInstallError(RuntimeError):
     """SRIM could not be downloaded, verified or installed."""
 
 
-def install_srim(dest: Path, asset: Asset = SRIM_ASSET, *, cache: Path | None = None) -> Path:
+def install_srim(
+    dest: Path,
+    asset: Asset = SRIM_ASSET,
+    *,
+    cache: Path | None = None,
+    progress: Callable[[str], None] | None = None,
+) -> Path:
     """Install SRIM into ``dest`` and return ``dest``.
 
     Returns immediately if ``dest`` already holds ``TRIM.exe``, for example an
     install that was copied in by hand. Raises ``SrimInstallError`` if ``dest``
     is a non-empty directory without ``TRIM.exe``; such a directory is never
     removed or overwritten.
+
+    ``progress`` is called with one line of text as each sub-step starts.
     """
+    note = progress or (lambda _line: None)
     dest = Path(dest)
     if (dest / "TRIM.exe").is_file():
         return dest
     _refuse_existing(dest)
 
     cache = Path(cache) if cache is not None else data_dir() / "cache"
-    zip_path = _fetch(asset, cache, dest)
+    zip_path = _fetch(asset, cache, dest, note)
 
     dest.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=".srim-install-", dir=dest.parent))
     try:
+        note("  - unpacking…")
         top = _unpack(zip_path, staging, asset)
         _write_markers(top, asset)
         _refuse_existing(dest)
@@ -85,11 +96,12 @@ def _replace(src: Path, dst: Path) -> None:
         raise SrimInstallError(f"could not move {src} to {dst}: {exc}") from exc
 
 
-def _fetch(asset: Asset, cache: Path, dest: Path) -> Path:
+def _fetch(asset: Asset, cache: Path, dest: Path, note: Callable[[str], None]) -> Path:
     """Return a path to a verified copy of the asset, downloading it if needed."""
     cache.mkdir(parents=True, exist_ok=True)
     cached = cache / asset.name
     if cached.exists():
+        note("  - verifying…")
         if _problem(cached, asset) is None:
             return cached
         try:
@@ -103,7 +115,9 @@ def _fetch(asset: Asset, cache: Path, dest: Path) -> Path:
         os.close(fd)
         part = Path(part_name)
         try:
+            note("  - downloading…")
             _download(url, part)
+            note("  - verifying…")
             problem = _problem(part, asset)
             if problem is None:
                 _replace(part, cached)

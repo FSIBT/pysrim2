@@ -132,7 +132,10 @@ def _install(args) -> int:
             print(f"[do] {step.name}: {step.summary}")
             _print_commands(commands)
         try:
-            step.run()
+            if step.wants_progress:
+                step.run(lambda line: print(line, flush=True))
+            else:
+                step.run()
             container.reset_cache()
         except INSTALL_ERRORS as exc:
             print(f"[fail] {step.name}: {exc}", file=sys.stderr)

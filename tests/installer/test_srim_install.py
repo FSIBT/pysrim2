@@ -420,3 +420,10 @@ def test_corrupt_cache_unlink_error_becomes_install_error(tmp_path, fake_zip, mo
 
     assert str(cached) in str(info.value)
     assert not dest.exists()
+
+
+def test_install_reports_progress(tmp_path, fake_zip):
+    asset = make_asset(fake_zip, [fake_zip.as_uri()])
+    lines = []
+    install_srim(tmp_path / "install", asset, cache=tmp_path / "cache", progress=lines.append)
+    assert lines == ["  - downloading…", "  - verifying…", "  - unpacking…"]

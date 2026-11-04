@@ -311,3 +311,13 @@ def test_wait_until_no_wineserver_gives_up_after_timeout(monkeypatch):
     monkeypatch.setattr(wine.time, "sleep", lambda s: None)
     monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0))
     wine._wait_until_no_wineserver(timeout=0)
+
+
+def test_setup_reports_each_sub_step(tmp_path, fake_system):
+    lines = []
+    setup_wine_prefix(tmp_path / "wine", lines.append)
+    assert lines == [
+        "  - creating wine prefix (wineboot)…",
+        "  - installing OCX controls with winetricks (downloads; can take several minutes)…",
+        "  - installing VB5 runtime DLLs…",
+    ]
