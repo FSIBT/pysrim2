@@ -27,51 +27,33 @@ The import name is unchanged: `import srim`. Because both packages
 provide the `srim` module, `pysrim2` cannot be installed alongside the
 original `pysrim`.
 
-Container (linux/amd64; pysrim2, SRIM-2013 and wine). Run it as the image's
-default user (uid 1000); do not pass `-u`, because wine and SRIM files belong to
-that user. With Podman (the default; `pysrim2 install runtime` installs it):
-
-    podman run --rm -v "$PWD:/data:Z" ghcr.io/fsibt/pysrim2 python /data/run.py
-
-With Docker, pass the seccomp profile that ships with pysrim2
-(`pysrim2 install image` copies it to the data directory, or use
-`srim/data/seccomp-docker.json` from the repository):
-
-    docker run --rm --security-opt seccomp=/path/to/seccomp-docker.json \
-      -v "$PWD:/data" ghcr.io/fsibt/pysrim2 python /data/run.py
-
-Docker 29's built-in seccomp profile blocks the 32-bit socket calls wine makes
-(it fails with "socket: Function not implemented"); the shipped profile is
-Docker's current default profile, which allows them.
-
 Documentation: <https://pysrim2.readthedocs.io/en/latest/>
 
 # Installation
 
 ```bash
-uv add pysrim2        # or: pip install pysrim2
+uv tool install pysrim2       # or: pip install pysrim2
+pysrim2 install --dry-run     # show every step, change nothing
+pysrim2 install               # SRIM, wine (Linux) or container (macOS), agent skill
+pysrim2 doctor                # check the result
 ```
 
 If you have `pysrim` installed, remove it first:
 `pip uninstall pysrim && pip install pysrim2`. Python 3.11 or newer is
-required.
+required. SRIM runs natively on Windows and (through wine, in a private prefix
+that never touches `~/.wine`) on Linux; on macOS it runs in the container
+`ghcr.io/fsibt/pysrim2` (linux/amd64, Podman or Docker). See the
+[installation guide](https://pysrim2.readthedocs.io/en/latest/installation.html),
+the [container page](https://pysrim2.readthedocs.io/en/latest/container.html)
+(Docker 29 needs a seccomp profile there) and the
+[command line reference](https://pysrim2.readthedocs.io/en/latest/cli.html).
+`pysrim2 install skill` installs an
+[agent skill](https://pysrim2.readthedocs.io/en/latest/agents.html) so coding
+agents can run SRIM for you.
 
-## SRIM
-
-SRIM itself is not included. Download it from
-[srim.org](http://www.srim.org/). SRIM is copyright (c) James F.
-Ziegler and is free for non-commercial use only; check its licence
-before using it. You do not need SRIM if you only analyse existing
-output files.
-
-- **Windows:** extract the SRIM files into a directory and pass that
-  directory to `trim.run()`. `TRIM.exe` should be in it.
-- **Linux and macOS:** install [wine](https://www.winehq.org/) and
-  extract SRIM into a directory. SRIM is
-  [compatible](https://appdb.winehq.org/objectManager.php?sClass=version&iId=13202)
-  with wine. If `xvfb-run` is available, `pysrim2` uses it so no
-  display is needed. An installer for SRIM under wine is planned.
-- **Container:** a container image with SRIM under wine is planned.
+SRIM is not part of this package. SRIM © SRIM.com (James F. Ziegler) — free
+for non-commercial use only; see `LEGAL.rtf`, which the installer keeps next
+to every copy. You do not need SRIM if you only analyse existing output files.
 
 # Features
 

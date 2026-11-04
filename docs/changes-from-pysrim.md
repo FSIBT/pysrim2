@@ -48,8 +48,9 @@ names the fork commit.
 - Python 3.11 or newer is required.
 - The distribution is renamed to `pysrim2`. The import name `srim` is
   unchanged, so `pysrim2` cannot be installed alongside `pysrim`.
-- The conda package, Docker images, `install.sh` and Nix files are gone. A
-  container image and a SRIM installer for wine are planned.
+- The conda package, Docker images, `install.sh` and Nix files are gone. pysrim2
+  0.7.0 adds a SRIM installer (`pysrim2 install`) and its own container
+  image instead, see {doc}`installation` and {doc}`container`.
 
 ## Migration
 

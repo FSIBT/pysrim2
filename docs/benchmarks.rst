@@ -4,8 +4,9 @@ Benchmarks
 .. note::
 
    These are historical results measured with the Docker image of the
-   original ``pysrim``. ``pysrim2`` does not ship a Docker image yet; a
-   container image is planned for 0.7.0.
+   original ``pysrim`` (``costrouc/pysrim``), which is no longer maintained.
+   They have not been repeated with the ``pysrim2`` image; see
+   :doc:`container` for the current image.
 
 Docker vs Standard Linux
 ------------------------

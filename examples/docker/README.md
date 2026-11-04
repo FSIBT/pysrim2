@@ -1,9 +1,10 @@
 # Running pysrim in docker container
 
-> **Legacy:** this example uses the `costrouc/pysrim` Docker Hub image and
-> `python3.6`. Neither is maintained, and the Dockerfiles were removed in 0.6.0.
-> pysrim2 0.7.0 ships its own container image, `ghcr.io/fsibt/pysrim2`; use that
-> instead. The example below is kept for reference only.
+> **Legacy:** this example uses the unmaintained `costrouc/pysrim` Docker Hub
+> image and `python3.6`; the Dockerfiles were removed in 0.6.0. pysrim2 0.7.0
+> publishes its own image, `ghcr.io/fsibt/pysrim2`; see
+> [docs/container.md](../../docs/container.md) (or the Container page of the
+> documentation) instead. The example below is kept for reference only.
 
 This is an example of running pysrim within the [provided docker
 container](https://hub.docker.com/r/costrouc/pysrim/tags/) `costrouc/pysrim`

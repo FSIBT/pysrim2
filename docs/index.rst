@@ -27,6 +27,9 @@ Use :ref:`modindex` to search the API documentation.
    :caption: Contents:
 
    installation
+   container
+   cli
+   agents
    tutorial
    benchmarks
    changes-from-pysrim
