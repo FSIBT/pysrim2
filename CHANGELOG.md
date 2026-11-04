@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `pysrim2 install vb5` (Windows) puts the Visual Basic 5 runtime and OCX controls next to SRIM so TRIM starts on native Windows.
+- Wine setup finds `wineserver` where Ubuntu installs it.
+- `TRIM.run()` and `SR.run()` delete old output first and raise `SRIMRunError` if SRIM wrote no result, so a crash never returns a previous run's data.
 - Winetricks downloads go to pysrim2's own cache instead of `~/.cache/winetricks`.
 - `TRIM.run` reads its results correctly when `srim_directory` is a relative path.
 - SR output ranges in `km` are parsed instead of raising `SRIMOutputParseError`.

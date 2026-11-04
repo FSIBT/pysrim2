@@ -156,6 +156,47 @@ class TRIMSettings:
         return self._settings[attr]
 
 
+TRIM_OUTPUT_FILES = (
+    "TRIM.IN",
+    "PHONON.txt",
+    "E2RECOIL.txt",
+    "IONIZ.txt",
+    "LATERAL.txt",
+    "NOVAC.txt",
+    "RANGE.txt",
+    "VACANCY.txt",
+    "COLLISON.txt",
+    "BACKSCAT.txt",
+    "SPUTTER.txt",
+    "RANGE_3D.txt",
+    "TRANSMIT.txt",
+    "TRIMOUT.txt",
+    "TDATA.txt",
+)
+
+
+class SRIMRunError(RuntimeError):
+    """SRIM exited without writing its main output file."""
+
+
+def _remove_stale(directory, names, subdirectory=None):
+    """Delete output files of an earlier run so a crash cannot return old results."""
+    for name in names:
+        paths = [os.path.join(directory, name)]
+        if subdirectory:
+            paths.append(os.path.join(directory, subdirectory, name))
+        for path in paths:
+            if os.path.isfile(path):
+                os.remove(path)
+
+
+def _require_output(directory, name):
+    if not os.path.isfile(os.path.join(directory, name)):
+        raise SRIMRunError(
+            f"SRIM finished but did not write {name} in {directory}; the calculation probably crashed"
+        )
+
+
 class TRIM:
     """Automate TRIM Calculations
 
@@ -271,9 +312,11 @@ class TRIM:
         current_directory = os.getcwd()
         try:
             os.chdir(srim_directory)
+            _remove_stale(srim_directory, TRIM_OUTPUT_FILES, "SRIM Outputs")
             self._write_input_files()
             # Make sure compatible with Windows, OSX, and Linux
             subprocess.check_call(_launch_command("TRIM.exe"), env=_launch_env())
+            _require_output(srim_directory, "RANGE.txt")
             os.chdir(current_directory)
             return Results(srim_directory)
         finally:
@@ -367,9 +410,11 @@ class SR:
         sr_directory = os.path.abspath(os.path.join(srim_directory, "SR Module"))
         try:
             os.chdir(sr_directory)
+            _remove_stale(sr_directory, [self.settings.output_filename])
             self._write_input_file()
             # Make sure compatible with Windows, OSX, and Linux
             subprocess.check_call(_launch_command("SRModule.exe"), env=_launch_env())
+            _require_output(sr_directory, self.settings.output_filename)
 
             return SRResults(sr_directory)
         finally:

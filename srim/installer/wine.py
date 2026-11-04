@@ -135,17 +135,51 @@ def setup_wine_prefix(prefix: Path) -> None:
 
         prefix.mkdir(parents=True, exist_ok=True)
         _run([*xvfb, "wineboot", "-i"], env)
-        _run(["wineserver", "-w"], env)
+        _wait_for_wineserver(env, xvfb)
         cache = data_dir() / "cache" / "winetricks"
         cache.mkdir(parents=True, exist_ok=True)
         _run([*xvfb, *winetricks, "-q", *WINETRICKS_VERBS], {**env, "W_CACHE": str(cache)})
-        _run(["wineserver", "-w"], env)
+        _wait_for_wineserver(env, xvfb)
 
         system32 = _system32(prefix)
         system32.mkdir(parents=True, exist_ok=True)
         for dll in DLLS:
             shutil.copyfile(found[dll], system32 / dll)
     (prefix / MARKER_NAME).write_text("1\n")
+
+
+WINESERVER_PATHS = (
+    "/usr/lib/wine/wineserver",
+    "/usr/lib/wine/wineserver32",
+    "/usr/lib/wine/wineserver64",
+    "/usr/lib/x86_64-linux-gnu/wine/wineserver",
+    "/usr/lib/i386-linux-gnu/wine/wineserver",
+    "/opt/wine-stable/bin/wineserver",
+)
+
+
+def _wineserver() -> str | None:
+    """Return the path of ``wineserver``: on PATH, else a known distro location."""
+    found = shutil.which("wineserver")
+    if found:
+        return found
+    for candidate in WINESERVER_PATHS:
+        if os.access(candidate, os.X_OK) and Path(candidate).is_file():
+            return candidate
+    return None
+
+
+def _wait_for_wineserver(env: dict[str, str], xvfb: list[str]) -> None:
+    """Wait until wine's background processes finish (``wineserver -w``).
+
+    Ubuntu does not put ``wineserver`` on PATH; if it cannot be found, ask
+    wine to end its session instead.
+    """
+    server = _wineserver()
+    if server:
+        _run([server, "-w"], env)
+    else:
+        _run([*xvfb, "wine", "wineboot", "--end-session"], env)
 
 
 def _run(cmd: list[str], env: dict[str, str]) -> None:

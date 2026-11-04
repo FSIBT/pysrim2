@@ -22,7 +22,7 @@ from srim.installer.wine import (
 )
 from srim.paths import srim_dir, wine_prefix
 
-COMPONENTS = ("srim", "wine", "image", "runtime", "skill")
+COMPONENTS = ("srim", "vb5", "wine", "image", "runtime", "skill")
 PACKAGE_TIMEOUT_SECONDS = 1800
 
 
@@ -93,7 +93,7 @@ def default_components() -> list[str]:
     """
     system = current_platform()
     if system == "windows":
-        wanted = ["srim", "skill"]
+        wanted = ["srim", "vb5", "skill"]
     elif system == "linux":
         if wine_status().wine or not container_runtime():
             wanted = ["wine", "srim", "skill"]
@@ -178,5 +178,32 @@ def _wine_steps() -> list[Step]:
     ]
 
 
+def _vb5_step() -> Step:
+    if current_platform() != "windows":
+        raise ComponentUnavailable("vb5", "component vb5 is only for Windows")
+    from srim.installer.vb5 import OCXS, install_vb5, vb5_ready
+
+    def run() -> None:
+        install_srim(srim_dir())
+        install_vb5(srim_dir())
+
+    return Step(
+        name="vb5",
+        summary=(
+            "copy the Visual Basic 5 runtime and OCX controls from SRIM-Setup next to "
+            "TRIM.exe and register the controls"
+        ),
+        check=lambda: vb5_ready(srim_dir()),
+        commands=lambda: [
+            f"copy MSVBVM50.DLL, COMCAT.DLL and the OCX files from {srim_dir()}\\SRIM-Setup "
+            f"into {srim_dir()} and its SR Module folder",
+            *(f"regsvr32 /s {name}" for name in OCXS),
+        ],
+        run=run,
+        needs_admin=True,
+    )
+
+
 register("srim", _srim_step)
+register("vb5", _vb5_step)
 register("wine", _wine_steps)

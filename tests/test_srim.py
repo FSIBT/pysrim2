@@ -8,7 +8,7 @@ from srim.core.ion import Ion
 from srim.core.layer import Layer
 from srim.core.target import Target
 from srim.output import SRResults
-from srim.srim import SR, TRIM, TRIMSettings, _launch_command
+from srim.srim import SR, TRIM, SRIMRunError, TRIMSettings, _launch_command
 
 TESTDATA_DIRECTORY = "test_files"
 
@@ -115,10 +115,6 @@ def test_simple_srim_init():
 def test_sr_run_reads_results_from_relative_srim_directory(tmp_path, monkeypatch):
     sr_module = tmp_path / "srim" / "SR Module"
     sr_module.mkdir(parents=True)
-    shutil.copy(
-        os.path.join(TESTDATA_DIRECTORY, "SRIM", "SR_OUTPUT.txt"),
-        sr_module / "SR_OUTPUT.txt",
-    )
 
     layer = Layer(
         {
@@ -132,7 +128,16 @@ def test_sr_run_reads_results_from_relative_srim_directory(tmp_path, monkeypatch
     sr = SR(layer, ion, output_type=5)
 
     commands = []
-    monkeypatch.setattr(subprocess, "check_call", lambda cmd, **kw: commands.append(cmd))
+    sample = os.path.abspath(os.path.join(TESTDATA_DIRECTORY, "SRIM", "SR_OUTPUT.txt"))
+
+    def fake_run(cmd, **kw):
+        commands.append(cmd)
+        shutil.copy(
+            sample,
+            sr_module / "SR_OUTPUT.txt",
+        )
+
+    monkeypatch.setattr(subprocess, "check_call", fake_run)
     monkeypatch.chdir(tmp_path)
 
     results = sr.run(srim_directory="srim")
@@ -172,7 +177,11 @@ def test_trim_run_reads_results_from_relative_srim_directory(tmp_path, monkeypat
     trim = TRIM(Target([layer]), Ion("Ni", energy=1.0e6), number_ions=1)
 
     seen = {}
-    monkeypatch.setattr(subprocess, "check_call", lambda cmd, **kw: None)
+    monkeypatch.setattr(
+        subprocess,
+        "check_call",
+        lambda cmd, **kw: (srim_directory / "RANGE.txt").write_text("new"),
+    )
     monkeypatch.setattr(TRIM, "_write_input_files", lambda self: None, raising=False)
 
     class FakeResults:
@@ -187,3 +196,40 @@ def test_trim_run_reads_results_from_relative_srim_directory(tmp_path, monkeypat
     assert os.path.isabs(seen["directory"])
     assert os.path.realpath(seen["directory"]) == os.path.realpath(srim_directory)
     assert os.getcwd() == os.path.realpath(tmp_path)
+
+
+def _quick_trim():
+    layer = Layer.from_formula("Ni", 8.9, 1000.0)
+    return TRIM(Target([layer]), Ion("Ni", energy=1.0e6), number_ions=1)
+
+
+def test_trim_run_removes_stale_output_and_fails_if_none_written(tmp_path, monkeypatch):
+    (tmp_path / "SRIM Outputs").mkdir()
+    for stale in (tmp_path / "RANGE.txt", tmp_path / "SRIM Outputs" / "RANGE_3D.txt"):
+        stale.write_text("old")
+    seen = {}
+    monkeypatch.setattr(
+        subprocess,
+        "check_call",
+        lambda cmd, **kw: seen.update(left=sorted(p.name for p in tmp_path.rglob("*.txt"))),
+    )
+    monkeypatch.setattr(TRIM, "_write_input_files", lambda self: None, raising=False)
+
+    with pytest.raises(SRIMRunError, match="RANGE.txt"):
+        _quick_trim().run(srim_directory=str(tmp_path))
+
+    assert seen["left"] == []
+
+
+def test_sr_run_removes_stale_output_and_fails_if_none_written(tmp_path, monkeypatch):
+    sr_module = tmp_path / "SR Module"
+    sr_module.mkdir()
+    (sr_module / "SR_OUTPUT.txt").write_text("old")
+    monkeypatch.setattr(subprocess, "check_call", lambda cmd, **kw: None)
+    layer = Layer.from_formula("Si", 2.33, 1000.0)
+    sr = SR(layer, Ion("He", energy=1.0e6))
+
+    with pytest.raises(SRIMRunError, match="SR_OUTPUT.txt"):
+        sr.run(srim_directory=str(tmp_path))
+
+    assert not (sr_module / "SR_OUTPUT.txt").exists()

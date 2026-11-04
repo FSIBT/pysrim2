@@ -30,7 +30,9 @@ def fake_system(monkeypatch, tmp_path):
     calls = []
     monkeypatch.setenv("PYSRIM2_HOME", str(tmp_path / "home"))
     monkeypatch.setattr(wine, "WINETRICKS_SHA256", hashlib.sha256(FAKE_EXE).hexdigest())
-    monkeypatch.setattr(shutil, "which", fake_which({"wine", "xvfb-run", "7z", "bash", "curl"}))
+    monkeypatch.setattr(
+        shutil, "which", fake_which({"wine", "wineserver", "xvfb-run", "7z", "bash", "curl"})
+    )
     monkeypatch.setattr(wine, "MSVBVM50_SHA256", hashlib.sha256(FAKE_EXE).hexdigest())
     monkeypatch.setattr(wine, "_download", lambda url, dest: dest.write_bytes(FAKE_EXE))
 
@@ -54,11 +56,11 @@ def test_setup_runs_recipe_and_copies_dlls(tmp_path, fake_system):
     cmds = [c for c, _ in fake_system]
     assert cmds[0][:3] == ["7z", "e", "-y"]
     assert cmds[1] == ["xvfb-run", "-a", "wineboot", "-i"]
-    assert cmds[2] == ["wineserver", "-w"]
+    assert cmds[2] == ["/usr/bin/wineserver", "-w"]
     assert cmds[3][:4] == ["xvfb-run", "-a", "/usr/bin/bash", cmds[3][3]]
     assert cmds[3][3].endswith("winetricks-" + wine.WINETRICKS_TAG)
     assert cmds[3][4:] == ["-q", "comdlg32ocx", "msflxgrd", "richtx32", "comctl32ocx", "tabctl32"]
-    assert cmds[4] == ["wineserver", "-w"]
+    assert cmds[4] == ["/usr/bin/wineserver", "-w"]
     assert all(kw["timeout"] == 600 for c, kw in fake_system if c[0] != "7z")
     env = fake_system[1][1]["env"]
     assert env["WINEPREFIX"] == str(prefix)
@@ -253,3 +255,33 @@ def test_winetricks_uses_private_cache(tmp_path, fake_system):
     assert envs[0]["W_CACHE"] == expected
     other = [kw["env"] for c, kw in fake_system if c[0] != "7z" and "-q" not in c]
     assert all(e.get("W_CACHE") != expected for e in other)
+
+
+def test_wineserver_found_on_path(monkeypatch):
+    monkeypatch.setattr(wine.shutil, "which", lambda name: "/usr/bin/wineserver")
+    assert wine._wineserver() == "/usr/bin/wineserver"
+
+
+def test_wineserver_found_in_known_location(monkeypatch, tmp_path):
+    server = tmp_path / "wineserver"
+    server.write_text("#!/bin/sh\n")
+    server.chmod(0o755)
+    monkeypatch.setattr(wine.shutil, "which", lambda name: None)
+    monkeypatch.setattr(wine, "WINESERVER_PATHS", ("/nonexistent/wineserver", str(server)))
+    assert wine._wineserver() == str(server)
+
+
+def test_wait_for_wineserver_uses_wineserver_when_found(monkeypatch):
+    calls = []
+    monkeypatch.setattr(wine, "_wineserver", lambda: "/usr/lib/wine/wineserver")
+    monkeypatch.setattr(wine, "_run", lambda cmd, env: calls.append(cmd))
+    wine._wait_for_wineserver({}, ["xvfb-run", "-a"])
+    assert calls == [["/usr/lib/wine/wineserver", "-w"]]
+
+
+def test_wait_for_wineserver_falls_back_to_end_session(monkeypatch):
+    calls = []
+    monkeypatch.setattr(wine, "_wineserver", lambda: None)
+    monkeypatch.setattr(wine, "_run", lambda cmd, env: calls.append(cmd))
+    wine._wait_for_wineserver({}, ["xvfb-run", "-a"])
+    assert calls == [["xvfb-run", "-a", "wine", "wineboot", "--end-session"]]
