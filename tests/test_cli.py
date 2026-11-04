@@ -158,3 +158,57 @@ def test_subprocess_error_is_reported(rec, capsys):
     steps.register("srim", lambda: Step("srim", "s", lambda: False, lambda: [], boom))
     assert cli.main(["install", "srim"]) == 1
     assert "[fail] srim:" in capsys.readouterr().err
+
+
+def _interactive(monkeypatch, answer):
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", answer)
+
+
+def test_do_line_printed_after_yes_answer(rec, monkeypatch, capsys):
+    _interactive(monkeypatch, lambda prompt="": "y")
+    assert cli.main(["install", "wine"]) == 0
+    assert "[do] wine-packages: summary of wine-packages" in capsys.readouterr().out
+
+
+def test_keyboard_interrupt_at_prompt_cancels(rec, monkeypatch, capsys):
+    def interrupt(prompt=""):
+        raise KeyboardInterrupt
+
+    _interactive(monkeypatch, interrupt)
+    assert cli.main(["install", "wine"]) == 2
+    captured = capsys.readouterr()
+    assert "[skip] wine-packages: cancelled" in captured.out
+    assert "Traceback" not in captured.err
+    assert rec.ran == []
+
+
+def test_value_error_is_an_install_error(rec, capsys):
+    def boom():
+        raise ValueError("No closing quotation")
+
+    steps.register("srim", lambda: Step("srim", "s", lambda: False, lambda: [], boom))
+    assert cli.main(["install", "srim"]) == 1
+    assert "[fail] srim: No closing quotation" in capsys.readouterr().err
+
+
+def test_comment_only_commands_are_not_offered(rec, monkeypatch, capsys):
+    hint = "# unknown distribution: install wine, see https://example.org"
+    steps.register(
+        "srim",
+        lambda: Step(
+            "srim",
+            "s",
+            lambda: False,
+            lambda: [hint],
+            lambda: rec.ran.append("srim"),
+            needs_admin=True,
+        ),
+    )
+    _interactive(monkeypatch, lambda prompt="": pytest.fail("must not prompt"))
+    assert cli.main(["install", "srim", "--yes"]) == 2
+    out = capsys.readouterr().out
+    assert "[skip] srim:" in out
+    assert "https://example.org" in out
+    assert "[ask]" not in out
+    assert rec.ran == []

@@ -121,3 +121,9 @@ def test_wine_packages_refuse_comment_lines(monkeypatch):
     monkeypatch.setattr(steps, "distro_wine_commands", lambda: ["# note"])
     with pytest.raises(WineSetupError, match="refusing"):
         steps._run_wine_packages()
+
+
+def test_wine_packages_unbalanced_quote_is_an_install_error(monkeypatch):
+    monkeypatch.setattr(steps, "distro_wine_commands", lambda: ["sudo apt-get install 'oops"])
+    with pytest.raises(WineSetupError):
+        steps._run_wine_packages()

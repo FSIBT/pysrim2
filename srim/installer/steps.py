@@ -149,7 +149,7 @@ def _run_wine_packages() -> None:
             )
         try:
             subprocess.run(shlex.split(command), check=True, timeout=PACKAGE_TIMEOUT_SECONDS)
-        except (OSError, subprocess.SubprocessError) as exc:
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
             raise WineSetupError(f"{command} failed: {exc}") from exc
 
 

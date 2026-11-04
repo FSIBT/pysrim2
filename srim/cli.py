@@ -15,6 +15,13 @@ from srim.paths import srim_dir
 EXIT_OK = 0
 EXIT_FAILED = 1
 EXIT_ADMIN_SKIPPED = 2
+INSTALL_ERRORS = (
+    SrimInstallError,
+    WineSetupError,
+    ValueError,
+    subprocess.SubprocessError,
+    OSError,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -96,25 +103,35 @@ def _install(args) -> int:
             print(f"[do] {step.name}: {step.summary}")
             _print_commands(commands)
             continue
+        if commands and all(c.lstrip().startswith("#") for c in commands):
+            print(f"[skip] {step.name}: cannot be installed automatically here:")
+            _print_commands(commands)
+            admin_skipped = True
+            unmet.add(step.name)
+            continue
         if step.needs_admin and not args.yes:
+            confirmed = False
             if sys.stdin.isatty():
                 print(f"[ask] {step.name}: needs admin rights — run these commands? [y/N]")
                 _print_commands(commands)
-                confirmed = _confirm()
-            else:
-                confirmed = False
+                try:
+                    confirmed = _confirm()
+                except KeyboardInterrupt:
+                    print(f"\n[skip] {step.name}: cancelled")
+                    return EXIT_ADMIN_SKIPPED
             if not confirmed:
                 print(f"[skip] {step.name}: needs admin rights — rerun with --yes or run:")
                 _print_commands(commands)
                 admin_skipped = True
                 unmet.add(step.name)
                 continue
+            print(f"[do] {step.name}: {step.summary}")
         else:
             print(f"[do] {step.name}: {step.summary}")
             _print_commands(commands)
         try:
             step.run()
-        except (SrimInstallError, WineSetupError, subprocess.SubprocessError, OSError) as exc:
+        except INSTALL_ERRORS as exc:
             print(f"[fail] {step.name}: {exc}", file=sys.stderr)
             failed = True
             break
