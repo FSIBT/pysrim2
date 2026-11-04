@@ -137,6 +137,8 @@ def _install(args) -> int:
             else:
                 step.run()
             container.reset_cache()
+            where = f" in {srim_dir()}" if step.name == "srim" else ""
+            print(f"[ok] {step.name}: installed{where}")
         except INSTALL_ERRORS as exc:
             print(f"[fail] {step.name}: {exc}", file=sys.stderr)
             failed = True

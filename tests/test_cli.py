@@ -313,3 +313,25 @@ def test_progress_lines_are_printed_while_a_step_runs(rec, capsys):
     )
     assert cli.main(["install", "srim"]) == 0
     assert "  - first sub-step…" in capsys.readouterr().out
+
+
+def test_success_prints_completion_line(rec, capsys):
+    assert cli.main(["install", "wine", "--yes"]) == 0
+    out = capsys.readouterr().out
+    assert "[ok] wine-packages: installed" in out
+    assert "[ok] wine: installed" in out
+
+
+def test_srim_completion_line_names_the_path(rec, monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("PYSRIM2_SRIM_DIR", str(tmp_path / "srim"))
+    assert cli.main(["install", "srim", "--yes"]) == 0
+    assert f"[ok] srim: installed in {tmp_path / 'srim'}" in capsys.readouterr().out
+
+
+def test_failure_prints_no_completion_line(rec, capsys):
+    def boom():
+        raise ValueError("nope")
+
+    steps.register("srim", lambda: Step("srim", "s", lambda: False, lambda: [], boom))
+    assert cli.main(["install", "srim"]) == 1
+    assert "installed" not in capsys.readouterr().out
