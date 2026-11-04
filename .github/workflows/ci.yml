@@ -98,7 +98,18 @@ jobs:
         run: uv run pysrim2 install wine srim --yes
 
       - name: Run TRIM and SR for real
+        env:
+          PYSRIM2_REPRO_LABEL: linux-wine
+          PYSRIM2_REPRO_OUT: ${{ github.workspace }}/repro-digest.txt
         run: uv run pytest -m srim -v
+
+      - name: Upload the reproducibility digest
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: repro-linux
+          path: repro-digest.txt
+          if-no-files-found: warn
 
   srim-windows:
     name: srim-windows
@@ -117,4 +128,57 @@ jobs:
         run: uv run pysrim2 install vb5 srim --yes
 
       - name: Run TRIM and SR for real
+        env:
+          PYSRIM2_REPRO_LABEL: windows-native
+          PYSRIM2_REPRO_OUT: ${{ github.workspace }}/repro-digest.txt
         run: uv run pytest -m srim -v
+
+      - name: Upload the reproducibility digest
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: repro-windows
+          path: repro-digest.txt
+          if-no-files-found: warn
+
+  # Informational only: cross-platform identity is not guaranteed (wine versus native
+  # Windows), so this job reports and always succeeds. The container workflow uploads its
+  # own digest in a separate workflow run, so only linux and windows are compared here.
+  repro-report:
+    name: repro-report
+    needs: [srim-linux, srim-windows]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Download the digests
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: repro-*
+          path: digests
+
+      - name: Compare the digests
+        continue-on-error: true
+        shell: bash
+        run: |
+          {
+            echo "## Reproducibility across platforms (informational)"
+            echo
+            echo "| platform | digest | mean depth (A) | ions | identical to first? |"
+            echo "|---|---|---|---|---|"
+            first=""
+            for f in digests/*/repro-digest.txt; do
+              [ -f "$f" ] || continue
+              label=$(sed -n 's/^label: //p' "$f")
+              digest=$(sed -n 's/^digest: //p' "$f")
+              depth=$(sed -n 's/^mean_depth_A: //p' "$f")
+              ions=$(sed -n 's/^n_ions: //p' "$f")
+              [ -n "$first" ] || first="$digest"
+              if [ "$digest" = "$first" ]; then same=yes; else same=no; fi
+              echo "| $label | \`${digest:0:16}\` | $depth | $ions | $same |"
+            done
+            echo
+            echo "Same-platform reruns must match (the test asserts it); a difference between platforms is reported, never an error."
+          } >> "$GITHUB_STEP_SUMMARY" || true
+          exit 0

@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- CI reports, informationally, whether the same spec and seed give the same `RANGE_3D` digest on Linux (wine), Windows and in the container; same-platform reruns are asserted identical (`tests/integration/test_reproducibility.py`).
 - `.df` (a pandas DataFrame, first column `depth_A`, columns named with SRIM units) and `.metadata` on `Ioniz`, `Vacancy`, `NoVacancy`, `EnergyToRecoils`, `Phonons` and `Range`; `Results.to_dataframes()` returns them as a dict.
 - `srim.output.Range3D` reads `RANGE_3D.txt` (per-ion final positions) into a DataFrame with columns `ion`, `depth_A`, `y_A`, `z_A`; `Results.range3d` holds it (`None` if the file is absent) and `Results.to_dataframes()` includes it.
 - `Range.summary` returns the range and straggling values SRIM prints in the `RANGE.txt` header (depth, lateral, radial, skewness, kurtosis). `srim.analysis.implant_summary(df)` computes the same quantities from the per-ion positions of `Range3D` (standard deviations with `ddof=1`).

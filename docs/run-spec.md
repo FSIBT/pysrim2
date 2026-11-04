@@ -63,3 +63,14 @@ SRIM directory next to the outputs (the directory the results are read from);
 
 See {doc}`cli`: `pysrim2 run run.yaml [--set ion.energy_keV=30] [--output DIR]` and
 `pysrim2 import TRIM.IN -o run.yaml`.
+
+## Reproducibility
+
+The same spec with the same seed on the same machine gives identical ion
+positions (`results.range3d.df`); the integration tests assert this. Across
+platforms the numbers are usually identical but not guaranteed: wine and native
+Windows, for example, may differ in floating-point or random-number behaviour.
+CI writes a digest of the sorted `RANGE_3D` table on Linux (wine), Windows and
+in the container image, and the `repro-report` job in `ci.yml` lists whether
+Linux and Windows agree in its job summary. This comparison is informational and
+never fails the build.

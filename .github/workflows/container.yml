@@ -52,9 +52,17 @@ jobs:
       # runner is, so nothing may be written into the mount.
       - name: Run the SRIM tests inside the image
         run: >
-          docker run --rm --security-opt seccomp=srim/data/seccomp-docker.json -v "$PWD/tests:/tests-src:ro" -v "$PWD/examples:/examples-src:ro"
-          -e PYTHONDONTWRITEBYTECODE=1 -w /data pysrim2:ci
+          mkdir -m 777 "$RUNNER_TEMP/out" && docker run --rm --security-opt seccomp=srim/data/seccomp-docker.json -v "$RUNNER_TEMP/out:/out" -v "$PWD/tests:/tests-src:ro" -v "$PWD/examples:/examples-src:ro"
+          -e PYTHONDONTWRITEBYTECODE=1 -e PYSRIM2_REPRO_LABEL=container -e PYSRIM2_REPRO_OUT=/out/repro-digest.txt -w /data pysrim2:ci
           sh -c 'cp -r /tests-src /data/tests && cp -r /examples-src /data/examples && pytest -m srim -p no:cacheprovider tests/integration'
+
+      - name: Upload the reproducibility digest
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: repro-container
+          path: ${{ runner.temp }}/out/repro-digest.txt
+          if-no-files-found: warn
 
   publish:
     name: publish image
