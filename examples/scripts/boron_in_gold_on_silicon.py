@@ -2,7 +2,8 @@
 
 Run natively (``python boron_in_gold_on_silicon.py``) or in the container::
 
-    podman run --rm --userns=keep-id:uid=1000,gid=1000 -v "$PWD:/data:Z" ghcr.io/fsibt/pysrim2:<tag> \
+    podman run --rm --userns=keep-id:uid=1000,gid=1000 \
+        -v "$PWD:/data:Z" ghcr.io/fsibt/pysrim2:<tag> \
         python /data/boron_in_gold_on_silicon.py
 
 Quick Kinchin-Pease with 200 ions takes seconds (about a minute under QEMU). With
