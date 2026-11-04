@@ -7,7 +7,6 @@ modules register further components (``image``, ``runtime``, ``skill``).
 """
 
 import shlex
-import shutil
 import subprocess
 import sys
 from collections.abc import Callable, Sequence
@@ -81,11 +80,10 @@ def current_platform() -> str:
 
 
 def container_runtime() -> str | None:
-    """Return the name of an installed container runtime (docker or podman), if any."""
-    for name in ("docker", "podman"):
-        if shutil.which(name):
-            return name
-    return None
+    """Return the name of a usable container runtime (podman or docker), if any."""
+    from srim.installer.container import find_runtime
+
+    return find_runtime()
 
 
 def default_components() -> list[str]:
@@ -136,21 +134,24 @@ def _wine_package_commands() -> list[str]:
     ]
 
 
+def run_admin_commands(commands: list[str], error: type[Exception], what: str, docs: str) -> None:
+    """Run ``commands`` one by one without a shell; raise ``error`` on the first problem."""
+    for command in commands:
+        if not command.strip() or command.lstrip().startswith("#"):
+            raise error(f"refusing to run {command!r}; install {what} yourself, see {docs}")
+        try:
+            subprocess.run(shlex.split(command), check=True, timeout=PACKAGE_TIMEOUT_SECONDS)
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            raise error(f"{command} failed: {exc}") from exc
+
+
 def _run_wine_packages() -> None:
     commands = distro_wine_commands()
     if not commands:
         raise WineSetupError(
             f"unknown distribution; install wine and xvfb yourself, see {WINE_DOCS}"
         )
-    for command in commands:
-        if not command.strip() or command.lstrip().startswith("#"):
-            raise WineSetupError(
-                f"refusing to run {command!r}; install wine yourself, see {WINE_DOCS}"
-            )
-        try:
-            subprocess.run(shlex.split(command), check=True, timeout=PACKAGE_TIMEOUT_SECONDS)
-        except (OSError, ValueError, subprocess.SubprocessError) as exc:
-            raise WineSetupError(f"{command} failed: {exc}") from exc
+    run_admin_commands(commands, WineSetupError, "wine", WINE_DOCS)
 
 
 def _wine_steps() -> list[Step]:

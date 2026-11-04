@@ -216,11 +216,8 @@ def _extract(extractor: str, installer: Path, out: Path) -> None:
         raise WineSetupError(f"could not extract {MSVBVM50_NAME} with {extractor}: {exc}") from exc
 
 
-def distro_wine_commands(os_release: Path = Path("/etc/os-release")) -> list[str]:
-    """Return the shell commands that install wine on this distribution.
-
-    The list is empty for distributions we do not know; see ``WINE_DOCS``.
-    """
+def distro_ids(os_release: Path = Path("/etc/os-release")) -> list[str]:
+    """Return the ``ID`` and ``ID_LIKE`` words of ``os_release`` (empty if unreadable)."""
     ids: list[str] = []
     try:
         text = Path(os_release).read_text()
@@ -230,6 +227,15 @@ def distro_wine_commands(os_release: Path = Path("/etc/os-release")) -> list[str
         key, _, value = line.partition("=")
         if key in ("ID", "ID_LIKE"):
             ids += value.strip().strip("\"'").lower().split()
+    return ids
+
+
+def distro_wine_commands(os_release: Path = Path("/etc/os-release")) -> list[str]:
+    """Return the shell commands that install wine on this distribution.
+
+    The list is empty for distributions we do not know; see ``WINE_DOCS``.
+    """
+    ids = distro_ids(os_release)
     if "debian" in ids or "ubuntu" in ids:
         return [
             "sudo dpkg --add-architecture i386",

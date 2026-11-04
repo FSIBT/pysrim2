@@ -6,6 +6,7 @@ import subprocess
 import sys
 
 import srim
+from srim.installer import container
 from srim.installer import steps as steps_module
 from srim.installer.srim_install import NOTICE, SrimInstallError
 from srim.installer.steps import COMPONENTS, ComponentUnavailable
@@ -147,6 +148,41 @@ def _check(name: str, ok: bool, detail: str, fix: str = "") -> dict:
     return {"name": name, "ok": bool(ok), "detail": detail, "fix": "" if ok else fix}
 
 
+def _container_checks() -> list[dict]:
+    runtime = container.find_runtime()
+    if runtime is None:
+        stopped = container.installed_runtimes()
+        if stopped:
+            name = stopped[0]
+            return [
+                _check(
+                    "container-runtime",
+                    False,
+                    f"{name} is installed but not running",
+                    f"run: {container.start_hint(name)}",
+                )
+            ]
+        return [
+            _check(
+                "container-runtime",
+                False,
+                "podman or docker not found",
+                "run: pysrim2 install runtime",
+            )
+        ]
+    tag = container.image_tag()
+    pull = " ".join(container.pull_command(runtime, tag))
+    return [
+        _check("container-runtime", True, runtime),
+        _check(
+            "image",
+            container.image_present(runtime, tag),
+            container.image_ref(tag),
+            f"run: {pull}",
+        ),
+    ]
+
+
 def collect_checks() -> list[dict]:
     system = steps_module.current_platform()
     checks = [
@@ -195,15 +231,7 @@ def collect_checks() -> list[dict]:
         ]
     native_possible = system == "windows" or (status is not None and status.wine)
     if not native_possible:
-        runtime = steps_module.container_runtime()
-        checks.append(
-            _check(
-                "container-runtime",
-                runtime,
-                runtime or "docker or podman not found",
-                "run: pysrim2 install runtime",
-            )
-        )
+        checks += _container_checks()
     return checks
 
 

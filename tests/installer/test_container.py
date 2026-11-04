@@ -1,0 +1,183 @@
+import subprocess
+
+import pytest
+
+import srim
+from srim.installer import container, steps
+
+
+class FakeRun:
+    """Stands in for subprocess.run; ``results`` maps argv tuples to return codes."""
+
+    def __init__(self, results=None, default=0):
+        self.results = results or {}
+        self.default = default
+        self.calls = []
+
+    def __call__(self, cmd, **kwargs):
+        self.calls.append(list(cmd))
+        code = self.results.get(tuple(cmd), self.default)
+        return subprocess.CompletedProcess(cmd, code, "", "")
+
+
+def installed(monkeypatch, *names):
+    monkeypatch.setattr(
+        container.shutil, "which", lambda n: f"/usr/bin/{n}" if n in names else None
+    )
+
+
+def test_find_runtime_prefers_podman(monkeypatch):
+    installed(monkeypatch, "docker", "podman")
+    monkeypatch.setattr(container.subprocess, "run", FakeRun())
+    assert container.find_runtime() == "podman"
+
+
+def test_find_runtime_falls_back_to_docker(monkeypatch):
+    installed(monkeypatch, "docker", "podman")
+    run = FakeRun({("podman", "info"): 125})
+    monkeypatch.setattr(container.subprocess, "run", run)
+    assert container.find_runtime() == "docker"
+
+
+def test_find_runtime_none_installed(monkeypatch):
+    installed(monkeypatch)
+    run = FakeRun()
+    monkeypatch.setattr(container.subprocess, "run", run)
+    assert container.find_runtime() is None
+    assert run.calls == []
+
+
+def test_daemon_not_running_is_not_usable(monkeypatch):
+    installed(monkeypatch, "docker")
+    monkeypatch.setattr(container.subprocess, "run", FakeRun(default=1))
+    assert container.find_runtime() is None
+    assert container.installed_runtimes() == ["docker"]
+
+
+def test_info_timeout_is_not_usable(monkeypatch):
+    installed(monkeypatch, "docker")
+
+    def hang(cmd, **kw):
+        raise subprocess.TimeoutExpired(cmd, 1)
+
+    monkeypatch.setattr(container.subprocess, "run", hang)
+    assert container.find_runtime() is None
+
+
+def test_start_hint(monkeypatch):
+    monkeypatch.setattr(steps, "current_platform", lambda: "macos")
+    assert container.start_hint("podman") == "podman machine start"
+    assert "Docker Desktop" in container.start_hint("docker")
+    monkeypatch.setattr(steps, "current_platform", lambda: "linux")
+    assert "systemctl" in container.start_hint("docker")
+
+
+@pytest.mark.parametrize(
+    ("version", "tag"),
+    [("0.7.0", "0.7.0"), ("1.2.3", "1.2.3"), ("0.7.0.dev1", "main"), ("0.7.0rc1", "main"),
+     ("0.7.0a2", "main"), ("0.7.0b1", "main"), ("0.7.1.dev3+g1234", "main")],
+)
+def test_image_tag(monkeypatch, version, tag):
+    monkeypatch.setattr(srim, "__version__", version)
+    assert container.image_tag() == tag
+
+
+def test_pull_image_command(monkeypatch):
+    run = FakeRun()
+    monkeypatch.setattr(container.subprocess, "run", run)
+    container.pull_image("podman", "0.7.0")
+    assert run.calls == [["podman", "pull", "--platform", "linux/amd64", "ghcr.io/fsibt/pysrim2:0.7.0"]]
+
+
+def test_pull_failure_explains(monkeypatch):
+    monkeypatch.setattr(container.subprocess, "run", FakeRun(default=1))
+    with pytest.raises(container.ContainerError) as err:
+        container.pull_image("docker", "main")
+    message = str(err.value)
+    assert "may not be published yet" in message
+    assert "docker pull --platform linux/amd64 ghcr.io/fsibt/pysrim2:main" in message
+
+
+def test_pull_runtime_missing(monkeypatch):
+    def missing(cmd, **kw):
+        raise FileNotFoundError(cmd[0])
+
+    monkeypatch.setattr(container.subprocess, "run", missing)
+    with pytest.raises(container.ContainerError, match="docker pull"):
+        container.pull_image("docker", "main")
+
+
+@pytest.mark.parametrize(
+    ("system", "os_release", "expected"),
+    [
+        ("macos", "", ["brew install podman", "podman machine init", "podman machine start"]),
+        ("linux", 'ID=ubuntu\nID_LIKE=debian\n', ["sudo apt-get install -y podman"]),
+        ("linux", "ID=fedora\n", ["sudo dnf install -y podman"]),
+        ("windows", "", ["winget install -e --id RedHat.Podman"]),
+    ],
+)
+def test_runtime_install_commands(monkeypatch, tmp_path, system, os_release, expected):
+    monkeypatch.setattr(steps, "current_platform", lambda: system)
+    path = tmp_path / "os-release"
+    path.write_text(os_release)
+    assert container.runtime_install_commands(path) == expected
+
+
+def test_runtime_install_commands_unknown_distro(monkeypatch, tmp_path):
+    monkeypatch.setattr(steps, "current_platform", lambda: "linux")
+    path = tmp_path / "os-release"
+    path.write_text("ID=plan9\n")
+    [hint] = container.runtime_install_commands(path)
+    assert hint.startswith("#")
+    assert container.PODMAN_DOCS in hint
+
+
+def test_run_hint():
+    assert container.run_hint("podman", "0.7.0") == (
+        'podman run --rm -v "$PWD:/data" ghcr.io/fsibt/pysrim2:0.7.0 python /data/run.py'
+    )
+
+
+def test_run_runtime_commands_without_shell(monkeypatch):
+    monkeypatch.setattr(container, "runtime_install_commands", lambda: ["brew install podman", "podman machine init"])
+    run = FakeRun()
+    monkeypatch.setattr(steps.subprocess, "run", run)
+    container.install_runtime()
+    assert run.calls == [["brew", "install", "podman"], ["podman", "machine", "init"]]
+
+
+def test_run_runtime_refuses_comment(monkeypatch):
+    monkeypatch.setattr(container, "runtime_install_commands", lambda: ["# see docs"])
+    with pytest.raises(container.ContainerError):
+        container.install_runtime()
+
+
+def test_steps_registered():
+    assert steps.is_registered("runtime")
+    assert steps.is_registered("image")
+    [runtime] = [s for s in steps.plan(["runtime"])]
+    assert runtime.name == "runtime"
+    assert runtime.needs_admin
+    [image] = steps.plan(["image"])
+    assert image.requires == ("runtime",)
+
+
+def test_image_step_check(monkeypatch):
+    monkeypatch.setattr(srim, "__version__", "0.7.0")
+    [image] = steps.plan(["image"])
+    monkeypatch.setattr(container, "find_runtime", lambda: None)
+    assert not image.check()
+    monkeypatch.setattr(container, "find_runtime", lambda: "podman")
+    run = FakeRun({("podman", "image", "inspect", "ghcr.io/fsibt/pysrim2:0.7.0"): 1})
+    monkeypatch.setattr(container.subprocess, "run", run)
+    assert not image.check()
+    monkeypatch.setattr(container.subprocess, "run", FakeRun())
+    assert image.check()
+    assert image.commands() == ["podman pull --platform linux/amd64 ghcr.io/fsibt/pysrim2:0.7.0"]
+
+
+def test_image_step_run_without_runtime(monkeypatch):
+    [image] = steps.plan(["image"])
+    monkeypatch.setattr(container, "find_runtime", lambda: None)
+    with pytest.raises(container.ContainerError, match="pysrim2 install runtime"):
+        image.run()

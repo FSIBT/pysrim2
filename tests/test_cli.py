@@ -212,3 +212,67 @@ def test_comment_only_commands_are_not_offered(rec, monkeypatch, capsys):
     assert "https://example.org" in out
     assert "[ask]" not in out
     assert rec.ran == []
+
+
+def _doctor_names(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("PYSRIM2_SRIM_DIR", str(tmp_path / "srim"))
+    monkeypatch.setattr(steps, "current_platform", lambda: "macos")
+    cli.main(["doctor", "--json"])
+    return {c["name"]: c for c in json.loads(capsys.readouterr().out)["checks"]}
+
+
+def test_doctor_runtime_and_image_present(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(cli.container, "find_runtime", lambda: "podman")
+    monkeypatch.setattr(cli.container, "image_present", lambda rt, tag: True)
+    checks = _doctor_names(monkeypatch, tmp_path, capsys)
+    assert checks["container-runtime"]["ok"]
+    assert checks["image"]["ok"]
+
+
+def test_doctor_image_missing_shows_pull_command(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(cli.container, "find_runtime", lambda: "podman")
+    monkeypatch.setattr(cli.container, "image_present", lambda rt, tag: False)
+    checks = _doctor_names(monkeypatch, tmp_path, capsys)
+    assert not checks["image"]["ok"]
+    assert "podman pull --platform linux/amd64 ghcr.io/fsibt/pysrim2:" in checks["image"]["fix"]
+
+
+def test_doctor_runtime_installed_but_stopped(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(cli.container, "find_runtime", lambda: None)
+    monkeypatch.setattr(cli.container, "installed_runtimes", lambda: ["podman"])
+    checks = _doctor_names(monkeypatch, tmp_path, capsys)
+    assert "installed but not running" in checks["container-runtime"]["detail"]
+    assert "podman machine start" in checks["container-runtime"]["fix"]
+    assert "image" not in checks
+
+
+def test_doctor_no_runtime(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(cli.container, "find_runtime", lambda: None)
+    monkeypatch.setattr(cli.container, "installed_runtimes", lambda: [])
+    checks = _doctor_names(monkeypatch, tmp_path, capsys)
+    assert checks["container-runtime"]["fix"] == "run: pysrim2 install runtime"
+
+
+def test_image_waits_for_runtime_not_failed(rec, monkeypatch, capsys):
+    from srim.installer import container
+
+    monkeypatch.setattr(container, "find_runtime", lambda: None)
+    steps.register(
+        "runtime",
+        lambda: Step("runtime", "r", lambda: False, lambda: ["x"], lambda: None, needs_admin=True),
+    )
+    steps.register(
+        "image",
+        lambda: Step(
+            "image",
+            "i",
+            lambda: False,
+            lambda: ["y"],
+            lambda: rec.ran.append("image"),
+            requires=("runtime",),
+        ),
+    )
+    assert cli.main(["install", "runtime", "image"]) == 2
+    out = capsys.readouterr().out
+    assert "[skip] image: waiting for runtime" in out
+    assert rec.ran == []
