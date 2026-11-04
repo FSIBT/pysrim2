@@ -7,6 +7,7 @@ import pytest
 from srim.core.ion import Ion
 from srim.core.layer import Layer
 from srim.core.target import Target
+from srim.installer.wine import XVFB_ARGS
 from srim.output import SRResults
 from srim.srim import SR, TRIM, SRIMRunError, TRIMSettings, _launch_command
 
@@ -26,7 +27,12 @@ def test_launch_command_native_without_wine(monkeypatch):
 def test_launch_command_uses_xvfb_run_with_wine(monkeypatch):
     found = {"wine": "/usr/bin/wine", "xvfb-run": "/usr/bin/xvfb-run"}
     monkeypatch.setattr("shutil.which", lambda n: found.get(n))
-    assert _launch_command("TRIM.exe") == ["xvfb-run", "-a", "wine", os.path.join(".", "TRIM.exe")]
+    assert _launch_command("TRIM.exe") == [
+        "xvfb-run",
+        *XVFB_ARGS,
+        "wine",
+        os.path.join(".", "TRIM.exe"),
+    ]
 
 
 def test_launch_command_native_with_xvfb_run_only(monkeypatch):

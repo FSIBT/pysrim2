@@ -55,11 +55,11 @@ def test_setup_runs_recipe_and_copies_dlls(tmp_path, fake_system):
 
     cmds = [c for c, _ in fake_system]
     assert cmds[0][:3] == ["7z", "e", "-y"]
-    assert cmds[1] == ["xvfb-run", "-a", "wineboot", "-i"]
+    assert cmds[1] == ["xvfb-run", *wine.XVFB_ARGS, "wineboot", "-i"]
     assert cmds[2] == ["/usr/bin/wineserver", "-w"]
-    assert cmds[3][:4] == ["xvfb-run", "-a", "/usr/bin/bash", cmds[3][3]]
-    assert cmds[3][3].endswith("winetricks-" + wine.WINETRICKS_TAG)
-    assert cmds[3][4:] == ["-q", "comdlg32ocx", "msflxgrd", "richtx32", "comctl32ocx", "tabctl32"]
+    assert cmds[3][:6] == ["xvfb-run", *wine.XVFB_ARGS, "/usr/bin/bash", cmds[3][5]]
+    assert cmds[3][5].endswith("winetricks-" + wine.WINETRICKS_TAG)
+    assert cmds[3][6:] == ["-q", "comdlg32ocx", "msflxgrd", "richtx32", "comctl32ocx", "tabctl32"]
     assert cmds[4] == ["/usr/bin/wineserver", "-w"]
     assert all(kw["timeout"] == 600 for c, kw in fake_system if c[0] != "7z")
     env = fake_system[1][1]["env"]
@@ -275,7 +275,7 @@ def test_wait_for_wineserver_uses_wineserver_when_found(monkeypatch):
     calls = []
     monkeypatch.setattr(wine, "_wineserver", lambda: "/usr/lib/wine/wineserver")
     monkeypatch.setattr(wine, "_run", lambda cmd, env: calls.append(cmd))
-    wine._wait_for_wineserver({}, ["xvfb-run", "-a"])
+    wine._wait_for_wineserver({}, ["xvfb-run", *wine.XVFB_ARGS])
     assert calls == [["/usr/lib/wine/wineserver", "-w"]]
 
 
@@ -284,8 +284,8 @@ def test_wait_for_wineserver_falls_back_to_end_session(monkeypatch):
     monkeypatch.setattr(wine, "_wineserver", lambda: None)
     monkeypatch.setattr(wine, "_run", lambda cmd, env: calls.append(cmd))
     monkeypatch.setattr(wine, "_wait_until_no_wineserver", lambda: calls.append("polled"))
-    wine._wait_for_wineserver({}, ["xvfb-run", "-a"])
-    assert calls == [["xvfb-run", "-a", "wine", "wineboot", "--end-session"], "polled"]
+    wine._wait_for_wineserver({}, ["xvfb-run", *wine.XVFB_ARGS])
+    assert calls == [["xvfb-run", *wine.XVFB_ARGS, "wine", "wineboot", "--end-session"], "polled"]
 
 
 def test_wait_until_no_wineserver_polls_until_gone(monkeypatch):

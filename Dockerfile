@@ -42,11 +42,13 @@ RUN --mount=type=bind,source=.,target=/tmp/src,rw \
     uv pip install /tmp/src pytest pytest-mock
 
 # The same code path users run: wine prefix (OCX + VB5 runtimes) and SRIM-2013.
-RUN xvfb-run -a pysrim2 install wine srim --yes \
+RUN xvfb-run -a -s "-screen 0 1024x768x24" pysrim2 install wine srim --yes \
  && test -f /opt/srim/Data/LEGAL.rtf \
- && xvfb-run -a pysrim2 doctor
+ && xvfb-run -a -s "-screen 0 1024x768x24" pysrim2 doctor \
+ && (wineserver -k || true) \
+ && rm -rf /tmp/.X*-lock /tmp/.X11-unix /tmp/wine-* /tmp/.wine-*
 
 WORKDIR /data
 # tini as PID 1: xvfb-run hangs waiting for Xvfb's SIGUSR1 when it is PID 1.
-ENTRYPOINT ["tini", "--", "xvfb-run", "-a"]
+ENTRYPOINT ["tini", "--", "xvfb-run", "-a", "-s", "-screen 0 1024x768x24"]
 CMD ["python"]

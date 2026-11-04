@@ -17,7 +17,7 @@ from .core.utils import (
     is_zero_to_two,
 )
 from .input import AutoTRIM, SRInput, TRIMInput
-from .installer.wine import wine_env
+from .installer.wine import XVFB_ARGS, wine_env
 from .output import Results, SRResults
 from .paths import srim_dir, wine_prefix
 
@@ -43,7 +43,7 @@ def _launch_command(executable):
     exe = os.path.join(".", executable)
     if shutil.which("wine"):
         if shutil.which("xvfb-run"):
-            return ["xvfb-run", "-a", "wine", exe]
+            return ["xvfb-run", *XVFB_ARGS, "wine", exe]
         return ["wine", exe]
     return [exe]
 

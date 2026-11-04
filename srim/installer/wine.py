@@ -21,6 +21,8 @@ from pathlib import Path
 from srim.installer.srim_install import _download
 from srim.paths import data_dir, wine_prefix
 
+# xvfb-run's default screen is 640x480x8; wine 11's wineboot hangs on it.
+XVFB_ARGS = ["-a", "-s", "-screen 0 1024x768x24"]
 MSVBVM50_URL = "https://download.microsoft.com/download/vb50pro/utility/1/win98/en-us/msvbvm50.exe"
 MSVBVM50_NAME = "msvbvm50.exe"
 MSVBVM50_SHA256 = "b5f8ea5b9d8b30822a2be2cdcb89cda99ec0149832659ad81f45360daa6e6965"
@@ -119,7 +121,7 @@ def setup_wine_prefix(prefix: Path) -> None:
         raise WineSetupError("none of 7z, 7zz or cabextract is installed")
 
     env = wine_env(prefix)
-    xvfb = ["xvfb-run", "-a"] if shutil.which("xvfb-run") else []
+    xvfb = ["xvfb-run", *XVFB_ARGS] if shutil.which("xvfb-run") else []
     with tempfile.TemporaryDirectory(prefix="pysrim2-vb5-") as tmp:
         # Fetch everything first so a network problem fails before wine is touched.
         work = Path(tmp)

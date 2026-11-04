@@ -41,15 +41,18 @@ jobs:
           cache-to: type=gha,mode=min
 
       - name: pysrim2 doctor
-        run: docker run --rm pysrim2:ci pysrim2 doctor
+        run: docker run --rm --security-opt seccomp=unconfined pysrim2:ci pysrim2 doctor
 
+      # Docker 29+ (the runners') default seccomp profile blocks the i386
+      # socketcall that 32-bit wine uses ("socket: Function not implemented"),
+      # hence seccomp=unconfined for every step that runs wine.
       # The image contains no tests. Mount the checkout read-only and copy the
       # tests into the container: the image must run as its own user (srim,
       # uid 1000, which owns the wine prefix and SRIM), whatever the uid of the
       # runner is, so nothing may be written into the mount.
       - name: Run the SRIM tests inside the image
         run: >
-          docker run --rm -v "$PWD/tests:/tests-src:ro"
+          docker run --rm --security-opt seccomp=unconfined -v "$PWD/tests:/tests-src:ro"
           -e PYTHONDONTWRITEBYTECODE=1 -w /data pysrim2:ci
           sh -c 'cp -r /tests-src /data/tests && pytest -m srim -p no:cacheprovider tests/integration'
 
