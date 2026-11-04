@@ -49,10 +49,10 @@ informational and ignored when loading. Units are in the key names.
 ## Python
 
 ```python
-trim = TRIM.from_yaml("run.yaml")      # or TRIM.from_spec(RunSpec / dict)
-trim.to_yaml("run.yaml")               # trim.to_spec() gives the RunSpec
-results = trim.run()                   # writes run.yaml (with provenance) into the SRIM directory
-results.to_parquet("out")              # the spec (not the provenance or host) goes into the metadata
+trim = TRIM.from_yaml("run.yaml")  # or TRIM.from_spec(RunSpec / dict)
+trim.to_yaml("run.yaml")  # trim.to_spec() gives the RunSpec
+results = trim.run()  # writes run.yaml (with provenance) into the SRIM directory
+results.to_parquet("out")  # the spec (not the provenance or host) goes into the metadata
 ```
 
 `TRIM.run(write_spec=False)` skips the file. `run.yaml` is written into the

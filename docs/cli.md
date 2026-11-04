@@ -7,6 +7,8 @@ package (also available as `python -m srim`).
 pysrim2 --version
 pysrim2 install [COMPONENT ...] [--dry-run] [--yes] [--agent claude|all] [--scope user|project]
 pysrim2 doctor [--json]
+pysrim2 run run.yaml [--set KEY=VALUE ...] [--output DIR]
+pysrim2 import TRIM.IN [-o run.yaml]
 ```
 
 ## `pysrim2 install`
@@ -64,7 +66,38 @@ image. Failing checks print a `fix:` line.
 Each check has `name`, `ok` (boolean), `detail` (what was found) and `fix`
 (empty when `ok`).
 
+## `pysrim2 run`
+
+Runs TRIM from a `run.yaml` (see {doc}`run-spec`), using the SRIM install that
+`pysrim2 doctor` reports. The outputs, `TRIM.IN` and a `run.yaml` with the
+provenance of the run (including the seed that was used) are copied to the
+`--output` directory (default `./srim-output-<UTC timestamp>`, e.g.
+`srim-output-20261104T101500Z`).
+
+`--set KEY=VALUE ...` changes values before the run (also several after one
+`--set`). Keys are dotted paths into the `spec:` section, list items are
+addressed by index, and values are converted by the schema:
+
+```shell
+pysrim2 run run.yaml --set ion.energy_keV=30 target.0.thickness_nm=50 number_ions=500 settings.ranges=1
+```
+
+An invalid file or `--set` is reported with the dotted key at fault and
+nothing is run.
+
+## `pysrim2 import`
+
+Reads a `TRIM.IN` (written by SRIM or pysrim) and writes the equivalent
+`run.yaml` (default `./run.yaml`; an existing file is only overwritten with an
+explicit `-o`). Layer thicknesses are converted from Angstrom to nm; element
+masses that differ from pysrim2's element table are kept as `mass_amu`; the
+random seed in the file is kept (SRIM's own files often have 0).
+
 ## Exit codes
+
+For `run` and `import`: `0` ok, `1` SRIM failed or the output file exists, `2`
+the input is invalid (spec, `--set` value or `TRIM.IN`), `130` cancelled.
+For `install` and `doctor`:
 
 | Code | Meaning |
 |---|---|

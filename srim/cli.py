@@ -1,9 +1,10 @@
-"""Command line interface: ``pysrim2 install`` and ``pysrim2 doctor``."""
+"""Command line interface: ``pysrim2 install``, ``doctor``, ``run`` and ``import``."""
 
 import argparse
 import json
 import subprocess
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 import srim
@@ -18,6 +19,7 @@ from srim.paths import srim_dir
 EXIT_OK = 0
 EXIT_FAILED = 1
 EXIT_ADMIN_SKIPPED = 2
+EXIT_BAD_INPUT = 2  # run / import: invalid run.yaml, unreadable TRIM.IN or --set
 EXIT_INTERRUPTED = 130
 INSTALL_ERRORS = (
     SrimInstallError,
@@ -49,6 +51,28 @@ def build_parser() -> argparse.ArgumentParser:
 
     doctor = sub.add_parser("doctor", help="check the installation")
     doctor.add_argument("--json", action="store_true", help="machine-readable output")
+
+    run = sub.add_parser("run", help="run TRIM from a run.yaml")
+    run.add_argument("spec", metavar="run.yaml", help="run specification (see docs/run-spec.md)")
+    run.add_argument(
+        "--set",
+        dest="overrides",
+        nargs="+",
+        action="extend",
+        default=[],
+        metavar="KEY=VALUE",
+        help="change a value before running, e.g. ion.energy_keV=30 target.0.thickness_nm=50",
+    )
+    run.add_argument(
+        "--output",
+        "-o",
+        metavar="DIR",
+        help="copy outputs and run.yaml here (default ./srim-output-<UTC timestamp>)",
+    )
+
+    imp = sub.add_parser("import", help="turn a TRIM.IN into a run.yaml")
+    imp.add_argument("trim_in", metavar="TRIM.IN")
+    imp.add_argument("-o", "--output", metavar="run.yaml", help="file to write (default run.yaml)")
     return parser
 
 
@@ -59,6 +83,10 @@ def main(argv: list[str] | None = None) -> int:
         skill.configure(args.agent, args.scope, args.yes)
     if args.command == "install":
         return _install(args)
+    if args.command == "run":
+        return _run(args)
+    if args.command == "import":
+        return _import(args)
     return _doctor(args)
 
 
@@ -155,6 +183,56 @@ def _install(args) -> int:
     if failed:
         return EXIT_FAILED
     return EXIT_ADMIN_SKIPPED if admin_skipped else EXIT_OK
+
+
+# --- run / import -----------------------------------------------------------
+
+
+def _run(args) -> int:
+    from srim.spec import RunSpec, SpecError
+    from srim.srim import TRIM
+
+    try:
+        spec = RunSpec.from_yaml(args.spec).with_overrides(args.overrides)
+    except (SpecError, OSError) as exc:
+        print(f"{args.spec}: {exc}", file=sys.stderr)
+        return EXIT_BAD_INPUT
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    output = Path(args.output or f"srim-output-{stamp}")
+    directory = srim_dir()
+    try:
+        output.mkdir(parents=True, exist_ok=True)
+        TRIM.from_spec(spec).run(srim_directory=str(directory))
+        TRIM.copy_output_files(str(directory), str(output))
+    except KeyboardInterrupt:
+        print("cancelled", file=sys.stderr)
+        return EXIT_INTERRUPTED
+    except (RuntimeError, subprocess.SubprocessError, OSError, ValueError) as exc:
+        print(f"run failed: {exc}", file=sys.stderr)
+        return EXIT_FAILED
+    print(f"outputs and run.yaml: {output}")
+    return EXIT_OK
+
+
+def _import(args) -> int:
+    from srim.spec import RunSpec, SpecError, parse_trim_in
+
+    target = Path(args.output or "run.yaml")
+    if args.output is None and target.exists():
+        print(f"{target} exists; choose another file with -o", file=sys.stderr)
+        return EXIT_FAILED
+    try:
+        spec = parse_trim_in(args.trim_in)
+        RunSpec.validate(spec)
+        spec.to_yaml(
+            target,
+            {"imported_from": Path(args.trim_in).name, "pysrim2_version": srim.__version__},
+        )
+    except (SpecError, OSError) as exc:
+        print(f"{args.trim_in}: {exc}", file=sys.stderr)
+        return EXIT_BAD_INPUT
+    print(f"wrote {target}")
+    return EXIT_OK
 
 
 # --- doctor -----------------------------------------------------------------

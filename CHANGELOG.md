@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `run.yaml`: `srim.spec.RunSpec` (and `IonSpec`, `LayerSpec`, `ElementSpec`) describes a run with units in the key names (`energy_keV`, `thickness_nm`, `density_g_cm3`, `angle_deg`, ...), validates it with errors naming the dotted key (`SpecError`), and round-trips to a byte-identical `TRIM.IN`. `TRIM.to_spec()`, `TRIM.from_spec()`, `TRIM.to_yaml()`, `TRIM.from_yaml()`; the seed is always recorded. `TRIM.run()` writes `run.yaml` with provenance (pysrim2 version, SRIM SHA-256, platform, backend, start/end time, host) next to the outputs (`write_spec=False` to skip), `TRIM.copy_output_files` copies it, and `Results.spec` is the default `spec` of the `to_parquet`/`to_hdf5`/`to_csv` exports (no host name). See `docs/run-spec.md`.
 
+- `pysrim2 run run.yaml [--set dotted.key=value ...] [--output DIR]` runs TRIM from a run spec (values converted by the schema; outputs and `run.yaml` copied to `DIR`, default `./srim-output-<UTC timestamp>`), and `pysrim2 import TRIM.IN [-o run.yaml]` turns an existing `TRIM.IN` into a run spec. Exit codes in `docs/cli.md`.
+
 ### Fixed
 
 - A zero-byte `RANGE_3D.txt` gives an empty `Range3D` frame (same columns) and a warning, like the event files, instead of raising.
