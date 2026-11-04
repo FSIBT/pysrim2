@@ -283,7 +283,9 @@ def test_exported_source_is_file_name_only(cache, tmp_path):
     results.to_parquet(tmp_path / "p", include=["ioniz", "collision"])
     for name in ("ioniz", "collision"):
         meta = pq.read_schema(tmp_path / "p" / f"{name}.parquet").metadata[b"pysrim2"]
-        assert "/" not in json.loads(meta)["metadata"]["source"]
+        source = json.loads(meta)["metadata"]["source"]
+        assert "/" not in source and "\\" not in source
+        assert source == os.path.basename(getattr(results, name).metadata["source"])
     results.to_hdf5(tmp_path / "x.h5", include=["ioniz"])
     with pd.HDFStore(tmp_path / "x.h5", mode="r") as store:
         assert (
@@ -294,7 +296,9 @@ def test_exported_source_is_file_name_only(cache, tmp_path):
         yaml.safe_load((tmp_path / "c" / "metadata.yaml").read_text())["tables"]["ioniz"]["source"]
         == "IONIZ.txt"
     )
-    assert "/" in results.ioniz.metadata["source"]  # in memory the full path stays
+    full = results.ioniz.metadata["source"]  # in memory the full path stays
+    assert os.path.basename(full) == "IONIZ.txt"
+    assert full != "IONIZ.txt"
 
 
 def test_results_chunk_rows_is_passed_and_validated(cache, tmp_path):
