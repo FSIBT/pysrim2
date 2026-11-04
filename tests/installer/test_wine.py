@@ -216,10 +216,11 @@ def test_failure_message_includes_command_output(tmp_path, fake_system, monkeypa
     extract = subprocess.run
 
     def run(cmd, **kwargs):
-        if cmd[0] == "7z":
+        if cmd[0] == "7z" or cmd[-1] == "-k":
             return extract(cmd, **kwargs)
         out = "\n".join(f"line {i}" for i in range(50))
-        raise subprocess.CalledProcessError(1, cmd, output=out)
+        kwargs["stdout"].write(out.encode())
+        raise subprocess.CalledProcessError(1, cmd)
 
     monkeypatch.setattr(subprocess, "run", run)
     with pytest.raises(WineSetupError) as info:
@@ -375,3 +376,13 @@ def test_failed_wineserver_kill_does_not_mask_the_error(tmp_path, fake_system, m
 def test_no_wineserver_kill_on_success(tmp_path, fake_system):
     setup_wine_prefix(tmp_path / "wine")
     assert not any(c[-1] == "-k" for c, _ in fake_system)
+
+
+def test_wine_output_is_captured_in_a_file_not_a_pipe(tmp_path, fake_system):
+    setup_wine_prefix(tmp_path / "wine")
+    for cmd, kwargs in fake_system:
+        if cmd[0] == "7z":
+            continue
+        assert kwargs["stdout"] not in (subprocess.PIPE, subprocess.DEVNULL, None), cmd
+        assert hasattr(kwargs["stdout"], "fileno"), cmd
+        assert kwargs["stderr"] == subprocess.STDOUT

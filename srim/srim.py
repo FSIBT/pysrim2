@@ -6,6 +6,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 
 from .core.utils import (
     check_input,
@@ -73,15 +74,13 @@ def _run_srim(executable):
     if command[0] != "xvfb-run":
         subprocess.check_call(command, env=_launch_env())
         return
-    # stderr is shown only after the run ends, not live.
-    done = subprocess.run(
-        command, env=_launch_env(), stderr=subprocess.PIPE, text=True, errors="replace"
-    )
-    kept = "".join(
-        line
-        for line in (done.stderr or "").splitlines(keepends=True)
-        if not XVFB_NOISE.search(line)
-    )
+    # stderr goes to a temp file, not a pipe: wine's daemonised wineserver would
+    # keep a pipe open and block us. It is shown only after the run ends, not live.
+    with tempfile.TemporaryFile() as log:
+        done = subprocess.run(command, env=_launch_env(), stderr=log)
+        log.seek(0)
+        text = log.read().decode(errors="replace")
+    kept = "".join(line for line in text.splitlines(keepends=True) if not XVFB_NOISE.search(line))
     if done.returncode:
         raise SRIMProcessError(done.returncode, command, stderr=kept.strip() or None)
     if kept:

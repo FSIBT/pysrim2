@@ -239,26 +239,34 @@ def _wait_until_no_wineserver(timeout: float = 30.0) -> None:
 
 
 def _run(cmd: list[str], env: dict[str, str]) -> None:
-    """Run ``cmd``; on failure raise WineSetupError with the tail of its output."""
-    try:
-        subprocess.run(
-            cmd,
-            env=env,
-            check=True,
-            timeout=SETUP_TIMEOUT_SECONDS,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        message = f"{' '.join(cmd)} failed: {exc}"
-        output = getattr(exc, "output", None)
-        if isinstance(output, bytes):
-            output = output.decode(errors="replace")
-        if output:
-            tail = "\n".join(output.strip().splitlines()[-OUTPUT_TAIL_LINES:])
-            message += f"\nLast output:\n{tail}"
-        raise WineSetupError(message) from exc
+    """Run ``cmd``; on failure raise WineSetupError with the tail of its output.
+
+    Output goes to a temporary file, not a pipe: wine starts ``wineserver`` as a
+    daemon that inherits the child's stdout, and a pipe would stay open (and
+    block us) until that daemon exits.
+    """
+    with tempfile.TemporaryFile() as log:
+        try:
+            subprocess.run(
+                cmd,
+                env=env,
+                check=True,
+                timeout=SETUP_TIMEOUT_SECONDS,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            message = f"{' '.join(cmd)} failed: {exc}"
+            log.seek(0)
+            output = log.read().decode(errors="replace")
+            if not output.strip():
+                output = getattr(exc, "output", None) or ""
+                if isinstance(output, bytes):
+                    output = output.decode(errors="replace")
+            if output.strip():
+                tail = "\n".join(output.strip().splitlines()[-OUTPUT_TAIL_LINES:])
+                message += f"\nLast output:\n{tail}"
+            raise WineSetupError(message) from exc
 
 
 def _winetricks_command() -> list[str]:

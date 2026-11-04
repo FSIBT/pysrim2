@@ -260,7 +260,8 @@ def _fake_xvfb(monkeypatch, returncode=0, stderr=""):
 
     def fake_run(cmd, **kw):
         seen.update(cmd=cmd, kw=kw)
-        return subprocess.CompletedProcess(cmd, returncode, stdout=None, stderr=stderr)
+        kw["stderr"].write(stderr.encode())
+        return subprocess.CompletedProcess(cmd, returncode)
 
     monkeypatch.setattr(subprocess, "run", fake_run)
     return seen
@@ -274,7 +275,8 @@ def test_run_srim_drops_xvfb_noise_and_keeps_other_stderr(monkeypatch, capsys):
     captured = capsys.readouterr()
     assert captured.err == "wine: something odd\n"
     assert captured.out == ""
-    assert seen["kw"]["stderr"] == subprocess.PIPE
+    assert seen["kw"]["stderr"] not in (subprocess.PIPE, subprocess.DEVNULL, None)
+    assert hasattr(seen["kw"]["stderr"], "fileno")
     assert "stdout" not in seen["kw"]
 
 

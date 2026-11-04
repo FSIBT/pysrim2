@@ -7,7 +7,6 @@ hand-written skill of the same name.
 """
 
 import importlib.resources
-import shutil
 from pathlib import Path
 
 import srim

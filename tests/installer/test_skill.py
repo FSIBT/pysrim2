@@ -5,7 +5,7 @@ import pytest
 
 import srim
 from srim import cli
-from srim.installer import skill, steps
+from srim.installer import steps
 from srim.installer.skill import MARKER, SkillInstallError, install_skill, skill_targets
 
 
