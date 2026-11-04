@@ -116,7 +116,7 @@ def test_setup_leaves_environ_and_ignores_user_wineprefix(tmp_path, fake_system,
     before = dict(os.environ)
     setup_wine_prefix(tmp_path / "wine")
     assert dict(os.environ) == before
-    for cmd, kwargs in fake_system[:2]:
+    for _, kwargs in fake_system[:2]:
         assert kwargs["env"]["WINEPREFIX"] == str(tmp_path / "wine")
 
 
