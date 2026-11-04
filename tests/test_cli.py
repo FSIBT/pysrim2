@@ -113,6 +113,7 @@ def test_default_set_empty_on_macos_explains(rec, monkeypatch, capsys):
 
 def test_doctor_json_schema(monkeypatch, tmp_path, capsys):
     monkeypatch.setenv("PYSRIM2_SRIM_DIR", str(tmp_path / "srim"))
+    monkeypatch.setattr(steps, "current_platform", lambda: "windows")
     assert cli.main(["doctor", "--json"]) == 1
     data = json.loads(capsys.readouterr().out)
     assert list(data) == ["checks"]
@@ -132,6 +133,7 @@ def test_doctor_all_ok(monkeypatch, tmp_path, capsys):
     (root / "Data" / "LEGAL.rtf").write_text("x")
     monkeypatch.setenv("PYSRIM2_SRIM_DIR", str(root))
     monkeypatch.setattr(steps, "current_platform", lambda: "windows")
+    monkeypatch.setattr(cli, "vb5_ready", lambda directory: True)
     assert cli.main(["doctor"]) == 0
     assert "[!!]" not in capsys.readouterr().out
 
@@ -285,6 +287,7 @@ def _linux_doctor(monkeypatch, tmp_path, capsys, commands):
     monkeypatch.setattr(steps, "current_platform", lambda: "linux")
     monkeypatch.setattr(cli, "wine_status", lambda: WineStatus(None, None, None, None, None, False))
     monkeypatch.setattr(cli, "distro_wine_commands", lambda: commands)
+    monkeypatch.setattr(steps, "container_runtime", lambda: None)
     cli.main(["doctor", "--json"])
     return {c["name"]: c for c in json.loads(capsys.readouterr().out)["checks"]}
 
@@ -358,3 +361,38 @@ def test_container_and_vb5_errors_are_reported_without_traceback(rec, capsys, ma
     steps.register("srim", lambda: Step("srim", "s", lambda: False, lambda: [], boom))
     assert cli.main(["install", "srim"]) == 1
     assert "[fail] srim:" in capsys.readouterr().err
+
+
+def test_doctor_windows_checks_vb5(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("PYSRIM2_SRIM_DIR", str(tmp_path / "srim"))
+    monkeypatch.setattr(steps, "current_platform", lambda: "windows")
+    monkeypatch.setattr(cli, "vb5_ready", lambda directory: False)
+    cli.main(["doctor", "--json"])
+    checks = {c["name"]: c for c in json.loads(capsys.readouterr().out)["checks"]}
+    assert not checks["vb5"]["ok"]
+    assert checks["vb5"]["fix"] == "run: pysrim2 install vb5 (run from an elevated terminal)"
+
+
+def test_doctor_macos_with_image_passes(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("PYSRIM2_SRIM_DIR", str(tmp_path / "srim"))
+    monkeypatch.setattr(steps, "current_platform", lambda: "macos")
+    monkeypatch.setattr(cli.container, "find_runtime", lambda: "podman")
+    monkeypatch.setattr(cli.container, "image_present", lambda rt, tag: True)
+    assert cli.main(["doctor", "--json"]) == 0
+    checks = {c["name"]: c for c in json.loads(capsys.readouterr().out)["checks"]}
+    assert checks["trim-exe"]["ok"]
+    assert checks["trim-exe"]["detail"] == "not needed (container route)"
+    assert checks["image"]["ok"]
+
+
+def test_doctor_linux_podman_without_wine_passes(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("PYSRIM2_SRIM_DIR", str(tmp_path / "srim"))
+    monkeypatch.setattr(steps, "current_platform", lambda: "linux")
+    monkeypatch.setattr(cli, "wine_status", lambda: WineStatus(None, None, None, None, None, False))
+    monkeypatch.setattr(cli.container, "find_runtime", lambda: "podman")
+    monkeypatch.setattr(cli.container, "image_present", lambda rt, tag: True)
+    assert cli.main(["doctor", "--json"]) == 0
+    checks = {c["name"]: c for c in json.loads(capsys.readouterr().out)["checks"]}
+    assert checks["wine"]["detail"] == "not needed (container route)"
+    assert checks["wine-prefix"]["ok"]
+    assert checks["container-runtime"]["ok"]

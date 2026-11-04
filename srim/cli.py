@@ -11,7 +11,7 @@ from srim.installer import container, skill
 from srim.installer import steps as steps_module
 from srim.installer.srim_install import NOTICE, SrimInstallError
 from srim.installer.steps import COMPONENTS, ComponentUnavailable
-from srim.installer.vb5 import Vb5SetupError
+from srim.installer.vb5 import Vb5SetupError, vb5_ready
 from srim.installer.wine import WINE_MANUAL_HINT, WineSetupError, distro_wine_commands, wine_status
 from srim.paths import srim_dir
 
@@ -214,27 +214,52 @@ def collect_checks() -> list[dict]:
         _check("pysrim2", True, srim.__version__),
     ]
     directory = srim_dir()
-    trim = directory / "TRIM.exe"
-    checks.append(
-        _check("srim-dir", directory.is_dir(), str(directory), "run: pysrim2 install srim")
-    )
-    checks.append(_check("trim-exe", trim.is_file(), str(trim), "run: pysrim2 install srim"))
-    legal = next(
-        (p for p in (directory / "Data" / "LEGAL.rtf", directory / "LEGAL.rtf") if p.is_file()),
-        None,
-    )
-    checks.append(
-        _check(
-            "srim-legal-notice",
-            legal is not None,
-            str(legal) if legal else "LEGAL.rtf not found",
-            "run: pysrim2 install srim",
+    status = wine_status() if system == "linux" else None
+    if system == "windows":
+        native = True
+    elif system == "linux":
+        # Same rule as the default install plan: wine, or no container runtime at all.
+        native = bool(status.wine) or not steps_module.container_runtime()
+    else:
+        native = False
+    skip = "not needed (container route)"
+    if native:
+        trim = directory / "TRIM.exe"
+        checks.append(
+            _check("srim-dir", directory.is_dir(), str(directory), "run: pysrim2 install srim")
         )
-    )
+        checks.append(_check("trim-exe", trim.is_file(), str(trim), "run: pysrim2 install srim"))
+        legal = next(
+            (p for p in (directory / "Data" / "LEGAL.rtf", directory / "LEGAL.rtf") if p.is_file()),
+            None,
+        )
+        checks.append(
+            _check(
+                "srim-legal-notice",
+                legal is not None,
+                str(legal) if legal else "LEGAL.rtf not found",
+                "run: pysrim2 install srim",
+            )
+        )
+    else:
+        checks += [_check(n, True, skip) for n in ("srim-dir", "trim-exe", "srim-legal-notice")]
 
-    status = None
-    if system == "linux":
-        status = wine_status()
+    if system == "windows":
+        ready = vb5_ready(directory)
+        checks.append(
+            _check(
+                "vb5",
+                ready,
+                "ready" if ready else "VB5 runtime not set up",
+                "run: pysrim2 install vb5 (run from an elevated terminal)",
+            )
+        )
+    if status is not None and not native:
+        checks += [
+            _check(n, True, skip)
+            for n in ("wine", "xvfb-run", "extractor", "downloader", "wine-prefix")
+        ]
+    elif status is not None:
         fix = "run: pysrim2 install wine"
         # On a distribution we have no package commands for, "install wine" cannot help.
         pkg_fix = fix if distro_wine_commands() else WINE_MANUAL_HINT
@@ -265,8 +290,7 @@ def collect_checks() -> list[dict]:
             "run: pysrim2 install skill",
         )
     )
-    native_possible = system == "windows" or (status is not None and status.wine)
-    if not native_possible:
+    if not native:
         checks += _container_checks()
     return checks
 
