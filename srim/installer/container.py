@@ -4,6 +4,7 @@ Podman is preferred; Docker is used when it is already there. pysrim2 never
 installs Docker Desktop. The image is ``linux/amd64`` only.
 """
 
+import functools
 import re
 import shutil
 import subprocess
@@ -18,8 +19,9 @@ IMAGE = "ghcr.io/fsibt/pysrim2"
 PLATFORM = "linux/amd64"
 RUNTIMES = ("podman", "docker")
 PODMAN_DOCS = "https://podman.io/docs/installation"
-INFO_TIMEOUT_SECONDS = 60
-INSPECT_TIMEOUT_SECONDS = 60
+INFO_TIMEOUT_SECONDS = 10
+INSPECT_TIMEOUT_SECONDS = 10
+MACHINE_TIMEOUT_SECONDS = 30
 PULL_TIMEOUT_SECONDS = 1800
 _RELEASE = re.compile(r"\d+(\.\d+)*")
 
@@ -46,12 +48,24 @@ def _usable(name: str) -> bool:
     return result.returncode == 0
 
 
-def find_runtime() -> str | None:
-    """Return ``podman`` or ``docker`` if it is installed and answers ``info``."""
+@functools.cache
+def _detect() -> str | None:
     for name in installed_runtimes():
         if _usable(name):
             return name
     return None
+
+
+def find_runtime() -> str | None:
+    """Return ``podman`` or ``docker`` if it is installed and answers ``info``.
+
+    The answer is cached until ``reset_cache()`` (one CLI invocation).
+    """
+    return _detect()
+
+
+def reset_cache() -> None:
+    _detect.cache_clear()
 
 
 def start_hint(runtime: str) -> str:
@@ -122,8 +136,40 @@ def runtime_install_commands(os_release: Path = Path("/etc/os-release")) -> list
     return [f"# unknown distribution: install podman, see {PODMAN_DOCS}"]
 
 
+def _machine_state() -> tuple[bool, bool]:
+    """Return (a podman machine exists, one is running)."""
+    try:
+        result = subprocess.run(
+            ["podman", "machine", "list", "--format", "{{.Name}} {{.Running}}"],
+            capture_output=True,
+            text=True,
+            timeout=MACHINE_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False, False
+    if result.returncode != 0:
+        return False, False
+    lines = [line.split() for line in result.stdout.splitlines() if line.strip()]
+    return bool(lines), any(parts[-1].lower() == "true" for parts in lines)
+
+
+WINDOWS_HINT = (
+    "Podman is installed. Open a new terminal, then run: "
+    "podman machine init && podman machine start"
+)
+
+
 def install_runtime() -> None:
-    steps.run_admin_commands(runtime_install_commands(), ContainerError, "podman", PODMAN_DOCS)
+    """Install Podman; safe to re-run (an existing machine is kept, a running one left alone)."""
+    commands = runtime_install_commands()
+    for command in commands:
+        if command == "podman machine init" and _machine_state()[0]:
+            continue
+        if command == "podman machine start" and _machine_state()[1]:
+            continue
+        steps.run_admin_commands([command], ContainerError, "podman", PODMAN_DOCS)
+    if steps.current_platform() == "windows":
+        print(WINDOWS_HINT)
 
 
 def run_hint(runtime: str, tag: str | None = None) -> str:
@@ -134,10 +180,19 @@ def run_hint(runtime: str, tag: str | None = None) -> str:
 # --- steps ------------------------------------------------------------------
 
 
+def _runtime_summary() -> str:
+    if "docker" in installed_runtimes():
+        return (
+            "docker is installed but not running — start Docker "
+            f"({start_hint('docker')}), or install Podman"
+        )
+    return "install Podman, a container runtime (Docker Desktop is never installed)"
+
+
 def _runtime_step() -> Step:
     return Step(
         name="runtime",
-        summary="install Podman, a container runtime (Docker Desktop is never installed)",
+        summary=_runtime_summary(),
         check=lambda: find_runtime() is not None,
         commands=runtime_install_commands,
         run=install_runtime,

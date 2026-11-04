@@ -44,6 +44,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    container.reset_cache()
     if args.command == "install":
         return _install(args)
     return _doctor(args)
@@ -132,6 +133,7 @@ def _install(args) -> int:
             _print_commands(commands)
         try:
             step.run()
+            container.reset_cache()
         except INSTALL_ERRORS as exc:
             print(f"[fail] {step.name}: {exc}", file=sys.stderr)
             failed = True
@@ -159,7 +161,8 @@ def _container_checks() -> list[dict]:
                     "container-runtime",
                     False,
                     f"{name} is installed but not running",
-                    f"run: {container.start_hint(name)}",
+                    f"run: {container.start_hint(name)} "
+                    "(or install Podman: pysrim2 install runtime)",
                 )
             ]
         return [

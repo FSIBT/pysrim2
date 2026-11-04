@@ -74,8 +74,15 @@ def test_start_hint(monkeypatch):
 
 @pytest.mark.parametrize(
     ("version", "tag"),
-    [("0.7.0", "0.7.0"), ("1.2.3", "1.2.3"), ("0.7.0.dev1", "main"), ("0.7.0rc1", "main"),
-     ("0.7.0a2", "main"), ("0.7.0b1", "main"), ("0.7.1.dev3+g1234", "main")],
+    [
+        ("0.7.0", "0.7.0"),
+        ("1.2.3", "1.2.3"),
+        ("0.7.0.dev1", "main"),
+        ("0.7.0rc1", "main"),
+        ("0.7.0a2", "main"),
+        ("0.7.0b1", "main"),
+        ("0.7.1.dev3+g1234", "main"),
+    ],
 )
 def test_image_tag(monkeypatch, version, tag):
     monkeypatch.setattr(srim, "__version__", version)
@@ -86,7 +93,9 @@ def test_pull_image_command(monkeypatch):
     run = FakeRun()
     monkeypatch.setattr(container.subprocess, "run", run)
     container.pull_image("podman", "0.7.0")
-    assert run.calls == [["podman", "pull", "--platform", "linux/amd64", "ghcr.io/fsibt/pysrim2:0.7.0"]]
+    assert run.calls == [
+        ["podman", "pull", "--platform", "linux/amd64", "ghcr.io/fsibt/pysrim2:0.7.0"]
+    ]
 
 
 def test_pull_failure_explains(monkeypatch):
@@ -111,7 +120,7 @@ def test_pull_runtime_missing(monkeypatch):
     ("system", "os_release", "expected"),
     [
         ("macos", "", ["brew install podman", "podman machine init", "podman machine start"]),
-        ("linux", 'ID=ubuntu\nID_LIKE=debian\n', ["sudo apt-get install -y podman"]),
+        ("linux", "ID=ubuntu\nID_LIKE=debian\n", ["sudo apt-get install -y podman"]),
         ("linux", "ID=fedora\n", ["sudo dnf install -y podman"]),
         ("windows", "", ["winget install -e --id RedHat.Podman"]),
     ],
@@ -139,11 +148,16 @@ def test_run_hint():
 
 
 def test_run_runtime_commands_without_shell(monkeypatch):
-    monkeypatch.setattr(container, "runtime_install_commands", lambda: ["brew install podman", "podman machine init"])
+    monkeypatch.setattr(
+        container,
+        "runtime_install_commands",
+        lambda: ["brew install podman", "podman machine init"],
+    )
     run = FakeRun()
     monkeypatch.setattr(steps.subprocess, "run", run)
     container.install_runtime()
-    assert run.calls == [["brew", "install", "podman"], ["podman", "machine", "init"]]
+    assert ["brew", "install", "podman"] in run.calls
+    assert ["podman", "machine", "init"] in run.calls
 
 
 def test_run_runtime_refuses_comment(monkeypatch):
@@ -181,3 +195,76 @@ def test_image_step_run_without_runtime(monkeypatch):
     monkeypatch.setattr(container, "find_runtime", lambda: None)
     with pytest.raises(container.ContainerError, match="pysrim2 install runtime"):
         image.run()
+
+
+@pytest.fixture(autouse=True)
+def _fresh_cache():
+    container.reset_cache()
+    yield
+    container.reset_cache()
+
+
+def test_timeouts_passed_and_cached(monkeypatch):
+    installed(monkeypatch, "docker")
+    seen = []
+
+    def run(cmd, **kw):
+        seen.append(kw)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(container.subprocess, "run", run)
+    assert container.find_runtime() == "docker"
+    assert container.find_runtime() == "docker"
+    assert len(seen) == 1
+    assert seen[0]["timeout"] == 10
+    container.image_present("docker", "main")
+    assert seen[1]["timeout"] == 10
+
+
+class Machine:
+    def __init__(self, listing):
+        self.listing = listing
+        self.ran = []
+
+    def __call__(self, cmd, **kw):
+        if cmd[:3] == ["podman", "machine", "list"]:
+            return subprocess.CompletedProcess(cmd, 0, self.listing, "")
+        self.ran.append(list(cmd))
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+
+def macos_install(monkeypatch, listing):
+    monkeypatch.setattr(steps, "current_platform", lambda: "macos")
+    machine = Machine(listing)
+    monkeypatch.setattr(container.subprocess, "run", machine)
+    monkeypatch.setattr(steps.subprocess, "run", machine)
+    container.install_runtime()
+    return machine.ran
+
+
+def test_install_runtime_existing_stopped_machine_only_starts(monkeypatch):
+    ran = macos_install(monkeypatch, "podman-machine-default* false\n")
+    assert ran == [["brew", "install", "podman"], ["podman", "machine", "start"]]
+
+
+def test_install_runtime_running_machine_does_nothing_more(monkeypatch):
+    ran = macos_install(monkeypatch, "podman-machine-default* true\n")
+    assert ran == [["brew", "install", "podman"]]
+
+
+def test_install_runtime_no_machine_inits_and_starts(monkeypatch):
+    ran = macos_install(monkeypatch, "")
+    assert ["podman", "machine", "init"] in ran
+    assert ["podman", "machine", "start"] in ran
+
+
+def test_windows_prints_hint(monkeypatch, capsys):
+    monkeypatch.setattr(steps, "current_platform", lambda: "windows")
+    monkeypatch.setattr(steps.subprocess, "run", FakeRun())
+    container.install_runtime()
+    assert "podman machine init" in capsys.readouterr().out
+
+
+def test_runtime_summary_mentions_stopped_docker(monkeypatch):
+    monkeypatch.setattr(container, "installed_runtimes", lambda: ["docker"])
+    assert "installed but not running" in steps.plan(["runtime"])[0].summary
