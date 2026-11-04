@@ -1,6 +1,6 @@
 """B ions into 100 nm Au on a Si substrate: depth and lateral straggle from RANGE_3D.txt.
 
-Run natively (``python boron_in_gold_on_silicon.py``) or in the container::
+Run natively (``python boron_in_gold_on_silicon.py``) or in the container (needs Podman ≥ 4.3)::
 
     podman run --rm --userns=keep-id:uid=1000,gid=1000 \
         -v "$PWD:/data:Z" ghcr.io/fsibt/pysrim2:<tag> \
