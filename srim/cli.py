@@ -18,6 +18,7 @@ from srim.paths import srim_dir
 EXIT_OK = 0
 EXIT_FAILED = 1
 EXIT_ADMIN_SKIPPED = 2
+EXIT_INTERRUPTED = 130
 INSTALL_ERRORS = (
     SrimInstallError,
     WineSetupError,
@@ -87,13 +88,7 @@ def _install(args) -> int:
         print(exc.reason, file=sys.stderr)
         return EXIT_FAILED
     if not plan:
-        if not explicit and steps_module.current_platform() == "macos":
-            print(
-                "Native SRIM needs Windows or Linux; on macOS pysrim2 runs SRIM in a container. "
-                "The container steps are not available yet."
-            )
-        else:
-            print("nothing to install")
+        print("nothing to install")
         return EXIT_OK
 
     notice_shown = False
@@ -154,6 +149,9 @@ def _install(args) -> int:
             print(f"[fail] {step.name}: {exc}", file=sys.stderr)
             failed = True
             break
+        except KeyboardInterrupt:
+            print(f"\n[skip] {step.name}: cancelled", file=sys.stderr)
+            return EXIT_INTERRUPTED
     if failed:
         return EXIT_FAILED
     return EXIT_ADMIN_SKIPPED if admin_skipped else EXIT_OK

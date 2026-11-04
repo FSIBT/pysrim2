@@ -105,12 +105,6 @@ def test_unregistered_component(rec, capsys):
     assert "component image is not available yet" in capsys.readouterr().err
 
 
-def test_default_set_empty_on_macos_explains(rec, monkeypatch, capsys):
-    monkeypatch.setattr(steps, "current_platform", lambda: "macos")
-    assert cli.main(["install", "--dry-run"]) == 0
-    assert "Native SRIM needs Windows or Linux" in capsys.readouterr().out
-
-
 def test_doctor_json_schema(monkeypatch, tmp_path, capsys):
     monkeypatch.setenv("PYSRIM2_SRIM_DIR", str(tmp_path / "srim"))
     monkeypatch.setattr(steps, "current_platform", lambda: "windows")
@@ -183,6 +177,17 @@ def test_keyboard_interrupt_at_prompt_cancels(rec, monkeypatch, capsys):
     assert "[skip] wine-packages: cancelled" in captured.out
     assert "Traceback" not in captured.err
     assert rec.ran == []
+
+
+def test_keyboard_interrupt_during_step_exits_130(rec, capsys):
+    def boom():
+        raise KeyboardInterrupt
+
+    steps.register("srim", lambda: Step("srim", "s", lambda: False, lambda: [], boom))
+    assert cli.main(["install", "srim"]) == 130
+    captured = capsys.readouterr()
+    assert "[skip] srim: cancelled" in captured.err
+    assert "Traceback" not in captured.err
 
 
 def test_value_error_is_an_install_error(rec, capsys):
