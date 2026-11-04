@@ -1,6 +1,7 @@
 # check=skip=FromPlatformFlagConstDisallowed
 # pysrim2 + SRIM-2013 under wine, for linux/amd64.
-#   docker run --rm -v "$PWD:/data" ghcr.io/fsibt/pysrim2 python run.py
+#   podman run --rm -v "$PWD:/data:Z" ghcr.io/fsibt/pysrim2:main python /data/run.py
+# (Docker 29 also needs --security-opt seccomp=srim/data/seccomp-docker.json; see docs/container.md)
 FROM --platform=linux/amd64 debian:trixie-slim
 
 LABEL org.opencontainers.image.source="https://github.com/FSIBT/pysrim2" \
