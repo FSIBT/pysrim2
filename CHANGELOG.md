@@ -23,6 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `pysrim2 run run.yaml [--set dotted.key=value ...] [--output DIR]` runs TRIM from a run spec (values converted by the schema; outputs and `run.yaml` copied to `DIR`, default `./srim-output-<UTC timestamp>`), and `pysrim2 import TRIM.IN [-o run.yaml]` turns an existing `TRIM.IN` into a run spec. Exit codes in `docs/cli.md`.
 
+- Example notebooks rewritten on the 0.8.0 API (default SRIM location, `.df` tables, `implant_summary`, `Collision.iter_events()` / `.df`, Parquet export, `run.yaml` with `TRIM.from_spec` and `pysrim2 run`), with small ion counts and no committed outputs; `Regular SRIM Calculation.ipynb` is now `Regular_SRIM_Calculation.ipynb`, and `KTaO3.ipynb` is merged into `SiC.ipynb`. A `srim`-marked test (`tests/integration/test_notebooks.py`, nbclient) executes them; a static test checks that they are valid and import existing names.
+- `examples/scripts/run_yaml_example/` (a `run.yaml` and README for `pysrim2 run run.yaml --set ion.energy_keV=30`); the agent skill and `examples/agents/README.md` teach `.df`, `implant_summary`, event tables, cascades with `iter_events()` and chunked export, and `run.yaml`.
+
 ### Fixed
 
 - A zero-byte `RANGE_3D.txt` gives an empty `Range3D` frame (same columns) and a warning, like the event files, instead of raising.

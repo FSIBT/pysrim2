@@ -74,26 +74,48 @@ results = TRIM(
 Units: widths in angstrom (1 nm = 10 A, 100 nm = 1000 A), energies in eV (20 keV = 20e3),
 densities in g/cm3. Compounds: `Layer.from_formula("SiO2", density=2.65, width=...)`.
 
-`run()` returns `Results` with `.range` (ion distribution vs depth: `.ion`, `.num_ions`, `.depth`, `.ions`,
-`.elements`), `.vacancy` (`.depth`, `.knock_ons`, `.vacancies`), `.ioniz`, `.phonons`,
-`.etorecoils` and `.novac` (full cascade only, else `None`). Stopping
-power tables: `from srim import SR` (see `SR(layer, ion, output_type=5).run()`).
+`run()` returns `Results`. Every table is a DataFrame: `results.vacancy.df` (also `.ioniz`, `.phonons`,
+`.range`, `.etorecoils`, `.novac`; first column `depth_A`, names carry SRIM's units, e.g.
+`knock_ons_per_A_per_ion`, `vacancies_Au_per_A_per_ion`), and `results.to_dataframes()` returns all of
+them as a dict. The attribute arrays (`.depth`, `.ions`, ...) still work. Stopping power tables:
+`from srim import SR` (`SR(layer, ion, output_type=5).run()`).
 
-## 4. Reference example: mean depth and lateral straggle
+## 4. Reference example: implantation depth and straggling
 
 `examples/boron_in_gold_on_silicon.py` (next to this file): 200 B ions at 20 keV, 7 degrees,
 into 100 nm Au on Si, quick KP, seed 12345. It prints the mean depth (about 282 A) and the
-lateral straggle, and copies the output files to `./output/`.
+straggling, and copies the output files to `./output/`.
 
 Per-ion final positions (needs `ranges=1`) are `results.range3d.df` with columns
 `ion, depth_A, y_A, z_A` (depth along the surface normal, y and z lateral); `range3d` is `None`
 if `RANGE_3D.txt` was not written. `from srim.analysis import implant_summary` gives
-`n_ions` and the quantities SRIM prints in the `RANGE.txt` header (also `results.range.summary`):
+`n_ions` and SRIM's own definitions (the `RANGE.txt` header, also `results.range.summary`):
 `mean_depth_A`, `straggle_depth_A`, `lateral_range_A`, `lateral_straggle_A`, `radial_range_A`,
-`radial_straggle_A`, `skewness`, `kurtosis`. The example prints the depth, lateral and radial
-straggling (about 146, 242 and 155 A).
+`radial_straggle_A`, `skewness`, `kurtosis`. Report SRIM's "lateral straggle" (about 242 A in
+the example), not the rms radial distance (radial straggle, about 155 A).
 
-## 5. Run time and practical advice
+Event files, as DataFrames with `ion`, `depth_A`, `y_A`, `z_A`, ... (`None` if absent):
+`results.exyz` (`exyz=<eV step>`), `.backscat` (`backscattered=1`), `.transmit` (`transmit=1`),
+`.sputter` (`sputtered=1`).
+
+## 5. Cascades, export and run.yaml
+
+- `collisions=2` writes `COLLISON.txt` (huge; full cascade is `calculation=2`). Never load it
+  whole: `for event in results.collision.iter_events(): ...` streams flat dicts (`kind` is `ion` or
+  `recoil`; `ion`, `depth_A`, `y_A`, `z_A`, `atom`, `recoil_energy_eV`, `target_vacancies`, ...);
+  `results.collision.df` collects them; `results.collision.to_parquet(path, chunk_rows=100_000)`
+  writes them in chunks with small memory.
+- Export: `results.to_parquet(dir)` (needs `pysrim2[parquet]`), `.to_hdf5(file)`
+  (`pysrim2[hdf5]`), `.to_csv(dir)`; `include=[...]` selects tables (`collision` only on
+  request). Files carry metadata and the run spec.
+- `run.yaml` describes a run (units in key names: `energy_keV`, `thickness_nm`, `density_g_cm3`;
+  the seed is always recorded). `trim.to_yaml("run.yaml")`, `TRIM.from_yaml("run.yaml")`,
+  `TRIM.from_spec(RunSpec)`; `TRIM.run()` writes `run.yaml` with provenance next to the outputs.
+  Command line, no script needed:
+  `pysrim2 run run.yaml --set ion.energy_keV=30 --output out/`; `pysrim2 import TRIM.IN -o run.yaml`.
+  A sample is `examples/scripts/run_yaml_example/` in the pysrim2 repository.
+
+## 6. Run time and practical advice
 
 - Quick KP (`calculation=1`) is seconds for hundreds of ions natively. The full cascade
   (`calculation=2`) is far slower (minutes to hours for thousands of ions, per-ion cost grows
@@ -107,7 +129,7 @@ straggling (about 146, 242 and 155 A).
 - On Linux a run starts wine under xvfb; a failure raises `srim.srim.SRIMProcessError`
   with SRIM's stderr in the message.
 
-## 6. Installing this skill
+## 7. Installing this skill
 
 `pysrim2 install skill [--agent claude|all] [--scope user|project] [--yes]` copies it to
 `~/.claude/skills/pysrim2/` (user) or `./.claude/skills/pysrim2/` (project); `--agent all` also

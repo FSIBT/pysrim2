@@ -23,6 +23,6 @@ def test_stopping_table(tmp_path):
 
 def test_multilayer_damage(tmp_path):
     profile = load("multilayer_damage").run(2, tmp_path / "output")
-    assert {"depth_A", "total", "vacancies_Au"} <= set(profile.columns)
+    assert {"depth_A", "total", "vacancies_Au_per_A_per_ion"} <= set(profile.columns)
     assert profile["total"].sum() > 0
     assert (tmp_path / "output" / "vacancy_profile.csv").is_file()

@@ -1,5 +1,7 @@
 """``pysrim2 run`` on the reference run.yaml with real SRIM (``pytest -m srim``)."""
 
+from pathlib import Path
+
 import yaml
 
 from srim import cli
@@ -44,3 +46,11 @@ def test_pysrim2_run_reference_spec(tmp_path):
         assert provenance[key]
     spec = RunSpec.from_yaml(out / "run.yaml")
     assert spec.seed == 12345 and spec.ion.energy_keV == 20.0
+
+
+def test_run_yaml_example_with_override(tmp_path):
+    example = Path(__file__).resolve().parents[2] / "examples/scripts/run_yaml_example/run.yaml"
+    out = tmp_path / "out"
+    args = ["run", str(example), "--set", "ion.energy_keV=30", "--set", "number_ions=20"]
+    assert cli.main([*args, "--output", str(out)]) == 0
+    assert RunSpec.from_yaml(out / "run.yaml").ion.energy_keV == 30.0

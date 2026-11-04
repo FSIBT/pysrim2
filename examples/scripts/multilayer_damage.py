@@ -6,7 +6,8 @@ only 20 ions; raise it for smooth profiles.
 
     python multilayer_damage.py [number_of_ions] [output_folder]
 
-The vacancy profile (vacancies per angstrom per ion, by depth) is written to
+The vacancy profile (vacancies per angstrom per ion by depth: ``results.vacancy.df``
+plus a total) is written to
 ``<output_folder>/vacancy_profile.csv`` (default ``./output``), together with
 copies of the SRIM output files.
 """
@@ -38,14 +39,11 @@ def run(number_ions: int = 20, outdir="output") -> pd.DataFrame:
         random_seed=12345,
     ).run()
 
-    vac = results.vacancy
-    # One column per element in the target, in the order SRIM lists them
-    # (here: Au, Si, Al), plus the vacancies made by the ion itself.
-    names = [f"vacancies_{name}" for name in ("Au", "Si", "Al")]
-    profile = pd.DataFrame(vac.vacancies, columns=names)
-    profile.insert(0, "from_ion", vac.knock_ons)
-    profile.insert(0, "depth_A", vac.depth)
-    profile["total"] = profile[["from_ion", *names]].sum(axis=1)
+    # results.vacancy.df: depth_A, knock_ons_per_A_per_ion (vacancies made by the ion itself)
+    # and one vacancies_<element>_per_A_per_ion column per element, in SRIM's order.
+    profile = results.vacancy.df
+    vacancy_columns = [c for c in profile.columns if c != "depth_A"]
+    profile["total"] = profile[vacancy_columns].sum(axis=1)
     profile.to_csv(outdir / "vacancy_profile.csv", index=False)
 
     # SRIM writes inside its own folder; keep copies of what you need next to the script.

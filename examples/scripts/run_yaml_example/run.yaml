@@ -1,0 +1,21 @@
+# 20 keV boron at 7 degrees into 100 nm Au on Si: the reference case of
+# ../boron_in_gold_on_silicon.py, as a run spec (see docs/run-spec.md).
+# Units are in the key names.
+version: 1
+spec:
+  ion: {symbol: B, energy_keV: 20.0, angle_deg: 7.0}
+  number_ions: 200
+  calculation: 1          # 1 = quick Kinchin-Pease, 2 = full cascade
+  seed: 12345
+  settings: {description: boron in gold on silicon, ranges: 1}
+  target:
+    - name: Au
+      thickness_nm: 100.0
+      density_g_cm3: 19.3
+      elements:
+        - {symbol: Au, stoich: 1.0}
+    - name: Si
+      thickness_nm: 1000.0
+      density_g_cm3: 2.33
+      elements:
+        - {symbol: Si, stoich: 1.0}
