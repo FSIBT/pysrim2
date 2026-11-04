@@ -15,12 +15,13 @@ from ._common import (
     symbol_regex,
 )
 from .collision import Collision, buffered_findall
-from .events import Backscat, Sputter, Transmit
+from .events import EXYZ, Backscat, Sputter, Transmit
 from .range3d import Range3D
 from .sr import SRResults
 from .tables import EnergyToRecoils, Ioniz, NoVacancy, Phonons, Range, Results, Vacancy
 
 __all__ = [
+    "EXYZ",
     "Backscat",
     "Collision",
     "EnergyToRecoils",

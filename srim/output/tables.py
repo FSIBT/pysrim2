@@ -6,10 +6,12 @@ import re
 from ._common import (
     SRIM_Output,
     _element_names,
+    _find_output,
     _header_symbols,
     _to_float,
     double_regex,
 )
+from .events import EXYZ, Backscat, Sputter, Transmit
 from .range3d import Range3D
 
 _SUMMARY_LINES = {
@@ -40,6 +42,10 @@ class Results:
       - ``RANGE_3D.txt`` handled by :class:`srim.output.Range3D`
         (``range3d`` is ``None`` if the file is absent; the
         ``SRIM Outputs`` subfolder is searched too)
+      - ``EXYZ.txt`` handled by :class:`srim.output.EXYZ`, ``BACKSCAT.txt`` by
+        :class:`srim.output.Backscat`, ``TRANSMIT.txt`` by :class:`srim.output.Transmit`,
+        ``SPUTTER.txt`` by :class:`srim.output.Sputter` (``exyz``, ``backscat``,
+        ``transmit``, ``sputter``; each ``None`` if the file is absent)
     """
 
     def __init__(self, directory):
@@ -56,14 +62,20 @@ class Results:
         self.phonons = Phonons(directory)
         self.range = Range(directory)
 
-        # SRIM writes RANGE_3D.txt into "SRIM Outputs" in some installs. The main
-        # directory takes precedence: it holds copies made by TRIM.copy_output_files
-        # or older installs, and a fresh run removes stale files from both places.
-        self.range3d = None
-        for folder in (directory, os.path.join(directory, "SRIM Outputs")):
-            if os.path.isfile(os.path.join(folder, "RANGE_3D.txt")):
-                self.range3d = Range3D(folder)
-                break
+        # SRIM writes some files into "SRIM Outputs" in some installs. The main directory
+        # takes precedence: it holds copies made by TRIM.copy_output_files or older installs,
+        # and a fresh run removes stale files from both places.
+        self.range3d = self._optional(Range3D, directory, "RANGE_3D.txt")
+        self.exyz = self._optional(EXYZ, directory, "EXYZ.txt")
+        self.backscat = self._optional(Backscat, directory, "BACKSCAT.txt")
+        self.transmit = self._optional(Transmit, directory, "TRANSMIT.txt")
+        self.sputter = self._optional(Sputter, directory, "SPUTTER.txt")
+
+    @staticmethod
+    def _optional(parser, directory, filename):
+        """``parser`` on ``filename`` in ``directory`` or ``SRIM Outputs``; ``None`` if absent"""
+        folder = _find_output(directory, filename)
+        return parser(folder, filename) if folder is not None else None
 
     def to_dataframes(self):
         """Depth-profile outputs as :class:`pandas.DataFrame` objects
@@ -72,7 +84,8 @@ class Results:
         -------
         :obj:`dict`
             Keys ``ioniz``, ``vacancy``, ``novac``, ``e2recoil``, ``phonon``,
-            ``range``, ``range3d``; outputs that are missing (e.g. ``novac`` for
+            ``range``, ``range3d``, ``exyz``, ``backscat``, ``transmit``, ``sputter``;
+            outputs that are missing (e.g. ``novac`` for
             Kinchin-Pease calculations) are omitted.
         """
         outputs = {
@@ -83,6 +96,10 @@ class Results:
             "phonon": self.phonons,
             "range": self.range,
             "range3d": self.range3d,
+            "exyz": self.exyz,
+            "backscat": self.backscat,
+            "transmit": self.transmit,
+            "sputter": self.sputter,
         }
         return {key: out.df for key, out in outputs.items() if out is not None}
 

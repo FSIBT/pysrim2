@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.df` (a pandas DataFrame, first column `depth_A`, columns named with SRIM units) and `.metadata` on `Ioniz`, `Vacancy`, `NoVacancy`, `EnergyToRecoils`, `Phonons` and `Range`; `Results.to_dataframes()` returns them as a dict.
 - `srim.output.Range3D` reads `RANGE_3D.txt` (per-ion final positions) into a DataFrame with columns `ion`, `depth_A`, `y_A`, `z_A`; `Results.range3d` holds it (`None` if the file is absent) and `Results.to_dataframes()` includes it.
 - `Range.summary` returns the range and straggling values SRIM prints in the `RANGE.txt` header (depth, lateral, radial, skewness, kurtosis). `srim.analysis.implant_summary(df)` computes the same quantities from the per-ion positions of `Range3D` (standard deviations with `ddof=1`).
+- `srim.output.EXYZ`, `Backscat`, `Transmit` and `Sputter` read `EXYZ.txt`, `BACKSCAT.txt`, `TRANSMIT.txt` and `SPUTTER.txt` into DataFrames (`ion`, `atomic_number`, `energy_eV`, `depth_A`, `y_A`, `z_A`, `cos_x`, `cos_y`, `cos_z`; EXYZ: `ion`, `energy_keV`, `depth_A`, `y_A`, `z_A`, `electronic_stopping_eV_per_A`, `last_recoil_energy_eV`); `Results.exyz`, `.backscat`, `.transmit`, `.sputter` hold them (`None` if absent) and `to_dataframes()` returns them. They replace the stubs. EXYZ parser based on work by philis-johan. Fixtures generated with real SRIM in `test_files/outputs-0.8/`.
 
 ### Fixed
 

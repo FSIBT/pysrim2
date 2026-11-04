@@ -226,6 +226,7 @@ TRIM_OUTPUT_FILES = (
     "TRANSMIT.txt",
     "TRIMOUT.txt",
     "TDATA.txt",
+    "EXYZ.txt",
 )
 
 
@@ -328,6 +329,7 @@ class TRIM:
             "TRANSMIT.txt",
             "TRIMOUT.txt",
             "TDATA.txt",
+            "EXYZ.txt",
         }
 
         if not os.path.isdir(src_directory):
