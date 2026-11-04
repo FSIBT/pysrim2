@@ -16,6 +16,7 @@ from ._common import (
 )
 from .collision import Collision, buffered_findall
 from .events import Backscat, Sputter, Transmit
+from .range3d import Range3D
 from .sr import SRResults
 from .tables import EnergyToRecoils, Ioniz, NoVacancy, Phonons, Range, Results, Vacancy
 
@@ -27,6 +28,7 @@ __all__ = [
     "NoVacancy",
     "Phonons",
     "Range",
+    "Range3D",
     "Results",
     "SRIM_Output",
     "SRIMOutputParseError",

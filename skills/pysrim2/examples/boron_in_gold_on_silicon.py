@@ -10,44 +10,17 @@ Quick Kinchin-Pease with 200 ions takes seconds (about a minute under QEMU). Wit
 seed 12345 the mean depth is about 282 angstrom. Copies of the SRIM output files
 are written to ``./output`` so they survive the container.
 
-Until pysrim2 0.8.0 adds DataFrames to ``Results``, per-ion final positions come
-from ``RANGE_3D.txt``, parsed by ``read_range_3d`` below.
+Per-ion final positions (``RANGE_3D.txt``) are ``results.range3d.df``; the summary
+comes from ``srim.analysis.implant_summary``.
 """
 
-import re
 import shutil
 import sys
 from pathlib import Path
 
-import pandas as pd
-
 from srim import TRIM, Ion, Layer, Target
+from srim.analysis import implant_summary
 from srim.paths import srim_dir
-
-ION_LINE = re.compile(r"\d{7}")
-
-
-def read_range_3d(directory) -> pd.DataFrame:
-    """Parse RANGE_3D.txt into a DataFrame with columns ion, depth_A, y_A, z_A."""
-    directory = Path(directory)
-    path = next(
-        p
-        for p in (directory / "RANGE_3D.txt", directory / "SRIM Outputs" / "RANGE_3D.txt")
-        if p.is_file()
-    )
-    rows = []
-    for line in path.read_bytes().decode("latin-1").splitlines():
-        parts = line.split()
-        if len(parts) == 4 and ION_LINE.fullmatch(parts[0]):
-            rows.append((int(parts[0]), *map(float, parts[1:])))
-    if not rows:
-        raise ValueError(f"no ion positions found in {path}")
-    return pd.DataFrame(rows, columns=["ion", "depth_A", "y_A", "z_A"])
-
-
-def lateral_straggle(df: pd.DataFrame) -> float:
-    """Standard deviation (angstrom) of the lateral distance from the beam axis."""
-    return float((df["y_A"] ** 2 + df["z_A"] ** 2).mean() ** 0.5)
 
 
 def peak_vacancy_depth(results) -> float:
@@ -75,7 +48,7 @@ def run(number_ions: int = 200, outdir=None) -> dict:
         ranges=1,  # write RANGE_3D.txt
         random_seed=12345,
     ).run()
-    df = read_range_3d(srim_dir())
+    summary = implant_summary(results.range3d.df)
     if outdir is not None:
         outdir = Path(outdir)
         outdir.mkdir(parents=True, exist_ok=True)
@@ -85,9 +58,9 @@ def run(number_ions: int = 200, outdir=None) -> dict:
                     shutil.copy(src, outdir / name)
                     break
     return {
-        "mean_depth_A": float(df["depth_A"].mean()),
-        "lateral_straggle_A": lateral_straggle(df),
-        "ions": len(df),
+        "mean_depth_A": summary["mean_depth_A"],
+        "lateral_straggle_A": summary["lateral_straggle_A"],
+        "ions": summary["n_ions"],
         "peak_vacancy_depth_A": peak_vacancy_depth(results),
     }
 

@@ -85,11 +85,11 @@ power tables: `from srim import SR` (see `SR(layer, ion, output_type=5).run()`).
 into 100 nm Au on Si, quick KP, seed 12345. It prints the mean depth (about 282 A) and the
 lateral straggle, and copies the output files to `./output/`.
 
-Per-ion final positions are in `RANGE_3D.txt` (needs `ranges=1`). Until pysrim2 0.8.0 adds
-DataFrames to `Results`, parse the file yourself; the example's `read_range_3d(directory)`
-returns a pandas DataFrame with columns `ion, depth_A, y_A, z_A` (depth along the surface
-normal, y and z lateral). Mean depth is `df.depth_A.mean()`; lateral straggle is
-`(df.y_A**2 + df.z_A**2).mean() ** 0.5`. Copy the helper into the user's script.
+Per-ion final positions (needs `ranges=1`) are `results.range3d.df` with columns
+`ion, depth_A, y_A, z_A` (depth along the surface normal, y and z lateral); `range3d` is `None`
+if `RANGE_3D.txt` was not written. `from srim.analysis import implant_summary` gives
+`n_ions`, `mean_depth_A`, `straggle_depth_A` (sample std), `mean_lateral_A` and
+`lateral_straggle_A` (root mean square of `sqrt(y**2 + z**2)`).
 
 ## 5. Run time and practical advice
 

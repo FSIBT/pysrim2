@@ -105,7 +105,10 @@ def test_repeated_element_names_are_unique():
 @pytest.mark.parametrize("directory", list(CASES))
 def test_results_to_dataframes(directory):
     dfs = Results(os.path.join(D, directory)).to_dataframes()
-    assert list(dfs) == ["ioniz", "vacancy", "novac", "e2recoil", "phonon", "range"]
+    expected = ["ioniz", "vacancy", "novac", "e2recoil", "phonon", "range"]
+    if os.path.exists(os.path.join(D, directory, "RANGE_3D.txt")):
+        expected.append("range3d")
+    assert list(dfs) == expected
     assert all(isinstance(x, pd.DataFrame) for x in dfs.values())
 
 

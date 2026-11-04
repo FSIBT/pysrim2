@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `.df` (a pandas DataFrame, first column `depth_A`, columns named with SRIM units) and `.metadata` on `Ioniz`, `Vacancy`, `NoVacancy`, `EnergyToRecoils`, `Phonons` and `Range`; `Results.to_dataframes()` returns them as a dict.
+- `srim.output.Range3D` reads `RANGE_3D.txt` (per-ion final positions) into a DataFrame with columns `ion`, `depth_A`, `y_A`, `z_A`; `Results.range3d` holds it (`None` if the file is absent) and `Results.to_dataframes()` includes it.
+- `srim.analysis.implant_summary(df)` returns `n_ions`, mean and sample-std (`ddof=1`) depth, mean lateral distance and RMS lateral straggle of per-ion positions.
 
 ### Fixed
 

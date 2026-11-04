@@ -8,6 +8,7 @@ from ._common import (
     _element_names,
     _header_symbols,
 )
+from .range3d import Range3D
 
 
 class Results:
@@ -27,6 +28,8 @@ class Results:
       - ``E2RECOIL.txt`` handled by :class:`srim.output.EnergyToRecoils`
       - ``PHONON.txt`` handled by :class:`srim.output.Phonons`
       - ``RANGE.txt`` handled by :class:`srim.output.Range`
+      - ``RANGE_3D.txt`` handled by :class:`srim.output.Range3D`
+        (``range3d`` is ``None`` if the file is absent)
     """
 
     def __init__(self, directory):
@@ -43,6 +46,11 @@ class Results:
         self.phonons = Phonons(directory)
         self.range = Range(directory)
 
+        try:
+            self.range3d = Range3D(directory)
+        except FileNotFoundError:
+            self.range3d = None
+
     def to_dataframes(self):
         """Depth-profile outputs as :class:`pandas.DataFrame` objects
 
@@ -50,7 +58,7 @@ class Results:
         -------
         :obj:`dict`
             Keys ``ioniz``, ``vacancy``, ``novac``, ``e2recoil``, ``phonon``,
-            ``range``; outputs that are missing (e.g. ``novac`` for
+            ``range``, ``range3d``; outputs that are missing (e.g. ``novac`` for
             Kinchin-Pease calculations) are omitted.
         """
         outputs = {
@@ -60,6 +68,7 @@ class Results:
             "e2recoil": self.etorecoils,
             "phonon": self.phonons,
             "range": self.range,
+            "range3d": self.range3d,
         }
         return {key: out.df for key, out in outputs.items() if out is not None}
 
