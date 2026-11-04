@@ -267,6 +267,7 @@ class TRIM:
         """
         if srim_directory is None:
             srim_directory = str(srim_dir())
+        srim_directory = os.path.abspath(srim_directory)
         current_directory = os.getcwd()
         try:
             os.chdir(srim_directory)

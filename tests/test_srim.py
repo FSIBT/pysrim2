@@ -158,3 +158,32 @@ def test_launch_env_uses_private_prefix_only_with_wine(tmp_path, monkeypatch):
 
     monkeypatch.setattr(shutil, "which", lambda name: None)
     assert srim_module._launch_env() == before
+
+
+def test_trim_run_reads_results_from_relative_srim_directory(tmp_path, monkeypatch):
+    srim_directory = tmp_path / "srim"
+    srim_directory.mkdir()
+
+    layer = Layer(
+        {"Si": {"stoich": 1.0, "E_d": 35.0, "lattice": 0.0, "surface": 3.0}},
+        density=2.32,
+        width=10000.0,
+    )
+    trim = TRIM(Target([layer]), Ion("Ni", energy=1.0e6), number_ions=1)
+
+    seen = {}
+    monkeypatch.setattr(subprocess, "check_call", lambda cmd, **kw: None)
+    monkeypatch.setattr(TRIM, "_write_input_files", lambda self: None, raising=False)
+
+    class FakeResults:
+        def __init__(self, directory):
+            seen["directory"] = directory
+
+    monkeypatch.setattr("srim.srim.Results", FakeResults)
+    monkeypatch.chdir(tmp_path)
+
+    trim.run(srim_directory="srim")
+
+    assert os.path.isabs(seen["directory"])
+    assert os.path.realpath(seen["directory"]) == os.path.realpath(srim_directory)
+    assert os.getcwd() == os.path.realpath(tmp_path)

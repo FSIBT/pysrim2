@@ -141,7 +141,7 @@ def test_wine_status(tmp_path, monkeypatch):
     "content, first, count",
     [
         ('ID=debian\nVERSION_ID="13"\n', "sudo dpkg --add-architecture i386", 3),
-        ('ID=ubuntu\nID_LIKE=debian\n', "sudo dpkg --add-architecture i386", 3),
+        ("ID=ubuntu\nID_LIKE=debian\n", "sudo dpkg --add-architecture i386", 3),
         ('ID=linuxmint\nID_LIKE="ubuntu debian"\n', "sudo dpkg --add-architecture i386", 3),
         ("ID=fedora\n", "sudo dnf install -y wine xorg-x11-server-Xvfb cabextract", 1),
         ("ID=arch\n", None, 0),
