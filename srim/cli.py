@@ -10,7 +10,7 @@ from srim.installer import container
 from srim.installer import steps as steps_module
 from srim.installer.srim_install import NOTICE, SrimInstallError
 from srim.installer.steps import COMPONENTS, ComponentUnavailable
-from srim.installer.wine import WineSetupError, wine_status
+from srim.installer.wine import WINE_MANUAL_HINT, WineSetupError, distro_wine_commands, wine_status
 from srim.paths import srim_dir
 
 EXIT_OK = 0
@@ -220,11 +220,13 @@ def collect_checks() -> list[dict]:
     if system == "linux":
         status = wine_status()
         fix = "run: pysrim2 install wine"
+        # On a distribution we have no package commands for, "install wine" cannot help.
+        pkg_fix = fix if distro_wine_commands() else WINE_MANUAL_HINT
         checks += [
-            _check("wine", status.wine, status.wine or "not found", fix),
-            _check("xvfb-run", status.xvfb_run, status.xvfb_run or "not found", fix),
-            _check("extractor", status.extractor, status.extractor or "not found", fix),
-            _check("downloader", status.downloader, status.downloader or "not found", fix),
+            _check("wine", status.wine, status.wine or "not found", pkg_fix),
+            _check("xvfb-run", status.xvfb_run, status.xvfb_run or "not found", pkg_fix),
+            _check("extractor", status.extractor, status.extractor or "not found", pkg_fix),
+            _check("downloader", status.downloader, status.downloader or "not found", pkg_fix),
             _check(
                 "wine-prefix",
                 status.prefix_ready,

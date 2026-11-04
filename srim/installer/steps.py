@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from srim.installer.srim_install import install_srim
 from srim.installer.wine import (
     WINE_DOCS,
+    WINE_MANUAL_HINT,
     WineSetupError,
     distro_wine_commands,
     setup_wine_prefix,
@@ -129,9 +130,7 @@ def _wine_packages_ok() -> bool:
 
 
 def _wine_package_commands() -> list[str]:
-    return distro_wine_commands() or [
-        f"# unknown distribution: install wine and xvfb, see {WINE_DOCS}"
-    ]
+    return distro_wine_commands() or [f"# {WINE_MANUAL_HINT}"]
 
 
 def run_admin_commands(commands: list[str], error: type[Exception], what: str, docs: str) -> None:

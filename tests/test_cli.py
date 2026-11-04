@@ -276,3 +276,29 @@ def test_image_waits_for_runtime_not_failed(rec, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "[skip] image: waiting for runtime" in out
     assert rec.ran == []
+
+
+def _linux_doctor(monkeypatch, tmp_path, capsys, commands):
+    from srim.installer.wine import WineStatus
+
+    monkeypatch.setenv("PYSRIM2_SRIM_DIR", str(tmp_path / "srim"))
+    monkeypatch.setattr(steps, "current_platform", lambda: "linux")
+    monkeypatch.setattr(cli, "wine_status", lambda: WineStatus(None, None, None, None, None, False))
+    monkeypatch.setattr(cli, "distro_wine_commands", lambda: commands)
+    cli.main(["doctor", "--json"])
+    return {c["name"]: c for c in json.loads(capsys.readouterr().out)["checks"]}
+
+
+def test_doctor_unknown_distro_does_not_say_install_wine(monkeypatch, tmp_path, capsys):
+    checks = _linux_doctor(monkeypatch, tmp_path, capsys, [])
+    for name in ("wine", "xvfb-run"):
+        assert checks[name]["fix"] == (
+            "install wine (32-bit support) and xvfb-run with your package manager, "
+            "see https://wiki.winehq.org/Download"
+        )
+        assert "pysrim2 install wine" not in checks[name]["fix"]
+
+
+def test_doctor_known_distro_suggests_install_wine(monkeypatch, tmp_path, capsys):
+    checks = _linux_doctor(monkeypatch, tmp_path, capsys, ["sudo zypper install wine"])
+    assert checks["wine"]["fix"] == "run: pysrim2 install wine"

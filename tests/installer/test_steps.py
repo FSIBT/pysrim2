@@ -127,3 +127,11 @@ def test_wine_packages_unbalanced_quote_is_an_install_error(monkeypatch):
     monkeypatch.setattr(steps, "distro_wine_commands", lambda: ["sudo apt-get install 'oops"])
     with pytest.raises(WineSetupError):
         steps._run_wine_packages()
+
+
+def test_wine_package_commands_unknown_distro_text(monkeypatch):
+    monkeypatch.setattr(steps, "distro_wine_commands", lambda: [])
+    assert steps._wine_package_commands() == [
+        "# install wine (32-bit support) and xvfb-run with your package manager, "
+        "see https://wiki.winehq.org/Download"
+    ]

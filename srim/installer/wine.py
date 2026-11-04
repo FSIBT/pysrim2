@@ -37,6 +37,9 @@ OUTPUT_TAIL_LINES = 20
 DLLS = ("msvbvm50.dll", "comcat.dll")
 MARKER_NAME = ".pysrim2-vb5"
 WINE_DOCS = "https://wiki.winehq.org/Download"
+WINE_MANUAL_HINT = (
+    f"install wine (32-bit support) and xvfb-run with your package manager, see {WINE_DOCS}"
+)
 
 
 class WineSetupError(RuntimeError):
