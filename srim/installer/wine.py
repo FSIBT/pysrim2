@@ -35,6 +35,7 @@ WINETRICKS_SHA256 = "431f82fc74000e6c864409f1d8fb495d696c03928808e3e8acffc451793
 WINETRICKS_VERBS = ("comdlg32ocx", "msflxgrd", "richtx32", "comctl32ocx", "tabctl32")
 SETUP_TIMEOUT_SECONDS = 600
 OUTPUT_TAIL_LINES = 20
+KILL_TIMEOUT_SECONDS = 15
 DLLS = ("msvbvm50.dll", "comcat.dll")
 MARKER_NAME = ".pysrim2-vb5"
 WINE_DOCS = "https://wiki.winehq.org/Download"
@@ -143,14 +144,21 @@ def setup_wine_prefix(prefix: Path, progress: Callable[[str], None] | None = Non
             raise WineSetupError(f"{missing[0]} not found in {MSVBVM50_NAME}")
 
         prefix.mkdir(parents=True, exist_ok=True)
-        note("  - creating wine prefix (wineboot)…")
-        _run([*xvfb, "wineboot", "-i"], env)
-        _wait_for_wineserver(env, xvfb)
-        note("  - installing OCX controls with winetricks (downloads; can take several minutes)…")
-        cache = data_dir() / "cache" / "winetricks"
-        cache.mkdir(parents=True, exist_ok=True)
-        _run([*xvfb, *winetricks, "-q", *WINETRICKS_VERBS], {**env, "W_CACHE": str(cache)})
-        _wait_for_wineserver(env, xvfb)
+        try:
+            note("  - creating wine prefix (wineboot)…")
+            _run([*xvfb, "wineboot", "-i"], env)
+            _wait_for_wineserver(env, xvfb)
+            note(
+                "  - installing OCX controls with winetricks (downloads; can take several minutes)…"
+            )
+            cache = data_dir() / "cache" / "winetricks"
+            cache.mkdir(parents=True, exist_ok=True)
+            _run([*xvfb, *winetricks, "-q", *WINETRICKS_VERBS], {**env, "W_CACHE": str(cache)})
+            _wait_for_wineserver(env, xvfb)
+        except BaseException:
+            # Failure or Ctrl-C: do not leave this prefix's wine processes running.
+            _kill_wineserver(env)
+            raise
 
         note("  - installing VB5 runtime DLLs…")
         system32 = _system32(prefix)
@@ -179,6 +187,24 @@ def _wineserver() -> str | None:
         if os.access(candidate, os.X_OK) and Path(candidate).is_file():
             return candidate
     return None
+
+
+def _kill_wineserver(env: dict[str, str]) -> None:
+    """Stop the wineserver of the private prefix in ``env`` (``wineserver -k``); never raises."""
+    server = _wineserver()
+    if not server:
+        return
+    try:
+        subprocess.run(
+            [server, "-k"],
+            env=env,
+            timeout=KILL_TIMEOUT_SECONDS,
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except (OSError, subprocess.SubprocessError):
+        pass
 
 
 def _wait_for_wineserver(env: dict[str, str], xvfb: list[str]) -> None:

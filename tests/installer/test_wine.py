@@ -321,3 +321,57 @@ def test_setup_reports_each_sub_step(tmp_path, fake_system):
         "  - installing OCX controls with winetricks (downloads; can take several minutes)…",
         "  - installing VB5 runtime DLLs…",
     ]
+
+
+@pytest.mark.parametrize(
+    ("exc", "expected"),
+    [
+        (subprocess.TimeoutExpired(["x"], 600), WineSetupError),
+        (KeyboardInterrupt(), KeyboardInterrupt),
+    ],
+)
+@pytest.mark.parametrize("fail_on", ["wineboot", "-q"])
+def test_failure_kills_the_private_wineserver(
+    tmp_path, fake_system, monkeypatch, exc, expected, fail_on
+):
+    real = subprocess.run
+    killed = []
+
+    def run(cmd, **kwargs):
+        if cmd[-1] == "-k":
+            killed.append((cmd, kwargs))
+            return subprocess.CompletedProcess(cmd, 0)
+        if fail_on in cmd:
+            raise exc
+        return real(cmd, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", run)
+    prefix = tmp_path / "wine"
+    with pytest.raises(expected):
+        setup_wine_prefix(prefix)
+    assert len(killed) == 1
+    cmd, kwargs = killed[0]
+    assert cmd == ["/usr/bin/wineserver", "-k"]
+    assert kwargs["env"]["WINEPREFIX"] == str(prefix)
+    assert kwargs["timeout"] <= 30
+    assert not (prefix / MARKER_NAME).exists()
+
+
+def test_failed_wineserver_kill_does_not_mask_the_error(tmp_path, fake_system, monkeypatch):
+    real = subprocess.run
+
+    def run(cmd, **kwargs):
+        if cmd[-1] == "-k":
+            raise subprocess.TimeoutExpired(cmd, 15)
+        if "wineboot" in cmd:
+            raise subprocess.CalledProcessError(1, cmd)
+        return real(cmd, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", run)
+    with pytest.raises(WineSetupError, match="wineboot"):
+        setup_wine_prefix(tmp_path / "wine")
+
+
+def test_no_wineserver_kill_on_success(tmp_path, fake_system):
+    setup_wine_prefix(tmp_path / "wine")
+    assert not any(c[-1] == "-k" for c, _ in fake_system)
