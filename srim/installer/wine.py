@@ -46,11 +46,19 @@ class WineStatus:
     xvfb_run: str | None
     extractor: str | None
     winetricks: str | None
+    downloader: str | None
     prefix_ready: bool
 
 
 def _find_extractor() -> str | None:
     for name in ("7z", "7zz", "cabextract"):
+        if shutil.which(name):
+            return name
+    return None
+
+
+def _find_downloader() -> str | None:
+    for name in ("wget", "curl", "aria2c"):
         if shutil.which(name):
             return name
     return None
@@ -74,6 +82,7 @@ def wine_status() -> WineStatus:
         xvfb_run=shutil.which("xvfb-run"),
         extractor=_find_extractor(),
         winetricks=shutil.which("winetricks"),
+        downloader=_find_downloader(),
         prefix_ready=_prefix_ready(wine_prefix()),
     )
 
@@ -98,6 +107,12 @@ def setup_wine_prefix(prefix: Path) -> None:
         return
     if not shutil.which("wine"):
         raise WineSetupError(f"wine is not installed; see {WINE_DOCS}")
+    if not _find_downloader():
+        install = distro_wine_commands()
+        hint = f"; install the packages with: {' && '.join(install)}" if install else ""
+        raise WineSetupError(
+            f"none of wget, curl or aria2c is installed (winetricks needs one){hint}"
+        )
     extractor = _find_extractor()
     if not extractor:
         raise WineSetupError("none of 7z, 7zz or cabextract is installed")
@@ -217,8 +232,8 @@ def distro_wine_commands(os_release: Path = Path("/etc/os-release")) -> list[str
         return [
             "sudo dpkg --add-architecture i386",
             "sudo apt-get update",
-            "sudo apt-get install -y wine wine32:i386 xvfb xauth cabextract unzip",
+            "sudo apt-get install -y wine wine32:i386 xvfb xauth cabextract unzip curl",
         ]
     if "fedora" in ids:
-        return ["sudo dnf install -y wine xorg-x11-server-Xvfb cabextract unzip"]
+        return ["sudo dnf install -y wine xorg-x11-server-Xvfb cabextract unzip curl"]
     return []

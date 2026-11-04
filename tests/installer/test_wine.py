@@ -30,7 +30,7 @@ def fake_system(monkeypatch, tmp_path):
     calls = []
     monkeypatch.setenv("PYSRIM2_HOME", str(tmp_path / "home"))
     monkeypatch.setattr(wine, "WINETRICKS_SHA256", hashlib.sha256(FAKE_EXE).hexdigest())
-    monkeypatch.setattr(shutil, "which", fake_which({"wine", "xvfb-run", "7z", "bash"}))
+    monkeypatch.setattr(shutil, "which", fake_which({"wine", "xvfb-run", "7z", "bash", "curl"}))
     monkeypatch.setattr(wine, "MSVBVM50_SHA256", hashlib.sha256(FAKE_EXE).hexdigest())
     monkeypatch.setattr(wine, "_download", lambda url, dest: dest.write_bytes(FAKE_EXE))
 
@@ -71,7 +71,7 @@ def test_setup_runs_recipe_and_copies_dlls(tmp_path, fake_system):
 
 
 def test_setup_without_xvfb_and_with_cabextract(tmp_path, fake_system, monkeypatch):
-    monkeypatch.setattr(shutil, "which", fake_which({"wine", "cabextract", "winetricks"}))
+    monkeypatch.setattr(shutil, "which", fake_which({"wine", "cabextract", "winetricks", "wget"}))
 
     def run(cmd, **kwargs):
         fake_system.append((cmd, kwargs))
@@ -113,7 +113,7 @@ def test_setup_checksum_mismatch(tmp_path, fake_system, monkeypatch):
 
 
 def test_setup_prefers_system_winetricks(tmp_path, fake_system, monkeypatch):
-    monkeypatch.setattr(shutil, "which", fake_which({"wine", "7z", "winetricks"}))
+    monkeypatch.setattr(shutil, "which", fake_which({"wine", "7z", "winetricks", "curl"}))
     setup_wine_prefix(tmp_path / "wine")
     cmds = [c for c, _ in fake_system]
     assert cmds[3][0] == "/usr/bin/winetricks"
@@ -158,12 +158,13 @@ def test_setup_leaves_environ_and_ignores_user_wineprefix(tmp_path, fake_system,
 
 def test_wine_status(tmp_path, monkeypatch):
     monkeypatch.setenv("PYSRIM2_WINEPREFIX", str(tmp_path / "wine"))
-    monkeypatch.setattr(shutil, "which", fake_which({"wine", "7zz"}))
+    monkeypatch.setattr(shutil, "which", fake_which({"wine", "7zz", "curl", "aria2c"}))
     status = wine_status()
     assert status.wine == "/usr/bin/wine"
     assert status.xvfb_run is None
     assert status.extractor == "7zz"
     assert status.winetricks is None
+    assert status.downloader == "curl"
     assert status.prefix_ready is False
     system32 = tmp_path / "wine" / "drive_c" / "windows" / "system32"
     system32.mkdir(parents=True)
@@ -180,7 +181,7 @@ def test_wine_status(tmp_path, monkeypatch):
         ('ID=debian\nVERSION_ID="13"\n', "sudo dpkg --add-architecture i386", 3),
         ("ID=ubuntu\nID_LIKE=debian\n", "sudo dpkg --add-architecture i386", 3),
         ('ID=linuxmint\nID_LIKE="ubuntu debian"\n', "sudo dpkg --add-architecture i386", 3),
-        ("ID=fedora\n", "sudo dnf install -y wine xorg-x11-server-Xvfb cabextract unzip", 1),
+        ("ID=fedora\n", "sudo dnf install -y wine xorg-x11-server-Xvfb cabextract unzip curl", 1),
         ("ID=arch\n", None, 0),
     ],
 )
@@ -192,7 +193,10 @@ def test_distro_wine_commands(tmp_path, content, first, count):
     if first:
         assert commands[0] == first
     if count == 3:
-        assert commands[2] == "sudo apt-get install -y wine wine32:i386 xvfb xauth cabextract unzip"
+        assert (
+            commands[2]
+            == "sudo apt-get install -y wine wine32:i386 xvfb xauth cabextract unzip curl"
+        )
 
 
 def test_distro_wine_commands_missing_file(tmp_path):
@@ -218,7 +222,23 @@ def test_failure_message_includes_command_output(tmp_path, fake_system, monkeypa
 
 
 def test_winetricks_download_needs_bash(tmp_path, fake_system, monkeypatch):
-    monkeypatch.setattr(shutil, "which", fake_which({"wine", "7z"}))
+    monkeypatch.setattr(shutil, "which", fake_which({"wine", "7z", "curl"}))
     with pytest.raises(WineSetupError, match="bash"):
         setup_wine_prefix(tmp_path / "wine")
     assert fake_system == []
+
+
+def test_wine_status_downloader_preference_and_absence(monkeypatch):
+    monkeypatch.setattr(shutil, "which", fake_which({"aria2c", "wget"}))
+    assert wine_status().downloader == "wget"
+    monkeypatch.setattr(shutil, "which", fake_which(set()))
+    assert wine_status().downloader is None
+
+
+def test_setup_requires_downloader_before_touching_wine(tmp_path, fake_system, monkeypatch):
+    monkeypatch.setattr(shutil, "which", fake_which({"wine", "7z", "bash"}))
+    monkeypatch.setattr(wine, "distro_wine_commands", lambda: ["sudo apt-get install -y curl"])
+    with pytest.raises(WineSetupError, match="wget, curl or aria2c.*sudo apt-get install -y curl"):
+        setup_wine_prefix(tmp_path / "wine")
+    assert fake_system == []
+    assert not (tmp_path / "wine").exists()
