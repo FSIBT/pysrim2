@@ -4,10 +4,13 @@ import os
 import random
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
+from datetime import UTC, datetime
 
+from .core import Element, Ion, Layer, Target
 from .core.utils import (
     check_input,
     is_one_to_eight,
@@ -23,6 +26,19 @@ from .input import AutoTRIM, SRInput, TRIMInput
 from .installer.wine import XVFB_ARGS, wine_env
 from .output import Results, SRResults
 from .paths import srim_dir, wine_prefix
+from .spec import (
+    ALWAYS_SETTINGS,
+    SCHEMA_VERSION,
+    SETTINGS_SCHEMA,
+    A_to_nm,
+    ElementSpec,
+    IonSpec,
+    LayerSpec,
+    RunSpec,
+    eV_to_keV,
+    keV_to_eV,
+    nm_to_A,
+)
 
 
 def _launch_command(executable):
@@ -300,6 +316,101 @@ class TRIM:
         AutoTRIM().write()
         TRIMInput(self).write()
 
+    def to_spec(self):
+        """Describe this calculation as a :class:`srim.spec.RunSpec`.
+
+        The random seed is always recorded (when none was given, the one
+        :class:`TRIMSettings` picked), so running the spec again gives the same
+        ``TRIM.IN``. ``settings`` only holds values that differ from the defaults, plus
+        ``description`` and ``ranges``.
+        """
+        st = self.settings
+        settings = {}
+        for key, (_, default) in SETTINGS_SCHEMA.items():
+            value = getattr(st, key)
+            if value != default or key in ALWAYS_SETTINGS:
+                settings[key] = value
+        layers = []
+        for layer in self.target.layers:
+            elements = []
+            for element, props in layer.elements.items():
+                db_mass = Element(element.symbol).mass
+                elements.append(
+                    ElementSpec(
+                        element.symbol,
+                        props["stoich"],
+                        props["E_d"],
+                        props["lattice"],
+                        props["surface"],
+                        None if element.mass == db_mass else element.mass,
+                    )
+                )
+            layers.append(
+                LayerSpec(layer.name, A_to_nm(layer.width), layer.density, layer.phase, elements)
+            )
+        ion = IonSpec(self.ion.symbol, self.ion.mass, eV_to_keV(self.ion.energy), st.angle_ions)
+        return RunSpec(
+            SCHEMA_VERSION,
+            ion,
+            layers,
+            settings,
+            self.number_ions,
+            self.calculation,
+            st.random_seed,
+        )
+
+    @classmethod
+    def from_spec(cls, spec):
+        """Build a :class:`TRIM` from a :class:`srim.spec.RunSpec` or its ``dict`` form.
+
+        ``to_spec`` followed by ``from_spec`` writes a byte-identical ``TRIM.IN``.
+        """
+        if not isinstance(spec, RunSpec):
+            spec = RunSpec.from_dict(spec)
+        else:
+            spec.validate()
+        layers = []
+        for layer_spec in spec.target:
+            elements = {}
+            for e in layer_spec.elements:
+                elements[Element(e.symbol, e.mass_amu)] = {
+                    "stoich": e.stoich,
+                    "E_d": e.displacement_eV,
+                    "lattice": e.lattice_eV,
+                    "surface": e.surface_eV,
+                }
+            layer = Layer(
+                elements,
+                layer_spec.density_g_cm3,
+                nm_to_A(layer_spec.thickness_nm),
+                layer_spec.phase,
+                layer_spec.name,
+            )
+            # Layer normalizes the stoichiometry; keep exactly what the spec says so the
+            # TRIM.IN text does not change by a rounding step.
+            for element, e in zip(layer.elements, layer_spec.elements, strict=True):
+                layer.elements[element]["stoich"] = e.stoich
+            layers.append(layer)
+        ion = Ion(spec.ion.symbol, keV_to_eV(spec.ion.energy_keV), spec.ion.mass_amu)
+        return cls(
+            Target(layers),
+            ion,
+            calculation=spec.calculation,
+            number_ions=spec.number_ions,
+            angle_ions=spec.ion.angle_deg,
+            random_seed=spec.seed,
+            **spec.settings,
+        )
+
+    def to_yaml(self, path, provenance=None):
+        """Write this calculation as a ``run.yaml`` (see :meth:`srim.spec.RunSpec.to_yaml`)."""
+        self.to_spec().to_yaml(path, provenance)
+
+    @classmethod
+    def from_yaml(cls, path):
+        """Build a :class:`TRIM` from a ``run.yaml``."""
+        return cls.from_spec(RunSpec.from_yaml(path))
+
     @staticmethod
     def copy_output_files(src_directory, dest_directory, check_srim_output=True):
         """Copies known TRIM files in directory to destination directory
@@ -314,6 +425,7 @@ class TRIM:
             ensure that all files exist
         """
         known_files = {
+            "run.yaml",
             "TRIM.IN",
             "PHONON.txt",
             "E2RECOIL.txt",
@@ -347,12 +459,13 @@ class TRIM:
             ):
                 shutil.move(os.path.join(src_directory, "SRIM Outputs", known_file), dest_directory)
 
-    def run(self, srim_directory=None):
+    def run(self, srim_directory=None, write_spec=True):
         """Run configured srim calculation
 
         This method:
          - writes the input file to ``<srim_directory>/TRIM.IN``
          - launches ``<srim_directory>/TRIM.exe``. Uses ``wine`` if available (needed for linux and osx)
+         - after a successful run writes ``<srim_directory>/run.yaml`` (see below)
 
         Parameters
         ----------
@@ -361,6 +474,19 @@ class TRIM:
             this directory. Default is ``str(srim_dir())``, resolved when
             this method is called: ``$PYSRIM2_SRIM_DIR``, then pysrim2's
             data directory, then ``/tmp/srim`` if it holds an install.
+        write_spec : :obj:`bool`, optional
+            write ``run.yaml`` next to the outputs (in the SRIM directory, where the
+            results are read from; :meth:`copy_output_files` copies it along with them).
+            It holds the :class:`~srim.spec.RunSpec` (including the seed) and the
+            provenance: pysrim2 version, SRIM SHA-256 (from the ``.pysrim2-installed``
+            marker, if present), platform, backend (``native`` or ``wine``), start and end
+            time (UTC) and host name. Default True.
+
+        Returns
+        -------
+        :class:`srim.output.Results`
+            its ``spec`` attribute is the run spec as a dict (without provenance, so
+            exports carry no host name), used by ``Results.to_parquet`` etc.
         """
         if srim_directory is None:
             srim_directory = str(srim_dir())
@@ -368,15 +494,51 @@ class TRIM:
         current_directory = os.getcwd()
         try:
             os.chdir(srim_directory)
-            _remove_stale(srim_directory, TRIM_OUTPUT_FILES, "SRIM Outputs")
+            _remove_stale(srim_directory, TRIM_OUTPUT_FILES + ("run.yaml",), "SRIM Outputs")
             self._write_input_files()
+            started = datetime.now(UTC)
             # Make sure compatible with Windows, OSX, and Linux
             _run_srim("TRIM.exe")
+            finished = datetime.now(UTC)
             _require_output(srim_directory, "RANGE.txt")
+            spec = self.to_spec()
+            if write_spec:
+                spec.to_yaml(
+                    os.path.join(srim_directory, "run.yaml"),
+                    _provenance(srim_directory, started, finished, spec.seed),
+                )
             os.chdir(current_directory)
-            return Results(srim_directory)
+            results = Results(srim_directory)
+            results.spec = spec.to_dict()
+            return results
         finally:
             os.chdir(current_directory)
+
+
+def _provenance(srim_directory, started, finished, seed):
+    """Informational record of a run, stored under ``provenance:`` in ``run.yaml``"""
+    from . import __version__
+    from .installer.srim_install import MARKER_NAME
+
+    marker = os.path.join(srim_directory, MARKER_NAME)
+    sha = None
+    if os.path.isfile(marker):
+        with open(marker, encoding="utf-8") as f:
+            sha = f.read().strip() or None
+
+    def stamp(moment):
+        return moment.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    return {
+        "pysrim2_version": __version__,
+        "srim_sha256": sha,
+        "platform": sys.platform,
+        "backend": "wine" if shutil.which("wine") else "native",
+        "started_utc": stamp(started),
+        "finished_utc": stamp(finished),
+        "host": socket.gethostname(),
+        "seed": seed,
+    }
 
 
 def _check_output_filename(name):

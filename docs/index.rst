@@ -31,6 +31,7 @@ Use :ref:`modindex` to search the API documentation.
    installation
    container
    cli
+   run-spec
    agents
    tutorial
    changes-from-pysrim

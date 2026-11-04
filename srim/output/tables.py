@@ -80,6 +80,9 @@ class Results:
         self.etorecoils = EnergyToRecoils(directory)
         self.phonons = Phonons(directory)
         self.range = Range(directory)
+        #: run spec (a dict, no provenance) of the run that made these results, set by
+        #: :meth:`srim.srim.TRIM.run`; the default ``spec`` of the ``to_*`` exports
+        self.spec = None
 
         # SRIM writes some files into "SRIM Outputs" in some installs. The main directory
         # takes precedence: it holds copies made by TRIM.copy_output_files or older installs,
@@ -167,7 +170,8 @@ class Results:
         directory : :obj:`str`
             created if needed
         spec : :obj:`dict`, optional
-            run specification, stored in every file's metadata
+            run specification, stored in every file's metadata (default: ``self.spec``,
+            set by :meth:`srim.srim.TRIM.run`)
         include : iterable of :obj:`str`, optional
             table names (keys of :meth:`to_dataframes`) to export; default all available
             tables except ``collision``, which can be huge and must be asked for
@@ -183,6 +187,7 @@ class Results:
         """
         from ..export import results_to_parquet
 
+        spec = self.spec if spec is None else spec
         return results_to_parquet(self, directory, spec, include, chunk_rows)
 
     def to_hdf5(self, path, spec=None, include=None, chunk_rows=100_000):
@@ -202,6 +207,7 @@ class Results:
         """
         from ..export import results_to_hdf5
 
+        spec = self.spec if spec is None else spec
         return results_to_hdf5(self, path, spec, include, chunk_rows)
 
     def to_csv(self, directory, spec=None, include=None, chunk_rows=100_000):
@@ -218,6 +224,7 @@ class Results:
         """
         from ..export import results_to_csv
 
+        spec = self.spec if spec is None else spec
         return results_to_csv(self, directory, spec, include, chunk_rows)
 
 
