@@ -299,4 +299,10 @@ def distro_wine_commands(os_release: Path = Path("/etc/os-release")) -> list[str
         ]
     if "fedora" in ids:
         return ["sudo dnf install -y wine xorg-x11-server-Xvfb cabextract unzip curl"]
+    # IDs seen: opensuse-tumbleweed, opensuse-leap; ID_LIKE "opensuse suse".
+    if any(i.startswith("opensuse") or "suse" in i for i in ids):
+        return ["sudo zypper install -y wine xvfb-run cabextract unzip curl"]
+    # Arch: untested, package names taken from the Arch wiki/package list.
+    if "arch" in ids:
+        return ["sudo pacman -S --needed wine xorg-server-xvfb cabextract unzip curl"]
     return []

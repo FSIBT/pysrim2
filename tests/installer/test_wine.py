@@ -177,6 +177,9 @@ def test_wine_status(tmp_path, monkeypatch):
     assert paths.wine_prefix() == tmp_path / "wine"
 
 
+ZYPPER = "sudo zypper install -y wine xvfb-run cabextract unzip curl"
+
+
 @pytest.mark.parametrize(
     "content, first, count",
     [
@@ -184,7 +187,11 @@ def test_wine_status(tmp_path, monkeypatch):
         ("ID=ubuntu\nID_LIKE=debian\n", "sudo dpkg --add-architecture i386", 3),
         ('ID=linuxmint\nID_LIKE="ubuntu debian"\n', "sudo dpkg --add-architecture i386", 3),
         ("ID=fedora\n", "sudo dnf install -y wine xorg-x11-server-Xvfb cabextract unzip curl", 1),
-        ("ID=arch\n", None, 0),
+        ("ID=arch\n", "sudo pacman -S --needed wine xorg-server-xvfb cabextract unzip curl", 1),
+        ('ID=opensuse-tumbleweed\nID_LIKE="opensuse suse"\n', ZYPPER, 1),
+        ("ID=opensuse-leap\n", ZYPPER, 1),
+        ('ID=sles\nID_LIKE="suse"\n', ZYPPER, 1),
+        ("ID=gentoo\n", None, 0),
     ],
 )
 def test_distro_wine_commands(tmp_path, content, first, count):
