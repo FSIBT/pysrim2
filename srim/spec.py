@@ -5,7 +5,7 @@ wraps it with informational provenance::
 
     version: 1
     spec:
-      ion: {symbol: B, mass_amu: 10.811, energy_keV: 20.0, angle_deg: 7.0}
+      ion: {symbol: B, energy_keV: 20.0, angle_deg: 7.0}
       number_ions: 200
       calculation: 1
       seed: 12345

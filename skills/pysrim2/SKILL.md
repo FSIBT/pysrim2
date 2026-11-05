@@ -95,9 +95,9 @@ if `RANGE_3D.txt` was not written. `from srim.analysis import implant_summary` g
 the example). The radial straggle (about 155 A) is the standard deviation of the radial distance r, a
 different quantity; the mean depth is about 282 A.
 
-Event files, parsed into objects whose `.df` is a DataFrame with `ion`, `depth_A`, `y_A`, `z_A`, ... (`None` if absent):
-`results.exyz` (`exyz=<eV step>`), `.backscat` (`backscattered=1`), `.transmit` (`transmit=1`),
-`.sputter` (`sputtered=1`).
+Event files, parsed into objects whose `.df` is a DataFrame with `ion`, `depth_A`, `y_A`, `z_A`, ... (the object is `None` if absent):
+`results.exyz.df` (`exyz=<eV step>`), `.backscat.df` (`backscattered=1`), `.transmit.df` (`transmit=1`),
+`.sputter.df` (`sputtered=1`).
 
 ## 5. Cascades, export and run.yaml
 
