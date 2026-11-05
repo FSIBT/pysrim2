@@ -30,7 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- A `Layer` without a name is now named after its elements (`Si+C`, or the formula for `Layer.from_formula("SiC", ...)`) instead of the text `None`. This changes the layer name written to `TRIM.IN` (and `run.yaml`) for unnamed layers compared with 0.7.0.
+- A `Layer` without a name is now named after its elements (`Si+C`, or the formula for `Layer.from_formula("SiC", ...)`; the same default for a layer without `name:` in `run.yaml`) instead of the text `None`. This changes the layer name written to `TRIM.IN` (and `run.yaml`) for unnamed layers compared with 0.7.0.
 
 ### Fixed
 

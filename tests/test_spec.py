@@ -520,3 +520,16 @@ def test_unnamed_layers_get_a_default_name_in_spec_and_trim_in(tmp_path):
     trim = TRIM(Target([Layer.from_formula("SiC", 3.21, 1000.0)]), Ion("Ni", 1e6), number_ions=5)
     assert trim.to_spec().target[0].name == "SiC"
     assert b"None" not in trim_in_bytes(trim, tmp_path)
+
+
+def test_unnamed_layer_name_agrees_between_run_yaml_and_layer(tmp_path):
+    from srim import Ion, Layer, Target
+
+    layer = Layer({"Si": [1.0, 25.0, 0.0, 3.0], "C": [1.0, 28.0, 0.0, 3.0]}, 3.21, 1000.0)
+    assert layer.name == "Si+C"
+    trim = TRIM(Target([layer]), Ion("Ni", 1e6), number_ions=5, seed=1)
+    data = trim.to_spec().to_dict()
+    del data["target"][0]["name"]
+    spec = RunSpec.from_dict(data)
+    assert spec.target[0].name == "Si+C"
+    assert trim_in_bytes(TRIM.from_spec(spec), tmp_path, "a") == trim_in_bytes(trim, tmp_path, "b")

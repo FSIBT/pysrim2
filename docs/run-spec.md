@@ -62,7 +62,7 @@ Each entry of `target` (a layer)
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `name` | str | element symbols joined by spaces | layer name (no double quote) |
+| `name` | str | element symbols joined by `+`, like `Layer` (`Si+C`) | layer name (no double quote) |
 | `thickness_nm` | float | required | thickness in nm (> 0) |
 | `density_g_cm3` | float | required | density in g/cm3 (> 0) |
 | `phase` | int | 0 | 0 solid, 1 gas |

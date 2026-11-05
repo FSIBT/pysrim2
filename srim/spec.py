@@ -439,7 +439,7 @@ def _build_layer(raw, prefix):
         )
     name = layer.get("name")
     if name is None:
-        name = " ".join(e.symbol for e in elements)
+        name = "+".join(e.symbol for e in elements)
     return LayerSpec(
         name, layer["thickness_nm"], layer["density_g_cm3"], layer.get("phase", 0), elements
     )
