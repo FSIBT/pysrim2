@@ -3,9 +3,11 @@
 import os
 from pathlib import Path
 
-import nbformat
 import pytest
-from nbclient import NotebookClient
+
+nbformat = pytest.importorskip("nbformat")
+nbclient = pytest.importorskip("nbclient")
+pytest.importorskip("ipykernel")
 
 NOTEBOOKS = sorted((Path(__file__).resolve().parents[2] / "examples" / "notebooks").glob("*.ipynb"))
 
@@ -15,7 +17,7 @@ def test_notebook_executes(path, tmp_path, monkeypatch):
     monkeypatch.setenv("MPLBACKEND", "Agg")
     notebook = nbformat.read(path, as_version=4)
     # run in a scratch folder so the notebooks' output folders do not land in the repo
-    client = NotebookClient(
+    client = nbclient.NotebookClient(
         notebook,
         timeout=int(os.environ.get("NOTEBOOK_TIMEOUT", "900")),
         startup_timeout=int(os.environ.get("NOTEBOOK_STARTUP_TIMEOUT", "120")),
