@@ -55,9 +55,10 @@ script writes to `/data`.
 
 ## Outputs
 
-SRIM writes its output files inside the container, in `/opt/srim`, which
-is gone when the container exits. Copy the files you need into `/data`
-before your script ends (`TRIM.copy_output_files(srim_dir(), "/data/out")`);
+Each run writes its output files inside the container, in a private run directory
+(`results.directory`, below `/opt/pysrim2/runs`), which is gone when the container
+exits. Copy the files you need into `/data` before your script ends
+(`TRIM.copy_output_files(results.directory, "/data/out")` or `run(output_dir="/data/out")`);
 the bundled skill example does exactly this, see {doc}`agents`.
 
 The scripts in [examples/scripts](https://github.com/FSIBT/pysrim2/tree/main/examples/scripts)

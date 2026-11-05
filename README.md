@@ -145,14 +145,15 @@ See [documentation](https://pysrim2.readthedocs.io/en/latest/) for all available
 
 ## Copy SRIM output files to directory
 
-After a SRIM calculation has completed run `copy_output_files` to take
-all of the output files and move them to a directory of your liking.
+Every `run()` happens in its own private copy of the SRIM directory (so several
+runs can be active at once). Pass `output_dir=` to get the output files in a
+directory of your liking, or copy them afterwards from `results.directory`:
 
 ``` python
 from srim import TRIM
-from srim.paths import srim_dir
 
-TRIM.copy_output_files(srim_dir(), "/home/user/scratch/srim")
+results = trim.run(output_dir="/home/user/scratch/srim")
+# or: TRIM.copy_output_files(results.directory, "/home/user/scratch/srim")
 ```
 
 ## Post processes SRIM output as numpy arrays

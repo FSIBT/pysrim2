@@ -76,11 +76,11 @@ copy the results to a different directory.
 
 .. code-block:: python
 
-   from srim.paths import srim_dir
-
+   # each run happens in its own private copy of SRIM; results.directory is its folder
    output_directory = '/tmp/srim_outputs'
    os.makedirs(output_directory, exist_ok=True)
-   TRIM.copy_output_files(srim_dir(), output_directory)
+   TRIM.copy_output_files(results.directory, output_directory)
+   # or: trim.run(output_dir=output_directory)
 
 If at a later point you would like to parse the srim calcualtions you
 can use the :class:`srim.output.Results` class to gather all the
@@ -88,7 +88,7 @@ output.
 
 .. code-block:: python
 
-   results = Results(srim_dir())
+   results = Results(output_directory)
 
 Plotting and Analysis of Results
 --------------------------------

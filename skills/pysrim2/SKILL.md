@@ -126,8 +126,9 @@ Event files, parsed into objects whose `.df` is a DataFrame with `ion`, `depth_A
 - Quick KP gives vacancy estimates; use the full cascade when displacement detail matters.
 - Results are SRIM-2013 Monte Carlo output, good to roughly 10 % for ranges. Do not quote
   more digits than the statistics support.
-- Each `.run()` overwrites SRIM's output files in its directory; run calculations one at a
-  time per SRIM directory, and copy outputs you want to keep.
+- Each `.run()` works in its own private copy of the SRIM directory (so runs can overlap);
+  read outputs from the returned results (`results.directory` is the folder) or pass
+  `output_dir=` to get them in a folder you choose.
 - On Linux a run starts wine under xvfb; a failure raises `srim.srim.SRIMProcessError`
   with SRIM's stderr in the message.
 

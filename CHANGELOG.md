@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`TRIM.run()` and `SR.run()` now run in an isolated directory by default.** Every run works in its own private copy of the SRIM install (hard links for the read-only files, so a copy adds well under 15 % of SRIM's size; real copies of what SRIM writes) under `<data dir>/runs` (or `work_dir=`); the installed SRIM directory is never written to, so any number of runs, scripts, scans or users can run at the same time. On Linux each run also gets its own clone of the wine prefix, so cleaning up after a failure only stops that run's wine processes. The returned `Results` points at the run directory (`results.directory`); pass `output_dir=` to get the output files and `run.yaml` in a folder of your choice (the run directory is then removed unless `keep=True`); `run_dir=` reuses a `srim.rundir.RunDir`. A failed run keeps its directory for debugging and names it in the error.
+  **Migration:** code that read outputs from the SRIM directory after `run()` (`TRIM.copy_output_files(srim_dir(), dest)`, `Results(srim_dir())`) must use the returned results instead: `TRIM.copy_output_files(results.directory, dest)` or `run(output_dir=dest)`. Passing `srim_directory=` explicitly keeps the old in-place behaviour, now under an exclusive file lock (a second run waits and prints a message after 5 s; `lock_timeout=` limits the wait).
+- `pysrim2 run` uses an isolated run directory too, so several can run at once.
+
+### Added
+
+- `srim.rundir.RunDir` (private working copy of SRIM, `reset()`, disk usage) and `Results.directory`.
+
 ### Fixed
 
 - `implant_summary` on an empty frame returns NaN values without emitting RuntimeWarnings.

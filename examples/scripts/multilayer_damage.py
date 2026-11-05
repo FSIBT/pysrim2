@@ -18,7 +18,6 @@ from pathlib import Path
 import pandas as pd
 
 from srim import TRIM, Ion, Layer, Target
-from srim.paths import srim_dir
 
 LAYERS = [
     Layer.from_formula("Au", density=19.3, width=500.0),  # 50 nm
@@ -46,8 +45,8 @@ def run(number_ions: int = 20, outdir="output") -> pd.DataFrame:
     profile["total"] = profile[vacancy_columns].sum(axis=1)
     profile.to_csv(outdir / "vacancy_profile.csv", index=False)
 
-    # SRIM writes inside its own folder; keep copies of what you need next to the script.
-    TRIM.copy_output_files(srim_dir(), outdir)
+    # Each run happens in its own folder (results.directory); keep copies of what you need.
+    TRIM.copy_output_files(results.directory, outdir)
     return profile
 
 

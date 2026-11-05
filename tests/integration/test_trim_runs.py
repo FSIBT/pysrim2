@@ -4,6 +4,7 @@ These are physics sanity checks, not exact numbers: SRIM is Monte Carlo.
 """
 
 import re
+from pathlib import Path
 
 import numpy as np
 
@@ -42,8 +43,6 @@ def test_ni_in_ni_quick_kp():
 
 
 def test_b_into_au_on_si():
-    from srim.paths import srim_dir
-
     ion = Ion("B", energy=20e3)
     au = Layer.from_formula("Au", density=19.3, width=1000.0)
     si = Layer.from_formula("Si", density=2.33, width=10000.0)
@@ -58,7 +57,7 @@ def test_b_into_au_on_si():
     ).run()
     assert results.range.depth.shape == (100,)
     assert results.range.ions.sum() > 0
-    mean = mean_depth_3d(srim_dir())
+    mean = mean_depth_3d(Path(results.directory))
     print(f"mean depth from RANGE_3D.txt: {mean:.1f} A")
     low, high = 0.7 * REFERENCE_MEAN_DEPTH_A, 1.3 * REFERENCE_MEAN_DEPTH_A
     assert low <= mean <= high

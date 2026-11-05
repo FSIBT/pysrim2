@@ -20,7 +20,6 @@ from pathlib import Path
 
 from srim import TRIM, Ion, Layer, Target
 from srim.analysis import implant_summary
-from srim.paths import srim_dir
 
 
 def peak_vacancy_depth(results) -> float:
@@ -53,7 +52,8 @@ def run(number_ions: int = 200, outdir=None) -> dict:
         outdir = Path(outdir)
         outdir.mkdir(parents=True, exist_ok=True)
         for name in ("RANGE_3D.txt", "RANGE.txt", "VACANCY.txt", "IONIZ.txt"):
-            for src in (srim_dir() / name, srim_dir() / "SRIM Outputs" / name):
+            run_dir = Path(results.directory)
+            for src in (run_dir / name, run_dir / "SRIM Outputs" / name):
                 if src.is_file():
                     shutil.copy(src, outdir / name)
                     break

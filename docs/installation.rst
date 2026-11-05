@@ -113,7 +113,8 @@ variables override the defaults:
    The private wine prefix (default ``<data directory>/wine``).
 
 ``TRIM().run()`` and ``SR().run()`` use this SRIM directory when you do not
-pass one.
+pass one. Runs happen in private copies of this directory
+(see :class:`srim.rundir.RunDir`); the installed directory is not written to.
 
 Installing SRIM by hand
 -----------------------

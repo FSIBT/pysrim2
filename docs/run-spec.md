@@ -165,7 +165,7 @@ provenance or host (see {doc}`export`).
 ```python
 trim = TRIM.from_yaml("run.yaml")  # or TRIM.from_spec(RunSpec / dict)
 trim.to_yaml("run.yaml")  # trim.to_spec() gives the RunSpec
-results = trim.run()  # writes run.yaml (with provenance) into the SRIM directory
+results = trim.run()  # writes run.yaml (with provenance) into the run directory
 results.to_parquet("out")  # the spec (not the provenance or host) goes into the metadata
 ```
 
