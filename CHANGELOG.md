@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `implant_summary` on an empty frame returns NaN values without emitting RuntimeWarnings.
+
 ## [0.8.0] - 2026-11-05
 
 All SRIM outputs as pandas DataFrames (incl. per-ion positions, trajectories, backscattered/transmitted/sputtered atoms and full cascades), editable `run.yaml` run specs with `pysrim2 run`, and export to Parquet/HDF5/CSV.

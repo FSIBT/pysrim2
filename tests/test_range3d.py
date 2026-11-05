@@ -155,3 +155,11 @@ def test_truncated_mantissa_last_line_does_not_warn(tmp_path, recwarn):
     (tmp_path / "RANGE_3D.txt").write_bytes(data[:-3] + b"-0.")
     assert len(Range3D(str(tmp_path)).df) == N_ROWS
     assert not [w for w in recwarn if "could not be parsed" in str(w.message)]
+
+
+def test_implant_summary_empty_frame_is_nan_without_warnings(recwarn):
+    df = pd.DataFrame({"ion": [], "depth_A": [], "y_A": [], "z_A": []})
+    s = implant_summary(df)
+    assert s["n_ions"] == 0
+    assert all(np.isnan(v) for k, v in s.items() if k != "n_ions")
+    assert not recwarn.list

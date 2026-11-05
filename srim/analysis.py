@@ -33,12 +33,26 @@ def implant_summary(df):
         - ``skewness``, ``kurtosis``: third and fourth standardized moments
           of ``depth_A`` (population form; kurtosis is 3 for a Gaussian)
     """
+    nan = float("nan")
+    if len(df) == 0:
+        return dict.fromkeys(
+            (
+                "mean_depth_A",
+                "straggle_depth_A",
+                "lateral_range_A",
+                "lateral_straggle_A",
+                "radial_range_A",
+                "radial_straggle_A",
+                "skewness",
+                "kurtosis",
+            ),
+            nan,
+        ) | {"n_ions": 0}
     depth = np.asarray(df["depth_A"], dtype=float)
     y = np.asarray(df["y_A"], dtype=float)
     z = np.asarray(df["z_A"], dtype=float)
     r = np.hypot(y, z)
     n = len(depth)
-    nan = float("nan")
     yz = np.concatenate([y, z])
     sd = depth.std()
     return {
