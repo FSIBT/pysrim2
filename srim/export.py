@@ -98,13 +98,24 @@ def _public(metadata):
     return metadata
 
 
+def _spec_json(spec):
+    """``spec`` as JSON types: ``None``, a mapping or a :class:`srim.spec.RunSpec`"""
+    if spec is None:
+        return None
+    if hasattr(spec, "to_dict") and not isinstance(spec, dict):
+        spec = spec.to_dict()
+    if not isinstance(spec, dict):
+        raise TypeError(f"spec must be a RunSpec or a dict, not {type(spec).__name__}")
+    return _jsonable(spec)
+
+
 def _document(name, metadata, spec, exported):
     return {
         "pysrim2_version": _version(),
         "exported_utc": exported,
         "table": name,
         "metadata": _jsonable(_public(metadata)),
-        "spec": _jsonable(spec),
+        "spec": _spec_json(spec),
     }
 
 
@@ -203,6 +214,7 @@ def collision_to_parquet(
 
 
 def results_to_parquet(results, directory, spec=None, include=None, chunk_rows=DEFAULT_CHUNK_ROWS):
+    spec = _spec_json(spec)  # fail early on a bad spec, before writing anything
     _require("pyarrow.parquet", "parquet")
     chunk_rows = _check_chunk_rows(chunk_rows)
     selected = _select(results, include)
@@ -255,6 +267,7 @@ def collision_to_hdf5_store(store, collision, name, chunk_rows, document):
 
 
 def results_to_hdf5(results, path, spec=None, include=None, chunk_rows=DEFAULT_CHUNK_ROWS):
+    spec = _spec_json(spec)  # fail early on a bad spec, before writing anything
     _require("tables", "hdf5")
     selected = _select(results, include)
     chunk_rows = _check_chunk_rows(chunk_rows)
@@ -291,6 +304,7 @@ def collision_to_csv(collision, path, chunk_rows=DEFAULT_CHUNK_ROWS):
 
 
 def results_to_csv(results, directory, spec=None, include=None, chunk_rows=DEFAULT_CHUNK_ROWS):
+    spec = _spec_json(spec)  # fail early on a bad spec, before writing anything
     chunk_rows = _check_chunk_rows(chunk_rows)
     selected = _select(results, include)
     os.makedirs(directory, exist_ok=True)
@@ -308,7 +322,7 @@ def results_to_csv(results, directory, spec=None, include=None, chunk_rows=DEFAU
     document = {
         "pysrim2_version": _version(),
         "exported_utc": exported,
-        "spec": _jsonable(spec),
+        "spec": _spec_json(spec),
         "tables": tables,
     }
     with open(os.path.join(directory, "metadata.yaml"), "w", encoding="utf-8") as f:

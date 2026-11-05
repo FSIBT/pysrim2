@@ -164,7 +164,7 @@ class Results:
         ----------
         directory : :obj:`str`
             created if needed
-        spec : :obj:`dict`, optional
+        spec : :class:`srim.spec.RunSpec` or :obj:`dict`, optional
             run specification, stored in every file's metadata (default: ``self.spec``,
             set by :meth:`srim.srim.TRIM.run`)
         include : iterable of :obj:`str`, optional

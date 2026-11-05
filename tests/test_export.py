@@ -309,3 +309,25 @@ def test_results_chunk_rows_is_passed_and_validated(cache, tmp_path):
     for method in ("to_parquet", "to_csv", "to_hdf5"):
         with pytest.raises(ValueError, match="chunk_rows"):
             getattr(results, method)(tmp_path / "bad", chunk_rows=0)
+
+
+def test_spec_accepts_runspec_and_dict_and_rejects_others(cache, tmp_path):
+    from srim import TRIM, Ion, Layer, Target
+
+    results = cache("1")
+    trim = TRIM(Target([Layer.from_formula("Si", 2.33, 1000.0)]), Ion("Ni", 1e6), seed=3)
+    runspec = trim.to_spec()
+    expected = json.loads(json.dumps(runspec.to_dict()))
+    results.to_parquet(tmp_path / "p", spec=runspec, include=["ioniz"])
+    import pyarrow.parquet as pq
+
+    meta = pq.read_schema(tmp_path / "p" / "ioniz.parquet").metadata[b"pysrim2"]
+    assert json.loads(meta)["spec"] == expected
+    results.to_csv(tmp_path / "c", spec=runspec, include=["ioniz"])
+    assert yaml.safe_load((tmp_path / "c" / "metadata.yaml").read_text())["spec"] == expected
+    results.to_csv(tmp_path / "d", spec=runspec.to_dict(), include=["ioniz"])
+    assert yaml.safe_load((tmp_path / "d" / "metadata.yaml").read_text())["spec"] == expected
+    for method, target in [("to_parquet", "p2"), ("to_hdf5", "x.h5"), ("to_csv", "c2")]:
+        with pytest.raises(TypeError, match="str"):
+            getattr(results, method)(tmp_path / target, spec="not a spec", include=["ioniz"])
+        assert not (tmp_path / target).exists()
