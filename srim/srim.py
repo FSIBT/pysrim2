@@ -11,6 +11,7 @@ import tempfile
 import warnings
 from datetime import UTC, datetime
 
+from ._lock import LOCK_NAME, FileLock
 from .core import Element, Ion, Layer, Target
 from .core.utils import (
     check_input,
@@ -24,9 +25,10 @@ from .core.utils import (
     is_zero_to_two,
 )
 from .input import AutoTRIM, SRInput, TRIMInput
-from .installer.wine import XVFB_ARGS, wine_env
+from .installer.wine import XVFB_ARGS, _kill_wineserver, wine_env
 from .output import Results, SRResults
 from .paths import srim_dir, wine_prefix
+from .rundir import RunDir
 from .spec import (
     ALWAYS_SETTINGS,
     SCHEMA_VERSION,
@@ -82,8 +84,12 @@ class SRIMProcessError(subprocess.CalledProcessError):
         return f"{text}\n{self.stderr}" if self.stderr else text
 
 
-def _run_srim(executable):
+def _run_srim(executable, prefix=None):
     """Run a SRIM executable and wait for it.
+
+    ``prefix`` is the run's private wine prefix (see :class:`srim.rundir.RunDir`); it
+    replaces pysrim2's shared prefix, and if the run fails only that prefix's
+    wineserver is stopped.
 
     Under ``xvfb-run`` the child's stderr is captured so xvfb's harmless
     "X connection to :N broken" and Mesa/EGL warning lines are dropped from
@@ -91,13 +97,23 @@ def _run_srim(executable):
     after the run (stderr is included in the error if SRIM fails). Without ``xvfb-run`` (Windows) the child is run unchanged.
     """
     command = _launch_command(executable)
+    env = _launch_env(prefix)
+    try:
+        _run_command(command, env)
+    except BaseException:
+        if prefix is not None:
+            _kill_wineserver(env)
+        raise
+
+
+def _run_command(command, env):
     if command[0] != "xvfb-run":
-        subprocess.check_call(command, env=_launch_env())
+        subprocess.check_call(command, env=env)
         return
     # Output goes to temp files, not pipes: wine's daemonised wineserver would
     # keep a pipe open and block us. It is shown only after the run ends, not live.
     with tempfile.TemporaryFile() as out_log, tempfile.TemporaryFile() as err_log:
-        done = subprocess.run(command, env=_launch_env(), stdout=out_log, stderr=err_log)
+        done = subprocess.run(command, env=env, stdout=out_log, stderr=err_log)
         out_log.seek(0)
         err_log.seek(0)
         out_text = out_log.read().decode(errors="replace")
@@ -116,15 +132,16 @@ def _drop_noise(text):
     return "".join(line for line in text.splitlines(keepends=True) if not XVFB_NOISE.search(line))
 
 
-def _launch_env():
+def _launch_env(prefix=None):
     """Return the environment for the SRIM child process.
 
-    With ``wine`` on the PATH this points wine at pysrim2's private prefix
-    (never the user's ``$WINEPREFIX`` or ``~/.wine``), in the child's
-    environment only. Otherwise it is a plain copy of ``os.environ``.
+    With ``wine`` on the PATH this points wine at ``prefix`` (a run's private
+    clone) or else at pysrim2's private prefix (never the user's ``$WINEPREFIX``
+    or ``~/.wine``), in the child's environment only. Otherwise it is a plain
+    copy of ``os.environ``.
     """
     if shutil.which("wine"):
-        env = wine_env(wine_prefix())
+        env = wine_env(prefix if prefix is not None else wine_prefix())
         env.setdefault("EGL_LOG_LEVEL", "fatal")
         env.setdefault("LIBGL_DEBUG", "quiet")
         return env
@@ -267,6 +284,83 @@ def _require_output(directory, name):
         raise SRIMRunError(
             f"SRIM finished but did not write {name} in {directory}; the calculation probably crashed"
         )
+
+
+def _copy_outputs(src_directory, dest_directory, names, subdirectory=None):
+    """Copy the output files ``names`` (from ``src_directory`` or its ``subdirectory``) to
+    ``dest_directory``, flat; files of an earlier run there are removed first."""
+    os.makedirs(dest_directory, exist_ok=True)
+    _remove_stale(dest_directory, names, subdirectory)
+    for name in names:
+        for candidate in (
+            os.path.join(src_directory, name),
+            os.path.join(src_directory, subdirectory, name) if subdirectory else None,
+        ):
+            if candidate and os.path.isfile(candidate):
+                shutil.copy2(candidate, os.path.join(dest_directory, name))
+                break
+
+
+def _managed_run(
+    execute,
+    collect,
+    subdirectory,
+    srim_directory,
+    work_dir,
+    output_dir,
+    keep,
+    lock_timeout,
+    run_dir,
+    finish,
+):
+    """Run ``execute(srim_root, wine_prefix)`` isolated (default) or in place (locked).
+
+    Returns ``finish(value, directory)``: ``value`` is what ``execute`` returned and
+    ``directory`` is where the results are to be read from (``subdirectory`` of the run
+    directory, or ``output_dir`` after ``collect(that_directory, output_dir)``). In an
+    in-place run ``finish`` is called while the lock is still held.
+    """
+    if output_dir is not None:
+        output_dir = os.path.abspath(output_dir)
+
+    def locate(root):
+        return os.path.join(root, subdirectory) if subdirectory else root
+
+    if srim_directory is not None:
+        if work_dir is not None or run_dir is not None:
+            raise ValueError("work_dir= and run_dir= cannot be combined with srim_directory=")
+        root = os.path.abspath(srim_directory)
+        # Legacy in-place run: take turns with other runs in this directory.
+        with FileLock(os.path.join(root, LOCK_NAME), timeout=lock_timeout):
+            value = execute(root, None)
+            where = locate(root)
+            if output_dir is not None:
+                collect(where, output_dir)
+                where = output_dir
+            return finish(value, where)
+
+    if run_dir is not None and work_dir is not None:
+        raise ValueError("work_dir= cannot be combined with run_dir=")
+    owned = run_dir is None
+    rd = RunDir.create(work_dir, source=srim_dir()) if owned else run_dir
+    try:
+        if not owned:
+            rd.reset()
+        value = execute(str(rd.path), rd.wine_prefix)
+        where = locate(str(rd.path))
+        if output_dir is not None:
+            collect(where, output_dir)
+            where = output_dir
+    except BaseException as exc:
+        rd.stop_wine()  # only this run's wineserver
+        exc.add_note(f"the run directory was kept for debugging: {rd.path}")
+        raise
+    if owned:
+        if output_dir is not None and not keep:
+            rd.cleanup()
+        else:
+            rd.release_wine()
+    return finish(value, where)
 
 
 class TRIM:
@@ -460,28 +554,63 @@ class TRIM:
             ):
                 shutil.move(os.path.join(src_directory, "SRIM Outputs", known_file), dest_directory)
 
-    def run(self, srim_directory=None, write_spec=True):
+    def run(
+        self,
+        srim_directory=None,
+        write_spec=True,
+        *,
+        work_dir=None,
+        output_dir=None,
+        keep=False,
+        lock_timeout=None,
+        run_dir=None,
+    ):
         """Run configured srim calculation
 
-        This method:
-         - writes the input file to ``<srim_directory>/TRIM.IN``
-         - launches ``<srim_directory>/TRIM.exe``. Uses ``wine`` if available (needed for linux and osx)
-         - after a successful run writes ``<srim_directory>/run.yaml`` (see below)
+        By default the calculation runs in its own **private run directory**, a
+        lightweight copy of the installed SRIM (see :class:`srim.rundir.RunDir`), so
+        any number of runs can happen at the same time and the installed SRIM
+        directory is never written. This method:
+         - writes the input file to ``<run directory>/TRIM.IN``
+         - launches ``<run directory>/TRIM.exe``. Uses ``wine`` if available (needed for linux and osx),
+           in a private clone of the wine prefix
+         - after a successful run writes ``<run directory>/run.yaml`` (see below)
+
+        The returned :class:`~srim.output.Results` reads from the run directory, which
+        is kept (below ``work_dir``, default ``<pysrim2 data dir>/runs``); pass
+        ``output_dir`` to get the outputs in a folder of your choice instead, in which
+        case the run directory is removed. A run that fails keeps its run directory
+        for debugging; the error mentions its path.
 
         Parameters
         ----------
         srim_directory : :obj:`str`, optional
-            path to srim directory. ``TRIM.exe`` should be located in
-            this directory. Default is ``str(srim_dir())``, resolved when
-            this method is called: ``$PYSRIM2_SRIM_DIR``, then pysrim2's
-            data directory, then ``/tmp/srim`` if it holds an install.
+            Run **in place** in this SRIM directory (the pre-0.9 behaviour: outputs are
+            written into it) instead of in a private copy. Concurrent in-place runs on
+            the same directory take turns (exclusive file lock). Default ``None``: run
+            isolated, copying ``srim_dir()`` (resolved when this method is called:
+            ``$PYSRIM2_SRIM_DIR``, then pysrim2's data directory, then ``/tmp/srim``
+            if it holds an install).
         write_spec : :obj:`bool`, optional
-            write ``run.yaml`` next to the outputs (in the SRIM directory, where the
+            write ``run.yaml`` next to the outputs (in the run directory, where the
             results are read from; :meth:`copy_output_files` copies it along with them).
             It holds the :class:`~srim.spec.RunSpec` (including the seed) and the
             provenance: pysrim2 version, SRIM SHA-256 (from the ``.pysrim2-installed``
             marker, if present), platform, backend (``native`` or ``wine``), start and end
             time (UTC) and host name. Default True.
+        work_dir : :obj:`str`, optional
+            folder to create the run directory in (default ``<pysrim2 data dir>/runs``).
+        output_dir : :obj:`str`, optional
+            copy the output files (and ``run.yaml``) here and read the results from
+            here; the run directory is then removed unless ``keep``.
+        keep : :obj:`bool`, optional
+            keep the run directory even when ``output_dir`` is given. Default False.
+        lock_timeout : :obj:`float`, optional
+            in-place runs only: seconds to wait for the directory lock before raising
+            :class:`TimeoutError` (default: wait; a message appears after 5 s).
+        run_dir : :class:`srim.rundir.RunDir`, optional
+            reuse this run directory (it is reset first, and left in place afterwards).
+            For workers that run many calculations.
 
         Returns
         -------
@@ -489,8 +618,33 @@ class TRIM:
             its ``spec`` attribute is the run spec as a dict (without provenance, so
             exports carry no host name), used by ``Results.to_parquet`` etc.
         """
-        if srim_directory is None:
-            srim_directory = str(srim_dir())
+
+        def execute(directory, prefix):
+            return self._execute(directory, prefix, write_spec)
+
+        def collect(where, destination):
+            _copy_outputs(where, destination, TRIM_OUTPUT_FILES + ("run.yaml",), "SRIM Outputs")
+
+        def finish(spec, where):
+            results = Results(where)
+            results.spec = spec.to_dict()
+            return results
+
+        return _managed_run(
+            execute,
+            collect,
+            None,
+            srim_directory,
+            work_dir,
+            output_dir,
+            keep,
+            lock_timeout,
+            run_dir,
+            finish,
+        )
+
+    def _execute(self, srim_directory, prefix, write_spec):
+        """Write the inputs, run ``TRIM.exe`` in ``srim_directory`` and return the spec."""
         srim_directory = os.path.abspath(srim_directory)
         current_directory = os.getcwd()
         try:
@@ -499,7 +653,7 @@ class TRIM:
             self._write_input_files()
             started = datetime.now(UTC)
             # Make sure compatible with Windows, OSX, and Linux
-            _run_srim("TRIM.exe")
+            _run_srim("TRIM.exe", prefix)
             finished = datetime.now(UTC)
             _require_output(srim_directory, "RANGE.txt")
             spec = self.to_spec()
@@ -511,10 +665,7 @@ class TRIM:
                     )
                 except Exception as exc:  # the run itself succeeded; keep its results
                     warnings.warn(f"could not write run.yaml: {exc}", RuntimeWarning, stacklevel=2)
-            os.chdir(current_directory)
-            results = Results(srim_directory)
-            results.spec = spec.to_dict()
-            return results
+            return spec
         finally:
             os.chdir(current_directory)
 
@@ -620,33 +771,61 @@ class SR:
         """Write necissary SR input file for calculation"""
         SRInput(self).write()
 
-    def run(self, srim_directory=None):
+    def run(
+        self,
+        srim_directory=None,
+        *,
+        work_dir=None,
+        output_dir=None,
+        keep=False,
+        lock_timeout=None,
+        run_dir=None,
+    ):
         """Run configured srim calculation
 
-        This method:
-         - writes the input file to ``<srim_directory/SR Module/TRIM.IN``
-         - launches ``<srim_directory>/SR Module/SRModule.exe``. Uses ``wine`` if available (needed for linux and osx)
+        Like :meth:`TRIM.run`, this runs in a private run directory by default (the
+        installed SRIM is never written); ``srim_directory=`` runs in place under a
+        file lock. This method:
+         - writes the input file to ``<run directory>/SR Module/TRIM.IN``
+         - launches ``<run directory>/SR Module/SRModule.exe``. Uses ``wine`` if available (needed for linux and osx)
 
         Parameters
         ----------
         srim_directory : :obj:`str`, optional
-            path to srim directory. ``TRIM.exe`` should be located in
-            this directory. Default is ``str(srim_dir())``, resolved when
-            this method is called: ``$PYSRIM2_SRIM_DIR``, then pysrim2's
-            data directory, then ``/tmp/srim`` if it holds an install.
+            run in place in this SRIM directory (``TRIM.exe`` should be located in
+            it), the pre-0.9 behaviour, under an exclusive file lock. Default
+            ``None``: run in a private copy of ``srim_dir()`` (resolved when this
+            method is called: ``$PYSRIM2_SRIM_DIR``, then pysrim2's data directory,
+            then ``/tmp/srim`` if it holds an install).
+        work_dir, output_dir, keep, lock_timeout, run_dir :
+            see :meth:`TRIM.run`; ``output_dir`` receives the SR output file.
         """
-        if srim_directory is None:
-            srim_directory = str(srim_dir())
-        current_directory = os.getcwd()
-        sr_directory = os.path.abspath(os.path.join(srim_directory, "SR Module"))
-        try:
-            os.chdir(sr_directory)
-            _remove_stale(sr_directory, [self.settings.output_filename])
-            self._write_input_file()
-            # Make sure compatible with Windows, OSX, and Linux
-            _run_srim("SRModule.exe")
-            _require_output(sr_directory, self.settings.output_filename)
 
-            return SRResults(sr_directory)
-        finally:
-            os.chdir(current_directory)
+        def execute(directory, prefix):
+            sr_directory = os.path.abspath(os.path.join(directory, "SR Module"))
+            current_directory = os.getcwd()
+            try:
+                os.chdir(sr_directory)
+                _remove_stale(sr_directory, [self.settings.output_filename])
+                self._write_input_file()
+                # Make sure compatible with Windows, OSX, and Linux
+                _run_srim("SRModule.exe", prefix)
+                _require_output(sr_directory, self.settings.output_filename)
+            finally:
+                os.chdir(current_directory)
+
+        def collect(where, destination):
+            _copy_outputs(where, destination, (self.settings.output_filename,))
+
+        return _managed_run(
+            execute,
+            collect,
+            "SR Module",
+            srim_directory,
+            work_dir,
+            output_dir,
+            keep,
+            lock_timeout,
+            run_dir,
+            lambda _value, where: SRResults(where),
+        )

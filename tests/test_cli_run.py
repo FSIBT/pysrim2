@@ -39,12 +39,14 @@ def srim_install(tmp_path, monkeypatch):
     directory.mkdir()
     (directory / ".pysrim2-installed").write_text("deadbeef")
     monkeypatch.setenv("PYSRIM2_SRIM_DIR", str(directory))
+    monkeypatch.setenv("PYSRIM2_HOME", str(tmp_path / "home"))
     monkeypatch.setattr(shutil, "which", lambda name: None)
     seen = {}
 
     def fake_call(cmd, **kw):
-        seen["trim_in"] = (directory / "TRIM.IN").read_bytes()
-        shutil.copy(TEST_FILES / "1" / "RANGE.txt", directory / "RANGE.txt")
+        # the run happens in a private copy of the install (the current directory)
+        seen["trim_in"] = Path("TRIM.IN").read_bytes()
+        shutil.copy(TEST_FILES / "1" / "RANGE.txt", "RANGE.txt")
 
     monkeypatch.setattr(subprocess, "check_call", fake_call)
     monkeypatch.setattr("srim.srim.Results", lambda path: type("R", (), {})())

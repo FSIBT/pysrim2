@@ -199,11 +199,9 @@ def _run(args) -> int:
         return EXIT_BAD_INPUT
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     output = Path(args.output or f"srim-output-{stamp}")
-    directory = srim_dir()
     try:
-        TRIM.from_spec(spec).run(srim_directory=str(directory))
-        output.mkdir(parents=True, exist_ok=True)
-        TRIM.copy_output_files(str(directory), str(output))
+        # an isolated run directory, so several `pysrim2 run` can be active at once
+        TRIM.from_spec(spec).run(output_dir=output)
     except KeyboardInterrupt:
         print("cancelled", file=sys.stderr)
         return EXIT_INTERRUPTED

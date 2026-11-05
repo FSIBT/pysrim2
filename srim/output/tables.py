@@ -69,6 +69,8 @@ class Results:
 
     def __init__(self, directory):
         """Retrives all the calculation files in a given directory"""
+        #: folder the results were read from (for :meth:`srim.srim.TRIM.run`, its run directory)
+        self.directory = os.fspath(directory)
         self.ioniz = Ioniz(directory)
         self.vacancy = Vacancy(directory)
 

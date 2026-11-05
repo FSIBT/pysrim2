@@ -1,0 +1,455 @@
+"""Isolated run directories, file locks and per-run wine prefixes (SRIM itself is mocked)."""
+
+import multiprocessing
+import os
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+import pytest
+
+import srim.rundir as rundir_module
+from srim import SR, TRIM, Ion, Layer, Target
+from srim._lock import LOCK_NAME, FileLock
+from srim.rundir import RunDir, clone_wine_prefix, disk_usage
+from srim.srim import SRIMRunError
+
+TEST_FILES = Path(__file__).parent.parent / "test_files"
+
+
+def make_srim(root):
+    """A small stand-in for the SRIM install with the real layout."""
+    root.mkdir()
+    big = b"x" * 200_000
+    (root / "TRIM.exe").write_bytes(big * 5)
+    (root / "SRIM.exe").write_bytes(big * 3)
+    (root / "TRIM.IN").write_text("old input")
+    (root / "TRIMAUTO").write_text("1\n")
+    (root / "TRIM.dat").write_text("d" * 7000)
+    (root / "RANGE.txt").write_text("stale result")  # a legacy in-place run left this
+    (root / ".pysrim2-installed").write_text("abc123\n")
+    (root / "HELP.pdf").write_bytes(big * 4)
+    (root / "Data").mkdir()
+    (root / "Data" / "POTCOEF03.DAT").write_bytes(big * 3)
+    (root / "Data" / "TRIM.cfg").write_text("cfg" * 300)
+    (root / "Data" / "tiny.ico").write_bytes(b"i" * 700)
+    (root / "SR Module").mkdir()
+    (root / "SR Module" / "SRModule.exe").write_bytes(big)
+    (root / "SR Module" / "SCOEF03.dat").write_bytes(big)
+    (root / "SR Module" / "SR.IN").write_text("sr in")
+    (root / "SRIM Outputs").mkdir()
+    (root / "SRIM Outputs" / "SRIM Outputs.rtf").write_text("rtf")
+    (root / "SRIM Outputs" / "RANGE_3D.txt").write_text("stale")
+    (root / "SRIM Restore").mkdir()
+    (root / "SRIM Restore" / "SRIM Restore.rtf").write_text("rtf")
+    return root
+
+
+def snapshot(root):
+    """Names, sizes, mtimes (also of directories) and inodes below ``root``."""
+    out = {}
+    for dirpath, dirs, files in os.walk(root):
+        for name in dirs + files:
+            path = os.path.join(dirpath, name)
+            st = os.lstat(path)
+            out[os.path.relpath(path, root)] = (st.st_size, st.st_mtime_ns, st.st_ino)
+    return out
+
+
+@pytest.fixture
+def installed(tmp_path, monkeypatch):
+    monkeypatch.setenv("PYSRIM2_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("PYSRIM2_SRIM_DIR", str(make_srim(tmp_path / "srim")))
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    return tmp_path / "srim"
+
+
+def same_inode(a, b):
+    return os.path.samestat(os.stat(a), os.stat(b))
+
+
+def test_layout_links_read_only_files_and_copies_written_ones(installed, tmp_path):
+    with RunDir.create(tmp_path / "work", wine=False) as rd:
+        for rel in ("TRIM.exe", "SRIM.exe", "HELP.pdf", "Data/POTCOEF03.DAT"):
+            assert same_inode(installed / rel, rd.path / rel), rel
+        for rel in (
+            "TRIM.IN",
+            "TRIMAUTO",
+            "TRIM.dat",
+            "Data/TRIM.cfg",
+            "Data/tiny.ico",
+            "SR Module/SRModule.exe",
+            "SR Module/SCOEF03.dat",
+            "SR Module/SR.IN",
+            ".pysrim2-installed",
+        ):
+            assert (rd.path / rel).is_file()
+            assert not same_inode(installed / rel, rd.path / rel), rel
+        # stale results of the installed directory are not carried over
+        assert not (rd.path / "RANGE.txt").exists()
+        assert not (rd.path / "SRIM Outputs" / "RANGE_3D.txt").exists()
+        assert (rd.path / "SRIM Outputs" / "SRIM Outputs.rtf").is_file()
+        assert rd.wine_prefix is None
+        assert rd.root.parent == tmp_path / "work"
+    assert not rd.root.exists()
+
+
+def test_writing_a_run_directory_does_not_touch_the_install(installed, tmp_path):
+    before = snapshot(installed)
+    with RunDir.create(tmp_path / "work", wine=False) as rd:
+        (rd.path / "TRIM.IN").write_text("new")
+        (rd.path / "RANGE.txt").write_text("new result")
+        (rd.path / "SR Module" / "SR.IN").write_text("new")
+    assert snapshot(installed) == before
+
+
+def test_disk_usage_counts_hard_links_once(installed, tmp_path):
+    total = sum(p.stat().st_size for p in installed.rglob("*") if p.is_file())
+    with RunDir.create(tmp_path / "work", wine=False) as rd:
+        used = rd.disk_usage()
+        assert used == disk_usage(rd.root)
+        print(f"install {total} bytes, run directory adds {used} bytes")
+        assert used < total * 0.15
+        (rd.path / "RANGE.txt").write_bytes(b"r" * 1000)
+        assert rd.disk_usage() == used + 1000
+
+
+def test_default_base_is_data_dir_runs(installed, tmp_path):
+    with RunDir.create(wine=False) as rd:
+        assert rd.root.parent == tmp_path / "home" / "runs"
+
+
+def test_keep_and_failure_keep_the_directory(installed, tmp_path):
+    with RunDir.create(tmp_path / "work", keep=True, wine=False) as rd:
+        pass
+    assert rd.path.is_dir()
+    with (
+        pytest.raises(RuntimeError) as excinfo,
+        RunDir.create(tmp_path / "work", wine=False) as bad,
+    ):
+        raise RuntimeError("boom")
+    assert bad.path.is_dir()
+    assert str(bad.path) in "\n".join(excinfo.value.__notes__)
+    rd.cleanup()
+    assert not rd.root.exists()
+
+
+def test_create_failure_leaves_nothing_behind(tmp_path, monkeypatch):
+    with pytest.raises(FileNotFoundError, match="nowhere"):
+        RunDir.create(tmp_path / "work", source=tmp_path / "nowhere", wine=False)
+    assert not (tmp_path / "work").exists() or not list((tmp_path / "work").iterdir())
+
+
+def test_reset_restores_inputs_and_removes_outputs(installed, tmp_path):
+    with RunDir.create(tmp_path / "work", wine=False) as rd:
+        (rd.path / "TRIM.IN").write_text("changed")
+        (rd.path / "RANGE.txt").write_text("result")
+        (rd.path / "SRIM Outputs" / "VACANCY.txt").write_text("result")
+        (rd.path / "newdir").mkdir()
+        (rd.path / "newdir" / "x").write_text("x")
+        os.remove(rd.path / "TRIM.exe")  # a program that replaces a linked file
+        (rd.path / "TRIM.exe").write_text("replaced")
+        rd.reset()
+        assert (rd.path / "TRIM.IN").read_text() == "old input"
+        assert same_inode(installed / "TRIM.exe", rd.path / "TRIM.exe")
+        assert not (rd.path / "RANGE.txt").exists()
+        assert not (rd.path / "SRIM Outputs" / "VACANCY.txt").exists()
+        assert not (rd.path / "newdir").exists()
+
+
+def test_without_hard_links_everything_is_copied(installed, tmp_path, monkeypatch):
+    def no_link(src, dst, *a, **kw):
+        raise OSError(18, "Invalid cross-device link")
+
+    monkeypatch.setattr(rundir_module, "_warned_full_copy", False)
+    monkeypatch.setattr(os, "link", no_link)
+    with pytest.warns(RuntimeWarning, match="full copy"):
+        rd = RunDir.create(tmp_path / "work", wine=False)
+    with rd:
+        assert not same_inode(installed / "TRIM.exe", rd.path / "TRIM.exe")
+        assert (rd.path / "TRIM.exe").read_bytes() == (installed / "TRIM.exe").read_bytes()
+        assert rd.disk_usage() > 1_000_000
+        rd.reset()  # copies are restored even though linking is impossible
+        assert not (rd.path / "RANGE.txt").exists()
+    # the warning is given once only
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        RunDir.create(tmp_path / "work", wine=False).cleanup()
+
+
+def test_missing_install_raises_with_the_path(tmp_path):
+    with pytest.raises(FileNotFoundError) as excinfo:
+        RunDir.create(tmp_path / "work", source=tmp_path / "missing", wine=False)
+    assert str(tmp_path / "missing") in excinfo.value.filename
+
+
+# TRIM.run / SR.run
+
+
+def quick_trim():
+    layer = Layer.from_formula("Ni", 8.9, 1000.0)
+    return TRIM(Target([layer]), Ion("Ni", energy=1.0e6), number_ions=1, random_seed=7)
+
+
+def fake_srim_program(monkeypatch, seen=None):
+    """check_call replacement: 'runs' TRIM/SR in the current directory."""
+
+    def fake(cmd, **kw):
+        if seen is not None:
+            seen.append((os.getcwd(), kw.get("env")))
+        if "TRIM.exe" in cmd[-1]:
+            for name in (
+                "RANGE.txt",
+                "IONIZ.txt",
+                "VACANCY.txt",
+                "NOVAC.txt",
+                "E2RECOIL.txt",
+                "PHONON.txt",
+            ):
+                shutil.copy(TEST_FILES / "1" / name, name)
+            os.makedirs("SRIM Outputs", exist_ok=True)
+            Path("SRIM Outputs", "LATERAL.txt").write_text("v")
+        else:
+            shutil.copy(TEST_FILES / "SRIM" / "SR_OUTPUT.txt", "SR_OUTPUT.txt")
+
+    monkeypatch.setattr(subprocess, "check_call", fake)
+
+
+def test_trim_run_is_isolated_by_default(installed, tmp_path, monkeypatch):
+    cwds = []
+    fake_srim_program(monkeypatch, cwds)
+    before = snapshot(installed)
+    results = quick_trim().run(work_dir=tmp_path / "work")
+    assert snapshot(installed) == before
+    run_path = Path(cwds[0][0])
+    assert run_path.parent.parent == (tmp_path / "work").resolve()
+    assert results.range.ions.sum() > 0
+    assert (run_path / "run.yaml").is_file()
+    assert (run_path / "TRIM.IN").read_text() != "old input"
+    # a second run gets its own directory
+    quick_trim().run(work_dir=tmp_path / "work")
+    assert cwds[0][0] != cwds[1][0]
+
+
+def test_trim_run_output_dir_collects_outputs_and_removes_run_dir(installed, tmp_path, monkeypatch):
+    fake_srim_program(monkeypatch)
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "EXYZ.txt").write_text("from an earlier run")
+    results = quick_trim().run(work_dir=tmp_path / "work", output_dir=out)
+    assert (out / "RANGE.txt").is_file() and (out / "run.yaml").is_file()
+    assert (out / "LATERAL.txt").is_file()  # copied from SRIM Outputs
+    assert not (out / "EXYZ.txt").exists()
+    assert results.range.ions.sum() > 0
+    assert list((tmp_path / "work").iterdir()) == []
+    quick_trim().run(work_dir=tmp_path / "work", output_dir=out, keep=True)
+    assert len(list((tmp_path / "work").iterdir())) == 1
+
+
+def test_failed_run_keeps_its_directory_and_names_it(installed, tmp_path, monkeypatch):
+    monkeypatch.setattr(subprocess, "check_call", lambda cmd, **kw: None)  # writes nothing
+    with pytest.raises(SRIMRunError) as excinfo:
+        quick_trim().run(work_dir=tmp_path / "work")
+    (kept,) = (tmp_path / "work").iterdir()
+    assert str(kept / "srim") in "\n".join(excinfo.value.__notes__)
+    assert (kept / "srim" / "TRIM.exe").is_file()
+
+
+def test_run_dir_can_be_reused(installed, tmp_path, monkeypatch):
+    fake_srim_program(monkeypatch)
+    with RunDir.create(tmp_path / "work", wine=False) as rd:
+        quick_trim().run(run_dir=rd)
+        assert (rd.path / "RANGE.txt").is_file()
+        quick_trim().run(run_dir=rd)
+        assert (rd.path / "RANGE.txt").is_file()
+    assert not rd.root.exists()
+
+
+def test_sr_run_is_isolated_and_supports_output_dir(installed, tmp_path, monkeypatch):
+    fake_srim_program(monkeypatch)
+    before = snapshot(installed)
+    layer = Layer.from_formula("Si", 2.33, 1000.0)
+    sr = SR(layer, Ion("He", energy=1.0e6))
+    results = sr.run(work_dir=tmp_path / "work")
+    assert snapshot(installed) == before
+    assert results.ion
+    out = tmp_path / "out"
+    sr.run(work_dir=tmp_path / "work2", output_dir=out)
+    assert (out / "SR_OUTPUT.txt").is_file()
+
+
+def test_in_place_run_writes_to_the_given_directory(installed, monkeypatch):
+    fake_srim_program(monkeypatch)
+    quick_trim().run(srim_directory=str(installed))
+    assert (installed / "RANGE.txt").read_text() != "stale result"
+    assert (installed / LOCK_NAME).is_file()
+
+
+def test_work_dir_with_srim_directory_is_an_error(installed, tmp_path):
+    with pytest.raises(ValueError, match="srim_directory"):
+        quick_trim().run(srim_directory=str(installed), work_dir=tmp_path)
+
+
+# locks
+
+
+def _hold(path, seconds, ready):
+    with FileLock(path):
+        ready.set()
+        time.sleep(seconds)
+
+
+@pytest.fixture
+def mp():
+    return multiprocessing.get_context("spawn")
+
+
+def test_lock_contention_between_processes(tmp_path, mp, capsys):
+    lock = tmp_path / "x.lock"
+    ready = mp.Event()
+    holder = mp.Process(target=_hold, args=(str(lock), 1.0, ready))
+    holder.start()
+    try:
+        assert ready.wait(30)
+        with pytest.raises(TimeoutError, match="another pysrim2 run"):
+            FileLock(lock, timeout=0.2).acquire()
+        start = time.monotonic()
+        with FileLock(lock, message_after=0.2):
+            assert time.monotonic() - start > 0.3  # had to wait for the holder
+        assert "waiting for another run" in capsys.readouterr().err
+    finally:
+        holder.join(30)
+
+
+def test_lock_is_released_when_the_holder_dies(tmp_path, mp):
+    lock = tmp_path / "x.lock"
+    ready = mp.Event()
+    holder = mp.Process(target=_hold, args=(str(lock), 60, ready))
+    holder.start()
+    assert ready.wait(30)
+    holder.kill()
+    holder.join(30)
+    with FileLock(lock, timeout=5):
+        pass
+
+
+def test_in_place_run_waits_for_the_lock(installed, mp, monkeypatch):
+    fake_srim_program(monkeypatch)
+    ready = mp.Event()
+    holder = mp.Process(target=_hold, args=(str(installed / LOCK_NAME), 3, ready))
+    holder.start()
+    try:
+        assert ready.wait(30)
+        with pytest.raises(TimeoutError):
+            quick_trim().run(srim_directory=str(installed), lock_timeout=0.3)
+        # default-mode runs do not need the lock
+        quick_trim().run()
+    finally:
+        holder.kill()
+        holder.join(30)
+
+
+# wine prefixes
+
+
+def make_prefix(root):
+    root.mkdir()
+    (root / ".pysrim2-vb5").write_text("1\n")
+    for name in ("system.reg", "user.reg", "userdef.reg"):
+        (root / name).write_text("REGEDIT\n" * 100)
+    (root / "wineserver").write_text("lock")
+    (root / "dosdevices").mkdir()
+    os.symlink("../drive_c", root / "dosdevices" / "c:")
+    sys32 = root / "drive_c" / "windows" / "system32"
+    sys32.mkdir(parents=True)
+    (sys32 / "kernel32.dll").write_bytes(b"k" * 5000)
+    (sys32 / "msvbvm50.dll").write_bytes(b"m" * 5000)
+    (sys32 / "comcat.dll").write_bytes(b"c" * 5000)
+    (root / "drive_c" / "windows" / "win.ini").write_text("[x]")
+    users = root / "drive_c" / "users" / "me"
+    users.mkdir(parents=True)
+    (users / "NTUSER.DAT").write_bytes(b"u" * 5000)
+    return root
+
+
+def test_clone_wine_prefix_links_binaries_and_copies_state(tmp_path):
+    src = make_prefix(tmp_path / "wine")
+    clone = clone_wine_prefix(src, tmp_path / "clone")
+    for rel in ("drive_c/windows/system32/kernel32.dll", "drive_c/windows/system32/msvbvm50.dll"):
+        assert same_inode(src / rel, clone / rel)
+    for rel in (
+        "system.reg",
+        "user.reg",
+        "userdef.reg",
+        "drive_c/windows/win.ini",
+        "drive_c/users/me/NTUSER.DAT",
+        ".pysrim2-vb5",
+    ):
+        assert (clone / rel).is_file()
+        assert not same_inode(src / rel, clone / rel), rel
+    assert os.readlink(clone / "dosdevices" / "c:") == "../drive_c"
+    assert not (clone / "wineserver").exists()
+    assert disk_usage(clone) < 20_000
+    # writing in the clone's registry leaves the original alone
+    (clone / "user.reg").write_text("changed")
+    assert (src / "user.reg").read_text().startswith("REGEDIT")
+
+
+def test_clone_without_links_copies(tmp_path, monkeypatch):
+    src = make_prefix(tmp_path / "wine")
+    monkeypatch.setattr(rundir_module, "_warned_full_copy", False)
+    monkeypatch.setattr(os, "link", lambda *a, **k: (_ for _ in ()).throw(OSError(1, "no")))
+    with pytest.warns(RuntimeWarning, match="wine prefix"):
+        clone = clone_wine_prefix(src, tmp_path / "clone")
+    assert (clone / "drive_c/windows/system32/kernel32.dll").read_bytes() == b"k" * 5000
+
+
+def test_run_dir_gets_a_prefix_and_stops_only_its_wineserver(installed, tmp_path, monkeypatch):
+    from srim.installer import wine as wine_module
+
+    monkeypatch.setenv("PYSRIM2_WINEPREFIX", str(make_prefix(tmp_path / "private")))
+    monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/wine" if name == "wine" else None)
+    monkeypatch.setattr(rundir_module.sys, "platform", "linux")
+    killed = []
+    monkeypatch.setattr(wine_module, "_kill_wineserver", lambda env: killed.append(env))
+    rd = RunDir.create(tmp_path / "work")
+    assert rd.wine_prefix == rd.root / "wine" and (rd.wine_prefix / "system.reg").is_file()
+    rd.cleanup()
+    assert [e["WINEPREFIX"] for e in killed] == [str(rd.root / "wine")]
+    assert not rd.root.exists()
+
+
+def test_launch_env_and_failure_cleanup_use_the_run_prefix(tmp_path, monkeypatch):
+    from srim import srim as srim_module
+
+    monkeypatch.setenv("PYSRIM2_WINEPREFIX", str(tmp_path / "shared"))
+    monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/wine" if name == "wine" else None)
+    assert srim_module._launch_env(tmp_path / "mine")["WINEPREFIX"] == str(tmp_path / "mine")
+    assert srim_module._launch_env()["WINEPREFIX"] == str(tmp_path / "shared")
+
+    killed = []
+    monkeypatch.setattr(srim_module, "_kill_wineserver", lambda env: killed.append(env))
+
+    def fail(cmd, **kw):
+        raise subprocess.CalledProcessError(1, cmd)
+
+    monkeypatch.setattr(subprocess, "check_call", fail)
+    monkeypatch.setattr(srim_module, "_launch_command", lambda exe: ["wine", exe])
+    with pytest.raises(subprocess.CalledProcessError):
+        srim_module._run_srim("TRIM.exe", tmp_path / "mine")
+    assert [e["WINEPREFIX"] for e in killed] == [str(tmp_path / "mine")]
+    # the shared prefix is never killed
+    with pytest.raises(subprocess.CalledProcessError):
+        srim_module._run_srim("TRIM.exe")
+    assert len(killed) == 1
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX file modes")
+def test_copied_files_are_writable_even_if_the_install_is_read_only(installed, tmp_path):
+    os.chmod(installed / "TRIM.IN", 0o444)
+    with RunDir.create(tmp_path / "work", wine=False) as rd:
+        (rd.path / "TRIM.IN").write_text("new")
