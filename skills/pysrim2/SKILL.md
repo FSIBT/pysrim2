@@ -92,9 +92,10 @@ if `RANGE_3D.txt` was not written. `from srim.analysis import implant_summary` g
 `n_ions` and SRIM's own definitions (the `RANGE.txt` header, also `results.range.summary`):
 `mean_depth_A`, `straggle_depth_A`, `lateral_range_A`, `lateral_straggle_A`, `radial_range_A`,
 `radial_straggle_A`, `skewness`, `kurtosis`. Report SRIM's "lateral straggle" (about 242 A in
-the example), not the rms radial distance (radial straggle, about 155 A).
+the example). The radial straggle (about 155 A) is the standard deviation of the radial distance r, a
+different quantity; the mean depth is about 282 A.
 
-Event files, as DataFrames with `ion`, `depth_A`, `y_A`, `z_A`, ... (`None` if absent):
+Event files, parsed into objects whose `.df` is a DataFrame with `ion`, `depth_A`, `y_A`, `z_A`, ... (`None` if absent):
 `results.exyz` (`exyz=<eV step>`), `.backscat` (`backscattered=1`), `.transmit` (`transmit=1`),
 `.sputter` (`sputtered=1`).
 

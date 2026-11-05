@@ -88,13 +88,13 @@ Energy transferred to recoil atoms by depth.
 
 ### `phonon` (PHONON.txt)
 
-Energy going into phonons (heat) by depth.
+Phonons (heat) produced by depth, in SRIM's unit Phonons/(Angstrom-Ion) (SRIM's plots treat them as energy).
 
 | Column | Unit | Meaning |
 |---|---|---|
 | `depth_A` | A | depth |
-| `ions_phonons_per_A_per_ion` | eV/A/ion | phonon energy from the primary ions |
-| `recoils_phonons_per_A_per_ion` | eV/A/ion | phonon energy from recoils |
+| `ions_phonons_per_A_per_ion` | Phonons/(A ion) | phonons from the primary ions |
+| `recoils_phonons_per_A_per_ion` | Phonons/(A ion) | phonons from recoils |
 
 ### `range` (RANGE.txt)
 
