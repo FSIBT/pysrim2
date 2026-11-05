@@ -2,12 +2,16 @@
 
 import ast
 import importlib
+import re
 from pathlib import Path
 
 import nbformat
 import pytest
 
 NOTEBOOKS = sorted((Path(__file__).resolve().parents[1] / "examples" / "notebooks").glob("*.ipynb"))
+
+# a quoted string starting with "/" (Unix), "~/" or a drive letter such as C:\ or C:/
+_ABSOLUTE_PATH = re.compile(r"""["'](?:/[A-Za-z0-9_.~-]|~/|[A-Za-z]:[\\/])""")
 
 
 def test_notebooks_exist():
@@ -23,7 +27,7 @@ def test_notebook_is_valid_clean_and_imports_exist(path):
         if cell.cell_type != "code":
             continue
         assert not cell.outputs and cell.execution_count is None, "outputs are not committed"
-        assert "/tmp/srim" not in cell.source, "use the default SRIM location"
+        assert not _ABSOLUTE_PATH.search(cell.source), "no absolute paths; use the default location"
         tree = ast.parse(cell.source)
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
