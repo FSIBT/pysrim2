@@ -10,7 +10,7 @@ pysrim2 is a maintained continuation of pysrim (distribution `pysrim2`, import `
 - Docs: `uv run --group docs sphinx-build -W -b html docs <output dir>`
 - Build: `uv build`
 - Real SRIM tests: `uv run pytest -m srim` (in `tests/integration/`; skipped unless SRIM is installed, e.g. `pysrim2 install`; they run real TRIM/SR)
-- Notebooks: this machine's git can have an external notebook diff driver; use `git diff --no-ext-diff --no-textconv` to see notebook changes as plain JSON.
+- Notebooks: git can have an external notebook diff driver; use `git diff --no-ext-diff --no-textconv` to see notebook changes as plain JSON.
 - Once per clone: `git config blame.ignoreRevsFile .git-blame-ignore-revs`
 
 ## Conventions

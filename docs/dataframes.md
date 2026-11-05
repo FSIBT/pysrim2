@@ -35,7 +35,7 @@ create a new `Results`. The attribute is `None` if the file is absent.
 
 ## Depth profiles
 
-These six files are always written by TRIM. All have `depth_A` as first column
+TRIM normally writes these six files (`novac` is absent for Kinchin-Pease runs). All have `depth_A` as first column
 (left edge of the depth bin, Angstrom) and one row per depth bin. `.metadata`
 holds `ion` (symbol), `energy_eV`, `num_ions` and `source` (the file read).
 Values are normalised per ion, so they do not depend on the number of ions.
