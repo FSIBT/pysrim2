@@ -512,3 +512,11 @@ def test_backend_is_native_on_windows(fake_srim, monkeypatch):
     assert _provenance(str(fake_srim), now, now, 1)["backend"] == "native"
     monkeypatch.setattr(sys, "platform", "linux")
     assert _provenance(str(fake_srim), now, now, 1)["backend"] == "wine"
+
+
+def test_unnamed_layers_get_a_default_name_in_spec_and_trim_in(tmp_path):
+    from srim import Ion, Layer, Target
+
+    trim = TRIM(Target([Layer.from_formula("SiC", 3.21, 1000.0)]), Ion("Ni", 1e6), number_ions=5)
+    assert trim.to_spec().target[0].name == "SiC"
+    assert b"None" not in trim_in_bytes(trim, tmp_path)

@@ -20,7 +20,7 @@ class Layer(Material):
     phase : :obj:`int`
        phase of material (solid = 0, gas = 1). Default solid (0).
     name : :obj:`str`, optional
-       name of the Layer (defaults to chemical_formula)
+       name of the Layer (defaults to the element symbols joined by "+", e.g. ``Si+C``)
 
     Examples
     --------
@@ -72,7 +72,7 @@ class Layer(Material):
             easy way to set the displacement energy.
         """
         elements = cls._formula_to_elements(chemical_formula)
-        return Layer(elements, density, width, phase, name)
+        return Layer(elements, density, width, phase, name or chemical_formula)
 
     @property
     def width(self):
@@ -88,11 +88,11 @@ class Layer(Material):
         """Layer's Name"""
         if self._name:
             return self._name
-        return self.chemical_formula
+        return "+".join(element.symbol for element in self.elements)
 
     @name.setter
     def name(self, value):
-        self._name = str(value)
+        self._name = "" if value is None else str(value)
 
     def __repr__(self):
         return f"<Layer material:{self.chemical_formula} width:{self.width}>"

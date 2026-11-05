@@ -26,7 +26,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Example notebooks rewritten on the 0.8.0 API (default SRIM location, `.df` tables, `implant_summary`, `Collision.iter_events()` / `.df`, Parquet export, `run.yaml` with `TRIM.from_spec` and `pysrim2 run`), with small ion counts and no committed outputs; `Regular SRIM Calculation.ipynb` is now `Regular_SRIM_Calculation.ipynb`, and `KTaO3.ipynb` is merged into `SiC.ipynb`. A `srim`-marked test (`tests/integration/test_notebooks.py`, nbclient) executes them; a static test checks that they are valid and import existing names.
 - `examples/scripts/run_yaml_example/` (a `run.yaml` and README for `pysrim2 run run.yaml --set ion.energy_keV=30`); the agent skill and `examples/agents/README.md` teach `.df`, `implant_summary`, event tables, cascades with `iter_events()` and chunked export, and `run.yaml`.
 
+### Changed
+
+- A `Layer` without a name is now named after its elements (`Si+C`, or the formula for `Layer.from_formula("SiC", ...)`) instead of the text `None`. This changes the layer name written to `TRIM.IN` (and `run.yaml`) for unnamed layers compared with 0.7.0.
+
 ### Fixed
+
+- The `.df` element columns of Kinchin-Pease tables (`vacancies_<element>_...`, `absorbed_<element>_...`) are named after the element for single-element targets instead of `1`; the header of those tables lists no symbols, so they are read from the target section. Multi-element targets keep the numbers.
 
 - A zero-byte `RANGE_3D.txt` gives an empty `Range3D` frame (same columns) and a warning, like the event files, instead of raising.
 - The reference example's "lateral straggle" (341.6 A for the boron case) was the root mean square of the radial distance, not what SRIM calls lateral straggling; the example and skill now report SRIM's definitions (lateral straggle 241.8 A, radial straggle 154.9 A).
