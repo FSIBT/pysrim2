@@ -220,11 +220,6 @@ class Collision:
     ``replacements``, ``vacancies``, ``interstitials``, ``sputtered_atoms``,
     ``transmitted_atoms``, each also with an ``avg_`` variant).
 
-    Attributes
-    ----------
-    df : :class:`pandas.DataFrame`
-        All events (see :meth:`iter_events`), built chunk-wise from the stream; empty if
-        the file has no collisions. The columns are those of :meth:`iter_events`.
     """
 
     def __init__(self, directory, filename="COLLISON.txt"):
@@ -285,26 +280,26 @@ class Collision:
         cascade (``kind="recoil"``), in file order. Keys, and the part of the file they
         come from:
 
-        ===========================  =============================================
-        ``ion``                      ion number (int) of the collision line
-        ``kind``                     ``"ion"`` for a line of the collision table,
-                                     ``"recoil"`` for a line of a cascade block
-        ``energy_keV``               ion: ion energy [keV]; recoil: ``None``
-        ``depth_A``                  ion: depth; recoil: ``X (A)`` of the cascade line
-        ``y_A``, ``z_A``             lateral position [Ang] (both kinds)
-        ``atom``                     ion: symbol of the atom hit; recoil: symbol of
-                                     the recoil (from its atomic number)
-        ``recoil_energy_eV``         ion: energy given to the atom hit;
-                                     recoil: ``Atom Energy(eV)``
-        ``target_displacements``     ion: totals of the ``Summary of Above Cascade``
-        ``target_vacancies``         line of that collision (in files without full
-        ``target_replacements``      cascades: the columns of the collision line);
-        ``target_interstitials``     ``None`` if SRIM wrote none; recoil: ``None``
-        ``atomic_number``            recoil: Z; ion: ``None``
-        ``electronic_stopping_eV_per_A``  ion: ``Se (eV/A)``; recoil: ``None``
-        ``vacancy``, ``replacement``  recoil: the ``Vac`` and ``Repl`` flags
-                                     (0 or 1); ion: ``None``
-        ===========================  =============================================
+        ====================================  =============================================
+        ``ion``                               ion number (int) of the collision line
+        ``kind``                              ``"ion"`` for a line of the collision table,
+                                              ``"recoil"`` for a line of a cascade block
+        ``energy_keV``                        ion: ion energy [keV]; recoil: ``None``
+        ``depth_A``                           ion: depth; recoil: ``X (A)`` of the cascade line
+        ``y_A``, ``z_A``                      lateral position [Ang] (both kinds)
+        ``atom``                              ion: symbol of the atom hit; recoil: symbol of
+                                              the recoil (from its atomic number)
+        ``recoil_energy_eV``                  ion: energy given to the atom hit;
+                                              recoil: ``Atom Energy(eV)``
+        ``target_displacements``              ion: totals of the ``Summary of Above Cascade``
+        ``target_vacancies``                  line of that collision (in files without full
+        ``target_replacements``               cascades: the columns of the collision line);
+        ``target_interstitials``              ``None`` if SRIM wrote none; recoil: ``None``
+        ``atomic_number``                     recoil: Z; ion: ``None``
+        ``electronic_stopping_eV_per_A``      ion: ``Se (eV/A)``; recoil: ``None``
+        ``vacancy``, ``replacement``          recoil: the ``Vac`` and ``Repl`` flags
+                                              (0 or 1); ion: ``None``
+        ====================================  =============================================
 
         Recoil lines that belong to no collision (SRIM writes some with recoil number 0
         when the header line of a cascade is lost) and summary lines without a collision
@@ -419,7 +414,8 @@ class Collision:
 
     @property
     def df(self):
-        """:class:`pandas.DataFrame` of :meth:`iter_events`, one row per event"""
+        """:class:`pandas.DataFrame` of :meth:`iter_events`, one row per event, built chunk-wise
+        from the stream (empty if the file has no collisions)"""
         rows = ([event[c] for c in EVENT_COLUMNS] for event in self.iter_events())
         return concat_chunks(
             iter_row_chunks(rows, EVENT_COLUMNS, _EVENT_DTYPES), EVENT_COLUMNS, _EVENT_DTYPES

@@ -116,6 +116,29 @@ results = trim.run()
 # If all went successfully, 25 ions were run (a TRIM window may have appeared
 # if wine or xvfb-run is not available)!
 # results is `srim.output.Results` and contains all output files parsed
+
+# every output is a pandas DataFrame with SRIM's units in the column names
+print(results.ioniz.df.head())  # depth_A, ions_eV_per_A_per_ion, ...
+print(results.range.summary)  # range and straggling as SRIM prints them
+```
+
+With the setting `ranges=1` TRIM also writes the final position of every ion, and
+`implant_summary` computes SRIM's range and straggling values from it:
+
+``` python
+from srim.analysis import implant_summary
+
+trim = TRIM(target, ion, number_ions=100, calculation=1, ranges=1)
+results = trim.run()
+print(implant_summary(results.range3d.df))  # mean_depth_A, straggle_depth_A, ...
+results.to_parquet("out")  # needs pysrim2[parquet]; also .to_hdf5() and .to_csv()
+```
+
+The same run can be described in a `run.yaml` and started with
+`pysrim2 run run.yaml`. See the pages on
+[DataFrames](https://pysrim2.readthedocs.io/en/latest/dataframes.html),
+[`run.yaml`](https://pysrim2.readthedocs.io/en/latest/run-spec.html) and
+[export](https://pysrim2.readthedocs.io/en/latest/export.html).
 ```
 
 See [documentation](https://pysrim2.readthedocs.io/en/latest/) for all available options.

@@ -31,7 +31,9 @@ Use :ref:`modindex` to search the API documentation.
    installation
    container
    cli
+   dataframes
    run-spec
+   export
    agents
    tutorial
    changes-from-pysrim

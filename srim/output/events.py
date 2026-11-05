@@ -67,9 +67,6 @@ class EXYZ(SRIM_Output):
           - ``y_A``, ``z_A``: lateral position [Ang]
           - ``electronic_stopping_eV_per_A``: electronic stopping [eV/Ang]
           - ``last_recoil_energy_eV``: energy lost to the last recoil [eV]
-    metadata : :obj:`dict`
-        ``ion``, ``energy_eV``, ``energy_interval_eV`` (the ``exyz`` increment),
-        ``num_ions`` (number of different ions in the file), ``source``
     """
 
     def __init__(self, directory, filename="EXYZ.txt"):
@@ -327,8 +324,6 @@ _EVENT_DOC = """
           - ``depth_A``: last depth X [Ang]
           - ``y_A``, ``z_A``: last lateral position [Ang]
           - ``cos_x``, ``cos_y``, ``cos_z``: direction cosines of the final trajectory
-    metadata : :obj:`dict`
-        ``ion``, ``energy_eV``, ``num_events`` (lines in the file), ``source``
 
     Notes
     -----

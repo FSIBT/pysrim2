@@ -35,9 +35,6 @@ class Range3D(SRIM_Output):
           - ``depth_A``: final depth along the surface normal [Ang]
           - ``y_A``: lateral position Y [Ang]
           - ``z_A``: lateral position Z [Ang]
-    metadata : :obj:`dict`
-        ``ion``, ``energy_eV``, ``num_ions`` (number of ion positions in the
-        file), ``source``
 
     Notes
     -----
