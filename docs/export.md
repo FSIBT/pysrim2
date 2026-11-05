@@ -25,6 +25,8 @@ Parquet needs `pysrim2[parquet]` (pyarrow) and HDF5 needs `pysrim2[hdf5]`
 uv tool install 'pysrim2[parquet,hdf5]'   # or: pip install 'pysrim2[parquet,hdf5]'
 ```
 
+`pysrim2[all]` installs both extras at once.
+
 ## Metadata
 
 Every table carries the same kind of record:
