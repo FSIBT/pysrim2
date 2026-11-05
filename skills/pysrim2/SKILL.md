@@ -77,7 +77,7 @@ densities in g/cm3. Compounds: `Layer.from_formula("SiO2", density=2.65, width=.
 `run()` returns `Results`. Every table is a DataFrame: `results.vacancy.df` (also `.ioniz`, `.phonons`,
 `.range`, `.etorecoils`, `.novac`; first column `depth_A`, names carry SRIM's units, e.g.
 `knock_ons_per_A_per_ion`, `vacancies_Au_per_A_per_ion`), and `results.to_dataframes()` returns all of
-them as a dict. The attribute arrays (`.depth`, `.ions`, ...) still work. Stopping power tables:
+them as a dict (without the potentially huge `collision` table; add it with `include=["collision"]`). The attribute arrays (`.depth`, `.ions`, ...) still work. Stopping power tables:
 `from srim import SR` (`SR(layer, ion, output_type=5).run()`).
 
 ## 4. Reference example: implantation depth and straggling

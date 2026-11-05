@@ -109,8 +109,7 @@ def test_results_to_dataframes(directory):
     expected = ["ioniz", "vacancy", "novac", "e2recoil", "phonon", "range"]
     if os.path.exists(os.path.join(D, directory, "RANGE_3D.txt")):
         expected.append("range3d")
-    if os.path.exists(os.path.join(D, directory, "COLLISON.txt")):
-        expected.append("collision")
+    # collision is opt-in: never part of the default selection
     assert list(dfs) == expected
     assert all(isinstance(x, pd.DataFrame) for x in dfs.values())
 

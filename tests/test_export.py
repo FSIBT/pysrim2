@@ -141,7 +141,7 @@ def test_include_selects_and_validates(cache, tmp_path):
 
 def test_collision_opt_in_all_formats(cache, tmp_path):
     results = cache("SiC-C")
-    expected = results.to_dataframes()["collision"]
+    expected = results.to_dataframes(include=["collision"])["collision"]
     results.to_parquet(tmp_path / "p", include=["collision"])
     check_frames(pd.read_parquet(tmp_path / "p" / "collision.parquet"), expected)
     results.to_hdf5(tmp_path / "c.h5", include=["collision", "range"])
@@ -172,7 +172,7 @@ def test_hdf5_collision_appended_in_chunks(cache, tmp_path):
     from srim import export
 
     export.results_to_hdf5(results, tmp_path / "c.h5", include=["collision"], chunk_rows=1000)
-    expected = results.to_dataframes()["collision"]
+    expected = results.to_dataframes(include=["collision"])["collision"]
     check_frames(pd.read_hdf(tmp_path / "c.h5", "collision"), expected)
 
 

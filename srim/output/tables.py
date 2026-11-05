@@ -129,33 +129,28 @@ class Results:
         """:class:`srim.output.Sputter`, parsed on first access; ``None`` if absent"""
         return self._get_lazy("sputter")
 
-    def to_dataframes(self):
-        """Depth-profile outputs as :class:`pandas.DataFrame` objects
+    def to_dataframes(self, include=None):
+        """Tables as :class:`pandas.DataFrame` objects
+
+        Parameters
+        ----------
+        include : iterable of :obj:`str`, optional
+            table names to return: ``ioniz``, ``vacancy``, ``novac``, ``e2recoil``,
+            ``phonon``, ``range``, ``range3d``, ``exyz``, ``backscat``, ``transmit``,
+            ``sputter``, ``collision``. Default: every available table except
+            ``collision`` (one row per ion collision and cascade recoil; ``COLLISON.txt``
+            can be several GB), which is only loaded if named. Naming a table that is
+            not available raises :class:`ValueError`.
 
         Returns
         -------
         :obj:`dict`
-            Keys ``ioniz``, ``vacancy``, ``novac``, ``e2recoil``, ``phonon``,
-            ``range``, ``range3d``, ``exyz``, ``backscat``, ``transmit``, ``sputter``,
-            ``collision`` (one row per ion collision and cascade recoil; can be large);
-            outputs that are missing (e.g. ``novac`` for
-            Kinchin-Pease calculations) are omitted.
+            table name -> DataFrame; outputs that are missing (e.g. ``novac`` for
+            Kinchin-Pease calculations) are omitted from the default selection.
         """
-        outputs = {
-            "ioniz": self.ioniz,
-            "vacancy": self.vacancy,
-            "novac": self.novac,
-            "e2recoil": self.etorecoils,
-            "phonon": self.phonons,
-            "range": self.range,
-            "range3d": self.range3d,
-            "exyz": self.exyz,
-            "backscat": self.backscat,
-            "transmit": self.transmit,
-            "sputter": self.sputter,
-            "collision": self.collision,
-        }
-        return {key: out.df for key, out in outputs.items() if out is not None}
+        from ..export import _select
+
+        return {name: out.df for name, out in _select(self, include).items()}
 
     def to_parquet(self, directory, spec=None, include=None, chunk_rows=100_000):
         """Write the tables to ``<directory>/<name>.parquet``, one file per table

@@ -16,10 +16,12 @@ dfs = results.to_dataframes()  # dict: table name -> DataFrame, only the outputs
 ```
 
 `Results.to_dataframes()` returns the keys `ioniz`, `vacancy`, `novac`,
-`e2recoil`, `phonon`, `range`, `range3d`, `exyz`, `backscat`, `transmit`,
-`sputter` and `collision`. An output whose file is missing is left out (for
+`e2recoil`, `phonon`, `range`, `range3d`, `exyz`, `backscat`, `transmit` and
+`sputter`. An output whose file is missing is left out (for
 example `novac`, which is typically absent for quick Kinchin-Pease runs). Because `collision`
-can have millions of rows, collect it deliberately (see
+can have millions of rows, it is not included by default; ask for it with
+`results.to_dataframes(include=["collision"])` (the same `include=` selection as the
+exports; naming a table that is not available raises `ValueError`), or stream it (see
 [below](#collision-the-event-stream)).
 
 ## Lazy loading

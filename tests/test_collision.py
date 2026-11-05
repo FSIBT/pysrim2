@@ -158,7 +158,7 @@ def test_results_collision_is_lazy_and_in_dataframes():
 
     res = Results(SICC)
     assert isinstance(res.collision, Collision)
-    assert len(res.to_dataframes()["collision"]) == 8934 + 50755 - STRAY
+    assert len(res.to_dataframes(include=["collision"])["collision"]) == 8934 + 50755 - STRAY
 
 
 def test_results_without_collision_file(tmp_path):
@@ -172,6 +172,8 @@ def test_results_without_collision_file(tmp_path):
     res = Results(str(tmp_path))
     assert res.collision is None
     assert "collision" not in res.to_dataframes()
+    with pytest.raises(ValueError, match="not available"):
+        res.to_dataframes(include=["collision"])
 
 
 def test_kinchin_pease_collision_lines(tmp_path):
@@ -235,3 +237,20 @@ def test_clean_file_has_no_skipped_lines_and_no_warning(tmp_path, recwarn):
     c = Collision(str(tmp_path))
     assert c.skipped_lines == {"recoil": 0, "summary": 0}
     assert not recwarn.list
+
+
+def test_to_dataframes_excludes_collision_unless_asked(monkeypatch):
+    from srim.output import Results
+
+    res = Results(SICC)
+    monkeypatch.setattr(
+        Collision, "df", property(lambda self: pytest.fail("collision.df was loaded"))
+    )
+    assert "collision" not in res.to_dataframes()
+    monkeypatch.undo()
+    only = res.to_dataframes(include="collision")
+    assert list(only) == ["collision"]
+    picked = res.to_dataframes(include=["vacancy", "ioniz"])
+    assert list(picked) == ["ioniz", "vacancy"]
+    with pytest.raises(ValueError, match="unknown table"):
+        res.to_dataframes(include=["nope"])

@@ -32,7 +32,7 @@ pysrim2 doctor             # everything should be [ok]
 2. Write a short script with `srim.Layer`, `Target`, `Ion` and `TRIM`/`SR`, run it
    (natively, or in the container with the script's folder mounted at `/data`).
 3. Parse the results as DataFrames: `results.vacancy.df`, `results.ioniz.df`, ... (or
-   `results.to_dataframes()`), per-ion final positions `results.range3d.df` (`ranges=1`)
+   `results.to_dataframes()`; `collision` only with `include=["collision"]`), per-ion final positions `results.range3d.df` (`ranges=1`)
    and `srim.analysis.implant_summary` for range and straggling in SRIM's definitions.
 4. For full cascades (`calculation=2`, `collisions=2`) stream `COLLISON.txt` with
    `results.collision.iter_events()` instead of loading it, and export in chunks with
