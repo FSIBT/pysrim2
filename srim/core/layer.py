@@ -64,7 +64,8 @@ class Layer(Material):
         phase : :obj:`int`
             phase of material (solid = 0, gas = 1). Default solid (0).
         name : :obj:`str`, optional
-            name of the Layer (defaults to chemical_formula)
+            name of the Layer (defaults to ``chemical_formula``, e.g. ``SiC``; unlike
+            :class:`Layer`, which joins the element symbols with "+")
 
         Notes
         -----

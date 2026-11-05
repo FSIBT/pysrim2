@@ -9,7 +9,9 @@ pysrim2 run run.yaml --set ion.energy_keV=30 --output out-30keV
 pysrim2 run run.yaml --set number_ions=1000 --set target.0.thickness_nm=50
 ```
 
-`--set dotted.key=value` overrides a value (converted by the schema; list items by index).
+`--set dotted.key=value` overrides a value (converted by the schema). List items are addressed
+by index, with brackets or dots: `--set 'target[0].thickness_nm=50'` or `--set target.0.thickness_nm=50`
+(the second layer's first element: `target.1.elements.0.stoich=0.5`).
 The output folder holds SRIM's files and a `run.yaml` with a `provenance:` section
 (pysrim2 version, SRIM checksum, platform, backend, times, seed).
 

@@ -113,6 +113,7 @@ Event files, as DataFrames with `ion`, `depth_A`, `y_A`, `z_A`, ... (`None` if a
   `TRIM.from_spec(RunSpec)`; `TRIM.run()` writes `run.yaml` with provenance next to the outputs.
   Command line, no script needed:
   `pysrim2 run run.yaml --set ion.energy_keV=30 --output out/`; `pysrim2 import TRIM.IN -o run.yaml`.
+  `--set` addresses list items by index: `target[0].thickness_nm=50` or `target.0.thickness_nm=50`.
   A sample is `examples/scripts/run_yaml_example/` in the pysrim2 repository.
 
 ## 6. Run time and practical advice

@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- CI reports, informationally, whether the same spec and seed give the same `RANGE_3D` digest on Linux (wine), Windows and in the container; same-platform reruns are asserted identical (`tests/integration/test_reproducibility.py`).
+- CI reports, informationally, the `RANGE_3D` digest of the same spec and seed on Linux (wine), Windows and in the container (the `repro-report` job compares Linux and Windows; the container digest is listed separately); same-platform reruns are asserted identical (`tests/integration/test_reproducibility.py`). Observed: Linux (wine) and the container are bit-identical, native Windows gives the same summary but different per-ion detail (see `docs/run-spec.md`).
 - `.df` (a pandas DataFrame, first column `depth_A`, columns named with SRIM units) and `.metadata` on `Ioniz`, `Vacancy`, `NoVacancy`, `EnergyToRecoils`, `Phonons` and `Range`; `Results.to_dataframes()` returns them as a dict.
 - `srim.output.Range3D` reads `RANGE_3D.txt` (per-ion final positions) into a DataFrame with columns `ion`, `depth_A`, `y_A`, `z_A`; `Results.range3d` holds it (`None` if the file is absent) and `Results.to_dataframes()` includes it.
 - `Range.summary` returns the range and straggling values SRIM prints in the `RANGE.txt` header (depth, lateral, radial, skewness, kurtosis). `srim.analysis.implant_summary(df)` computes the same quantities from the per-ion positions of `Range3D` (standard deviations with `ddof=1`).
@@ -21,9 +21,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `run.yaml`: `srim.spec.RunSpec` (and `IonSpec`, `LayerSpec`, `ElementSpec`) describes a run with units in the key names (`energy_keV`, `thickness_nm`, `density_g_cm3`, `angle_deg`, ...), validates it with errors naming the dotted key (`SpecError`), and round-trips to a byte-identical `TRIM.IN`. `TRIM.to_spec()`, `TRIM.from_spec()`, `TRIM.to_yaml()`, `TRIM.from_yaml()`; the seed is always recorded. `TRIM.run()` writes `run.yaml` with provenance (pysrim2 version, SRIM SHA-256, platform, backend, start/end time, host) next to the outputs (`write_spec=False` to skip), `TRIM.copy_output_files` copies it, and `Results.spec` is the default `spec` of the `to_parquet`/`to_hdf5`/`to_csv` exports (no host name). See `docs/run-spec.md`.
 
+- Documentation: new pages `docs/dataframes.md` (every column, `Range.summary`, `implant_summary`, `iter_events`), `docs/export.md`, and a full schema reference in `docs/run-spec.md`; the README shows `.df` and `implant_summary`.
+
 - `pysrim2 run run.yaml [--set dotted.key=value ...] [--output DIR]` runs TRIM from a run spec (values converted by the schema; outputs and `run.yaml` copied to `DIR`, default `./srim-output-<UTC timestamp>`), and `pysrim2 import TRIM.IN [-o run.yaml]` turns an existing `TRIM.IN` into a run spec. Exit codes in `docs/cli.md`.
 
-- Example notebooks rewritten on the 0.8.0 API (default SRIM location, `.df` tables, `implant_summary`, `Collision.iter_events()` / `.df`, Parquet export, `run.yaml` with `TRIM.from_spec` and `pysrim2 run`), with small ion counts and no committed outputs; `Regular SRIM Calculation.ipynb` is now `Regular_SRIM_Calculation.ipynb`, and `KTaO3.ipynb` is merged into `SiC.ipynb`. A `srim`-marked test (`tests/integration/test_notebooks.py`, nbclient) executes them; a static test checks that they are valid and import existing names.
+- Example notebooks rewritten on the 0.8.0 API (default SRIM location, `.df` tables, `implant_summary`, `Collision.iter_events()` / `.df`, Parquet export, `run.yaml` with `TRIM.from_spec` and `pysrim2 run`), with small ion counts and no committed outputs; `Regular SRIM Calculation.ipynb` is now `Regular_SRIM_Calculation.ipynb`, and `KTaO3.ipynb` is merged into `SiC.ipynb`. A `srim`-marked test (`tests/integration/test_run_notebooks.py`, nbclient) executes them; a static test checks that they are valid and import existing names.
 - `examples/scripts/run_yaml_example/` (a `run.yaml` and README for `pysrim2 run run.yaml --set ion.energy_keV=30`); the agent skill and `examples/agents/README.md` teach `.df`, `implant_summary`, event tables, cascades with `iter_events()` and chunked export, and `run.yaml`.
 
 ### Changed
