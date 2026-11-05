@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-05
+
+All SRIM outputs as pandas DataFrames (incl. per-ion positions, trajectories, backscattered/transmitted/sputtered atoms and full cascades), editable `run.yaml` run specs with `pysrim2 run`, and export to Parquet/HDF5/CSV.
+
 ### Added
 
 - CI reports, informationally, the `RANGE_3D` digest of the same spec and seed on Linux (wine), Windows and in the container (the `repro-report` job compares Linux and Windows; the container digest is listed separately); same-platform reruns are asserted identical (`tests/integration/test_reproducibility.py`). Observed: Linux (wine) and the container are bit-identical, native Windows gives the same summary but different per-ion detail (see `docs/run-spec.md`).
@@ -17,9 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `Collision.iter_events()` streams `COLLISON.txt` line by line as flat event dicts (`ion`, `kind` = `ion` for a collision of the primary ion or `recoil` for a cascade recoil, `energy_keV`, `depth_A`, `y_A`, `z_A`, `atom`, `recoil_energy_eV`, `target_displacements`, `target_vacancies`, `target_replacements`, `target_interstitials`, plus `atomic_number`, `electronic_stopping_eV_per_A`, `vacancy`, `replacement`); `Collision.df` collects them into a DataFrame chunk-wise. `Results.collision` (lazy, `None` if absent) and `Results.to_dataframes(include=["collision"])` expose them; `to_dataframes()` leaves `collision` out by default (opt-in like the exports, since `COLLISON.txt` can be several GB).
 
-- `Results.to_parquet(directory)`, `.to_hdf5(path)` and `.to_csv(directory)` export the tables (optionally selected with `include=`; `collision` only on request) with metadata: the table's `.metadata`, pysrim2 version, export time and an optional run `spec` (`source` is the file name only; Parquet: schema key `pysrim2`; HDF5: node attribute `pysrim2`; CSV: `metadata.yaml`). `Collision.to_parquet(path, chunk_rows=100_000)` (also a `chunk_rows` argument of the `Results.to_*` methods) and `Collision.to_csv` stream the cascade events in chunks, so memory stays small for huge `COLLISON.txt` files. New optional extras `pysrim2[parquet]` (pyarrow) and `pysrim2[hdf5]` (PyTables); `Collision.metadata`.
-
-- The `spec` argument of the exports accepts a `RunSpec` (stored as its mapping) or a dict; anything else raises `TypeError`.
+- `Results.to_parquet(directory)`, `.to_hdf5(path)` and `.to_csv(directory)` export the tables (optionally selected with `include=`; `collision` only on request) with metadata: the table's `.metadata`, pysrim2 version, export time and an optional run `spec` (`source` is the file name only; Parquet: schema key `pysrim2`; HDF5: node attribute `pysrim2`; CSV: `metadata.yaml`). `Collision.to_parquet(path, chunk_rows=100_000)` (also a `chunk_rows` argument of the `Results.to_*` methods) and `Collision.to_csv` stream the cascade events in chunks, so memory stays small for huge `COLLISON.txt` files. New optional extras `pysrim2[parquet]` (pyarrow) and `pysrim2[hdf5]` (PyTables); `Collision.metadata`. The `spec` argument of the exports accepts a `RunSpec` (stored as its mapping) or a dict; anything else raises `TypeError`.
 
 - `run.yaml`: `srim.spec.RunSpec` (and `IonSpec`, `LayerSpec`, `ElementSpec`) describes a run with units in the key names (`energy_keV`, `thickness_nm`, `density_g_cm3`, `angle_deg`, ...), validates it with errors naming the dotted key (`SpecError`), and round-trips to a byte-identical `TRIM.IN`. `TRIM.to_spec()`, `TRIM.from_spec()`, `TRIM.to_yaml()`, `TRIM.from_yaml()`; the seed is always recorded. `TRIM.run()` writes `run.yaml` with provenance (pysrim2 version, SRIM SHA-256, platform, backend, start/end time, host) next to the outputs (`write_spec=False` to skip), `TRIM.copy_output_files` copies it, and `Results.spec` is the default `spec` of the `to_parquet`/`to_hdf5`/`to_csv` exports (no host name). See `docs/run-spec.md`.
 
@@ -38,11 +40,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The `.df` element columns of Kinchin-Pease tables (`vacancies_<element>_...`, `absorbed_<element>_...`) are named after the element for single-element targets instead of `1`; the header of those tables lists no symbols, so they are read from the target section. Multi-element targets keep the numbers.
 
-- A zero-byte `RANGE_3D.txt` gives an empty `Range3D` frame (same columns) and a warning, like the event files, instead of raising.
+- A zero-byte `RANGE_3D.txt` gives an empty `Range3D` frame (same columns) and a warning, like the event files, instead of raising. `Range3D` also warns when a line in the data section cannot be parsed (a truncated final line is still ignored silently).
 - The reference example's "lateral straggle" (341.6 A for the boron case) was the root mean square of the radial distance, not what SRIM calls lateral straggling; the example and skill now report SRIM's definitions (lateral straggle 241.8 A, radial straggle 154.9 A).
 - `Results.range3d` also finds `RANGE_3D.txt` in the `SRIM Outputs` subfolder.
 - A table header whose element names cannot be read now warns before the element columns fall back to `1`, `2`, ...; the `Vacancy.knock_ons` docs give the correct unit (knock-ons per Angstrom per ion).
-- `Range3D` warns when a line in the data section cannot be parsed (a truncated final line is still ignored silently).
 - `Collision` (`COLLISON.txt`) now parses every ion: the file is decoded as cp437 and split on SRIM's box-drawing column separators, so numbers no longer fail with glued separator characters (508 of 1000 ions of the SiC-C fixture raised `ValueError`/`IndexError`). Cascades without a summary line and stray recoil lines are handled; the per-ion dict API is unchanged.
 - `pysrim2 install` exits 130 with a `[skip] ... cancelled` line on Ctrl-C during a step instead of printing a traceback.
 
@@ -139,6 +140,7 @@ Changes since pysrim 0.5.10. See
 
 Versions up to and including 0.5.10 were released as `pysrim` by Chris Ostrouchov.
 
-[Unreleased]: https://github.com/FSIBT/pysrim2/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/FSIBT/pysrim2/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/FSIBT/pysrim2/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/FSIBT/pysrim2/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/FSIBT/pysrim2/compare/0421575...v0.6.0
