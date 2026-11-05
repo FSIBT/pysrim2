@@ -54,9 +54,23 @@ def _header_symbols(output, pattern):
     return [raw.decode("ascii") for raw in re.findall(rb"[A-Z][a-z]?", match.group(1))]
 
 
-def _element_names(names, count):
+def _target_symbols(output):
+    """Distinct element symbols of the target material section of a table file, in order."""
+    found = re.findall(rb"Layer #\s*\d+-\s*([A-Z][a-z]?)\s*=\s*[-+.\dE]+\s+Atomic Percent", output)
+    return list(dict.fromkeys(raw.decode("ascii") for raw in found))
+
+
+def _element_names(names, count, output=None):
     """Column names for target elements: header ``names`` made unique
-    (``Si``, ``Si_2``) if they match the number of columns, else ``1, 2, ...``."""
+    (``Si``, ``Si_2``) if they match the number of columns, else ``1, 2, ...``.
+
+    Kinchin-Pease tables have a single column and no element symbols in the header; for a
+    target with a single element (listed in ``output``, the file text) that element names it.
+    """
+    if not names and count == 1 and output is not None:
+        target = _target_symbols(output)
+        if len(target) == 1:
+            return target
     if len(names) != count:
         # Kinchin-Pease tables have a single column and no element names: no warning
         if names or count > 1:

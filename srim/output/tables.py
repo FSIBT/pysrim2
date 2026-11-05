@@ -338,7 +338,7 @@ class Vacancy(SRIM_Output):
         self._depth = data[:, 0]
         self._ion_knock_ons = data[:, 1]
         self._vacancies = data[:, 2:]
-        self._element_names = _element_names(symbols[1:], self._vacancies.shape[1])
+        self._element_names = _element_names(symbols[1:], self._vacancies.shape[1], output)
 
     @property
     def ion(self):
@@ -482,7 +482,7 @@ class EnergyToRecoils(SRIM_Output):
         self._depth = data[:, 0]
         self._ions = data[:, 1]
         self._recoils = data[:, 2:]
-        self._element_names = _element_names(symbols, self._recoils.shape[1])
+        self._element_names = _element_names(symbols, self._recoils.shape[1], output)
 
     @property
     def ion(self):
@@ -632,7 +632,7 @@ class Range(SRIM_Output):
         self._depth = data[:, 0]
         self._ions = data[:, 1]
         self._elements = data[:, 2:]
-        self._element_names = _element_names(symbols[1:], self._elements.shape[1])
+        self._element_names = _element_names(symbols[1:], self._elements.shape[1], output)
         self._summary = self._read_summary(output)
 
     @staticmethod

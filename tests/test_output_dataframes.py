@@ -135,3 +135,24 @@ def test_unreadable_element_header_warns_and_falls_back_to_numbers(tmp_path):
         "vacancies_1_per_A_per_ion",
         "vacancies_2_per_A_per_ion",
     ]
+
+
+def test_kinchin_pease_header_without_symbols_uses_the_single_target_element(tmp_path):
+    with open(os.path.join(D, "1", "VACANCY.txt"), "rb") as f:
+        data = f.read()
+    header = b"   DEPTH         Ni           Ni       "
+    assert header in data
+    kp = data.replace(header, b"   DEPTH         by            by     ")
+    (tmp_path / "VACANCY.txt").write_bytes(kp)
+    df = Vacancy(str(tmp_path)).df
+    assert list(df.columns) == [
+        "depth_A",
+        "knock_ons_per_A_per_ion",
+        "vacancies_Ni_per_A_per_ion",
+    ]
+
+
+def test_kinchin_pease_multi_element_target_keeps_numbered_columns():
+    # test_files/4: Ti/Si/C target, header without symbols, one vacancy column
+    df = Vacancy(os.path.join(D, "4")).df
+    assert "vacancies_1_per_A_per_ion" in df.columns
