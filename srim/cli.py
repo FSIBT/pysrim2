@@ -201,8 +201,8 @@ def _run(args) -> int:
     output = Path(args.output or f"srim-output-{stamp}")
     directory = srim_dir()
     try:
-        output.mkdir(parents=True, exist_ok=True)
         TRIM.from_spec(spec).run(srim_directory=str(directory))
+        output.mkdir(parents=True, exist_ok=True)
         TRIM.copy_output_files(str(directory), str(output))
     except KeyboardInterrupt:
         print("cancelled", file=sys.stderr)

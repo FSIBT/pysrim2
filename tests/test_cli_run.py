@@ -126,6 +126,7 @@ def test_run_failure_exits_1(srim_install, run_yaml, tmp_path, monkeypatch, caps
     monkeypatch.setattr(subprocess, "check_call", boom)
     assert cli.main(["run", str(run_yaml), "-o", str(tmp_path / "out")]) == 1
     assert "run failed" in capsys.readouterr().err
+    assert not (tmp_path / "out").exists()
 
 
 def test_run_without_trim_output_exits_1(srim_install, run_yaml, tmp_path, monkeypatch):
