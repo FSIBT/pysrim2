@@ -20,8 +20,11 @@ the next write of the same key removes. :func:`~srim.scan.run_scan` takes the ke
 it computes a run, so two scans sharing a cache never compute the same key at the same time:
 the second one waits for the first and then reuses its entry.
 
-Entries are hard-linked (a copy where links are not possible), so an entry and the point
-folder that made or reused it share their files. Neither is ever edited in place.
+Only large outputs are hard-linked: a file of at least 1 MiB that is not ``run.yaml`` or an
+input (``*.IN``). Everything else is copied, in both directions (a run's folder into an entry,
+an entry into a point folder). So the linked files of an entry and of the point folder that made
+or reused it share their data, and those linked files must never be edited in place. Editing
+``run.yaml``, an input or a small output in a point folder never changes the entry.
 
 Entries record the SRIM build they were made with (``srim_sha256`` in their ``run.yaml``). An
 entry made with another build than the installed one is not used: the run is computed again
@@ -59,6 +62,8 @@ _TAG_TEXT = (
 )
 #: top-level files of a run that are not part of its entry (a failed attempt's log)
 _NOT_CACHED = ("error.log",)
+#: files at least this large are hard-linked (when the file system allows it)
+LINK_MIN_BYTES = 1 << 20
 _warned: set[str] = set()
 
 
@@ -335,12 +340,22 @@ def _link_tree(source, dest, skip=()):
 
 
 def _link_file(src: Path, dst: Path):
+    """``dst`` is a hard link to ``src`` if the file is a large output, else a copy."""
     if dst.exists() or dst.is_symlink():
         dst.unlink()
-    try:
-        os.link(src, dst)
-    except OSError:
-        shutil.copy2(src, dst)
+    if _linkable(src):
+        try:
+            os.link(src, dst)
+            return
+        except OSError:
+            pass
+    shutil.copy2(src, dst)
+
+
+def _linkable(src: Path) -> bool:
+    if src.name == "run.yaml" or src.name.upper().endswith(".IN"):
+        return False
+    return src.stat().st_size >= LINK_MIN_BYTES
 
 
 def _rmdir_if_empty(path: Path):

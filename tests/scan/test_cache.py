@@ -186,6 +186,45 @@ def test_a_stored_run_is_found_and_its_files_come_back(tmp_path):
     assert not (out / ".complete").exists()
 
 
+def test_editing_a_point_folder_leaves_the_entry_unchanged(tmp_path):
+    cache = RunCache(tmp_path / "cache")
+    cache.prepare()
+    key = new_key()
+    run = make_run(tmp_path / "run")
+    entry = cache.store(key, run)
+    (run / "run.yaml").write_text("edited\n")
+    (run / "RANGE.txt").write_text("edited\n")
+    assert (entry / "RANGE.txt").read_text() == "1 2 3\n"
+    assert "edited" not in (entry / "run.yaml").read_text()
+    out = tmp_path / "out"
+    materialise(entry, out)
+    (out / "run.yaml").write_text("edited\n")
+    (out / "TRIM.IN").write_text("edited\n")
+    assert "edited" not in (entry / "run.yaml").read_text()
+    assert (entry / "TRIM.IN").read_text() == "TRIM.IN\n"
+
+
+@pytest.mark.skipif(os.name != "posix", reason="hard links are checked with inode numbers")
+def test_only_large_outputs_are_hard_linked(tmp_path):
+    cache = RunCache(tmp_path / "cache")
+    cache.prepare()
+    key = new_key()
+    run = make_run(tmp_path / "run")
+    big = b"x" * ((1 << 20) + 1)  # just over the hard-link threshold
+    (run / "BIG.bin").write_bytes(big)
+    (run / "BIG.IN").write_bytes(big)  # an input file: always copied
+    entry = cache.store(key, run)
+    assert os.path.samefile(entry / "BIG.bin", run / "BIG.bin")
+    assert not os.path.samefile(entry / "BIG.IN", run / "BIG.IN")
+    assert not os.path.samefile(entry / "RANGE.txt", run / "RANGE.txt")
+    assert not os.path.samefile(entry / "run.yaml", run / "run.yaml")
+    out = tmp_path / "out"
+    materialise(entry, out)
+    assert os.path.samefile(out / "BIG.bin", entry / "BIG.bin")
+    assert not os.path.samefile(out / "run.yaml", entry / "run.yaml")
+    assert not os.path.samefile(out / "RANGE.txt", entry / "RANGE.txt")
+
+
 def test_an_entry_without_its_marker_is_not_a_hit(tmp_path):
     cache = RunCache(tmp_path / "cache")
     cache.prepare()
