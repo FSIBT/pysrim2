@@ -25,7 +25,7 @@ import signal
 import subprocess
 import sys
 import threading
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -646,6 +646,16 @@ def _stop_on_sigterm(stop):
     )
 
 
+@contextmanager
+def _sigterm_stops(stop):
+    """SIGTERM sets ``stop`` while the block runs (see :func:`_stop_on_sigterm`)."""
+    restore = _stop_on_sigterm(stop)
+    try:
+        yield
+    finally:
+        restore()
+
+
 def _run_in_app(call, events, scan, *, view, plot, stop, pause):
     """Run ``call()`` (the scan) in a thread and the live view in this one.
 
@@ -804,7 +814,9 @@ def _scan_run(args) -> int:
             runner=_runner_from_env(),
         )
 
-    with web_view or nullcontext():  # the server stops when the scan has ended (see WebView)
+    # the server stops when the scan has ended (see WebView); SIGTERM stops the scan as in a
+    # terminal view, so a plain kill cleans up
+    with web_view or nullcontext(), _sigterm_stops(stop) if web_view else nullcontext():
         try:
             if terminal:
                 result = _run_in_app(

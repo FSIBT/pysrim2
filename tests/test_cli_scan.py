@@ -739,3 +739,24 @@ def free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
         probe.bind(("127.0.0.1", 0))
         return probe.getsockname()[1]
+
+
+def test_a_web_run_turns_sigterm_into_a_stop_and_restores_the_handler(work, monkeypatch, capsys):
+    import srim.ui.web as web
+
+    calls = []
+    real = cli._stop_on_sigterm
+
+    def recording(stop):
+        restore = real(stop)
+        calls.append(stop)
+        return restore
+
+    monkeypatch.setattr(cli, "_stop_on_sigterm", recording)
+    monkeypatch.setattr(web, "start_server", lambda argv: FakeServerProcess(monkeypatch))
+    monkeypatch.setattr(web, "GRACE_SECONDS", 0.0)
+    before = signal.getsignal(signal.SIGTERM)
+    code = cli.main(["scan", "run", str(write_scan(work)), "--ui", "web", "--port",
+                     str(free_port()), "-o", str(work / "out")])  # fmt: skip
+    assert code == 0 and len(calls) == 1
+    assert signal.getsignal(signal.SIGTERM) is before  # the previous handler is back
