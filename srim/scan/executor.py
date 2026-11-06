@@ -107,7 +107,9 @@ def run_scan(
         ``"local"`` (the default) runs on this machine. The container back end is planned
         (Task 9); other names raise :class:`NotImplementedError`.
     scan_dir : path-like, optional
-        the scan folder (made if missing). Default: a new ``./scan-<UTC time>`` folder.
+        the scan folder (made if missing). Default: a new ``./scan-<UTC time>`` folder. An
+        existing folder is reused: ``scan.yaml`` is overwritten and each point's folder
+        ``points/<id[:16]>`` is replaced by the new run.
     on_event : callable, optional
         ``on_event(event)`` for every event (see :mod:`srim.scan.events`). Called in this
         process, from one thread, in order. An exception in it is logged as a warning and
@@ -149,6 +151,7 @@ def run_scan(
     del cache  # the result cache is Task 8
     if runner is None:
         _require_srim()
+        _prune_old_runs()
     base_seed = scan.seed if scan.seed is not None else secrets.randbelow(MAX_SEED) + 1
     recorded = (
         scan
@@ -194,6 +197,7 @@ def _worker_main(ident, tasks, results, runner, parent_pid):
     if hasattr(os, "setpgid"):
         with contextlib.suppress(OSError):
             os.setpgid(0, 0)
+        threading.Thread(target=_watch_parent, args=(parent_pid,), daemon=True).start()
     signal.signal(signal.SIGINT, signal.SIG_IGN)  # the parent decides when to stop
     signal.signal(signal.SIGTERM, _terminate_worker)
     try:
@@ -215,22 +219,44 @@ def _worker_main(ident, tasks, results, runner, parent_pid):
             else:
                 results.put(("done", ident, index, attempt, time.monotonic() - began))
     finally:
-        run_dir, _WORKER["run_dir"] = _WORKER["run_dir"], None
-        if run_dir is not None:
-            with contextlib.suppress(Exception):
-                run_dir.cleanup()
+        _release_run_dir()
 
 
-def _terminate_worker(signum, frame):
-    """SIGTERM in a worker: stop this worker's wine server and remove its run directory.
-
-    The parent signals the whole process group, so SRIM stops at the same time.
-    """
-    run_dir = _WORKER["run_dir"]
+def _release_run_dir():
+    """Stop this worker's wine server and remove its run directory (once)."""
+    run_dir, _WORKER["run_dir"] = _WORKER["run_dir"], None
     if run_dir is not None:
         with contextlib.suppress(Exception):
             run_dir.cleanup()
+
+
+def _terminate_worker(signum, frame):
+    """SIGTERM in a worker: release its run directory and exit.
+
+    The parent signals the whole process group, so SRIM stops at the same time.
+    """
+    _release_run_dir()
     os._exit(1)
+
+
+#: how often a worker checks that its parent is still alive (POSIX)
+_PARENT_CHECK_SECONDS = 1.0
+
+
+def _watch_parent(parent_pid):
+    """Daemon thread of each worker: when the parent is gone, nothing may keep running.
+
+    The worker releases its run directory and kills its process group (its children
+    included), so a parent killed with SIGKILL leaves no SRIM or wine behind.
+    """
+    while True:
+        time.sleep(_PARENT_CHECK_SECONDS)
+        if os.getppid() != parent_pid:
+            _release_run_dir()
+            if os.getpgid(0) == os.getpid():  # our own group only, never the parent's
+                with contextlib.suppress(OSError):
+                    os.killpg(os.getpid(), signal.SIGKILL)
+            os._exit(1)
 
 
 def _run_point(spec, out, runner):
@@ -260,6 +286,8 @@ class _Worker:
     ident: int
     process: BaseProcess
     tasks: Queue
+    #: the worker's process group (POSIX), recorded at start: it outlives the worker
+    pgid: int | None = None
     current: tuple | None = None
 
     @property
@@ -295,6 +323,7 @@ class _ScanRun:
         self.n_done = 0
         self.n_failed = 0
         self.last_error: dict[int, str] = {}
+        self.deaths = 0
         self.ctx = multiprocessing.get_context("spawn")
         self.results = self.ctx.Queue()
 
@@ -351,7 +380,13 @@ class _ScanRun:
             daemon=True,
         )
         process.start()
-        return _Worker(ident, process, tasks)
+        pgid = None
+        if hasattr(os, "setpgid"):
+            pgid = process.pid
+            # the worker makes itself a group leader too; whichever runs first wins
+            with contextlib.suppress(OSError):
+                os.setpgid(process.pid, process.pid)
+        return _Worker(ident, process, tasks, pgid)
 
     def _busy(self):
         return [w for w in self.workers.values() if w.busy]
@@ -410,7 +445,11 @@ class _ScanRun:
             self._failed(index, attempt, message[4], message[5])
 
     def _reap(self):
-        """Attempts whose worker died without a word count as failed."""
+        """Attempts whose worker died without a word count as failed.
+
+        Workers that keep dying (more than twice the number of workers) stop the scan: a
+        crash that repeats is not for retries to fix.
+        """
         for worker in self._busy():
             if worker.process.is_alive():
                 continue
@@ -418,10 +457,18 @@ class _ScanRun:
             if worker.busy:
                 index, attempt, _ = worker.current
                 worker.current = None
+                code = worker.process.exitcode
+                self.deaths += 1
+                if self.deaths > 2 * self.n_workers:
+                    raise RuntimeError(
+                        f"worker processes died {self.deaths} times before finishing a point "
+                        f"(last exit code {code}); the scan is stopped. See the error.log "
+                        "files of the points."
+                    )
                 self._failed(
                     index,
                     attempt,
-                    f"worker process exited unexpectedly (exit code {worker.process.exitcode})",
+                    f"worker process exited unexpectedly (exit code {code})",
                     "",
                 )
 
@@ -583,25 +630,25 @@ def _signal_worker(worker, sig):
     """Send ``sig`` to the worker's process group (the worker, SRIM and their children).
 
     Only a group the worker leads is signalled as a group; never the parent's own group.
-    On Windows ``taskkill /T`` ends the process tree.
+    The group id was recorded when the worker started, so this works after the worker
+    has exited and been reaped. On Windows ``taskkill /T /F`` ends the process tree; it
+    must be sent while the worker still exists (the PID is not reused yet), and it ends
+    everything at once, whatever ``sig`` is.
     """
-    pid = worker.process.pid
-    if pid is None:
-        return
     if sys.platform == "win32":
-        with contextlib.suppress(OSError):
-            subprocess.run(
-                ["taskkill", "/T", "/F", "/PID", str(pid)],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                check=False,
-            )
+        if worker.process.pid is not None:
+            with contextlib.suppress(OSError):
+                subprocess.run(
+                    ["taskkill", "/T", "/F", "/PID", str(worker.process.pid)],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
+                )
+        return
+    if worker.pgid is None:
         return
     with contextlib.suppress(ProcessLookupError, PermissionError):
-        if os.getpgid(pid) == pid and pid != os.getpgrp():
-            os.killpg(pid, sig)
-        else:
-            os.kill(pid, sig)
+        os.killpg(worker.pgid, sig)
 
 
 def _close_queue(q):
@@ -631,6 +678,18 @@ def _require_srim():
             f"SRIM is not installed in {directory} (no TRIM.exe); install it with "
             "'pysrim2 install', or pass runner="
         )
+
+
+def _prune_old_runs():
+    """Backstop for scans that were killed hard: remove old unused run directories.
+
+    Uses the retention of :func:`srim.rundir.prune_runs` (directories in use are skipped).
+    Never fails the scan.
+    """
+    from ..rundir import prune_runs
+
+    with contextlib.suppress(Exception):
+        prune_runs()
 
 
 def _new_folder(scan_dir) -> Path:

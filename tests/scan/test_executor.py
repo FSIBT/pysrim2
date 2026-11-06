@@ -446,6 +446,122 @@ def test_stop_event_ends_running_points_without_orphans(tmp_path, state_dir):
     assert pid_gone(child), "the SRIM stand-in child is still running after the stop"
 
 
+#: a grandchild that ignores SIGTERM: only SIGKILL to its process group ends it
+STUBBORN_CHILD = (
+    "import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(120)"
+)
+
+
+def stubborn_runner(spec):
+    """Starts a child that ignores SIGTERM, then waits for it (for the stop tests)."""
+    child = subprocess.Popen([sys.executable, "-c", STUBBORN_CHILD])
+    Path(os.environ[STATE_VAR], f"child-{child.pid}").touch()
+    Path(os.environ[STATE_VAR], f"worker-{os.getpid()}").touch()
+    child.wait()
+    return fixture_runner(spec)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="process groups are POSIX")
+def test_a_child_that_ignores_sigterm_is_killed_with_its_worker(tmp_path, state_dir):
+    stop = threading.Event()
+
+    def stop_when_running(event):
+        if isinstance(event, PointStarted):
+            holder["child"] = wait_for_child(state_dir)
+            stop.set()
+
+    holder = {}
+    result = run_scan(
+        energy_scan((20.0,)),
+        workers=1,
+        runner=stubborn_runner,
+        scan_dir=tmp_path / "s",
+        stop_event=stop,
+        on_event=stop_when_running,
+    )
+    assert result.table["status"].tolist() == ["stopped"]
+    assert pid_gone(holder["child"]), "the child that ignores SIGTERM survived the stop"
+
+
+def wait_for_pids(state, pattern, count, timeout=60.0):
+    """The pids written by the fake runners as ``<pattern>-<pid>`` files."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        found = sorted(state.glob(f"{pattern}-*"))
+        if len(found) >= count:
+            return [int(p.name.rsplit("-", 1)[1]) for p in found]
+        time.sleep(0.05)
+    raise AssertionError(f"fewer than {count} {pattern} files appeared")
+
+
+DRIVER = """
+import sys
+sys.path.insert(0, {testdir!r})
+from srim.scan import Scan, run_scan
+from test_executor import BASE, stubborn_runner
+
+if __name__ == "__main__":
+    scan = Scan(BASE, grid={{"ion.energy_keV": [10.0, 20.0]}}, extract=["echo_energy"], seed=7)
+    run_scan(scan, workers=2, runner=stubborn_runner, scan_dir={scan_dir!r})
+"""
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="process groups are POSIX")
+def test_workers_and_their_children_die_when_the_parent_is_killed(tmp_path, state_dir):
+    driver = tmp_path / "driver.py"
+    driver.write_text(
+        DRIVER.format(testdir=str(Path(__file__).parent), scan_dir=str(tmp_path / "s"))
+    )
+    env = {**os.environ, STATE_VAR: str(state_dir)}
+    proc = subprocess.Popen(
+        [sys.executable, str(driver)],
+        env=env,
+        cwd=tmp_path,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        workers = wait_for_pids(state_dir, "worker", 2)
+        children = wait_for_pids(state_dir, "child", 2)
+    finally:
+        proc.kill()  # no cleanup in the parent at all
+        proc.wait(timeout=10)
+    for pid in workers + children:
+        assert pid_gone(pid, timeout=5.0), f"process {pid} outlived its parent"
+
+
+def exiting_runner(spec):
+    """The worker process dies at once, without a message."""
+    os._exit(3)
+
+
+def test_workers_that_keep_dying_stop_the_scan_with_an_error(tmp_path):
+    with pytest.raises(RuntimeError, match="exit code 3"):
+        run_scan(
+            energy_scan((10.0,)),
+            workers=1,
+            runner=exiting_runner,
+            scan_dir=tmp_path / "s",
+            retries=5,
+        )
+
+
+def test_a_worker_releases_its_run_directory_once(monkeypatch):
+    from srim.scan import executor
+
+    class FakeRunDir:
+        cleaned = 0
+
+        def cleanup(self):
+            FakeRunDir.cleaned += 1
+
+    monkeypatch.setitem(executor._WORKER, "run_dir", FakeRunDir())
+    executor._release_run_dir()
+    executor._release_run_dir()
+    assert FakeRunDir.cleaned == 1
+    assert executor._WORKER["run_dir"] is None
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="SIGINT is simulated with os.kill")
 def test_ctrl_c_stops_the_scan_and_restores_the_previous_handler(tmp_path, state_dir):
     before = signal.getsignal(signal.SIGINT)
@@ -580,3 +696,14 @@ def test_a_new_scan_folder_is_made_when_none_is_given(tmp_path, monkeypatch):
     assert len(folders) == 1
     assert (folders[0] / "scan.yaml").is_file()
     assert result.table["status"].tolist() == ["done"]
+
+
+def test_the_run_directory_prune_never_fails_a_scan(monkeypatch):
+    from srim import rundir
+    from srim.scan import executor
+
+    def broken(*args, **kwargs):
+        raise OSError("data directory unreadable")
+
+    monkeypatch.setattr(rundir, "prune_runs", broken)
+    executor._prune_old_runs()  # must not raise
