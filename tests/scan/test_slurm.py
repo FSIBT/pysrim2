@@ -350,3 +350,16 @@ def test_collected_batches_are_cached_for_a_local_run(tmp_path, batch_state):
         cache=folder / "cache",
     )
     assert again.table["status"].tolist() == ["cached", "cached"]
+
+
+def test_collect_refuses_a_folder_whose_lock_is_held(tmp_path):
+    from srim.scan.executor import ScanBusy, scan_lock
+
+    folder = prepare_slurm(scan_of(energies=(10.0,)), tmp_path / "s")
+    lock = scan_lock(folder).acquire()
+    try:
+        with pytest.raises(ScanBusy):
+            collect_slurm(folder, cache=False)
+    finally:
+        lock.release()
+    assert collect_slurm(folder, cache=False).table["status"].tolist() == ["missing"]

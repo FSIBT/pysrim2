@@ -36,11 +36,13 @@ from .batches import MAX_SEED, BatchInfo, derive_seed
 from .cache import cache_key
 from .executor import (
     _RESERVED,
+    ScanBusy,
     _open_cache,
     _summary,
     estimate_batches,
     fixed_batch_sizes,
     mark_scan_folder,
+    scan_lock,
 )
 from .extract import combine
 from .precision import Precision
@@ -154,10 +156,23 @@ def collect_slurm(scan_dir, *, cache=None) -> ScanResult:
     SpecError
         for a precision scan, a scan without a base seed, or an extractor that cannot be
         imported (``python:`` entries of ``scan.yaml``)
+    ScanBusy
+        when another scan (or another collect) holds the scan folder's lock
     """
     folder = Path(os.path.abspath(os.fspath(scan_dir)))
     if not (folder / SCAN_FILE).is_file():
         raise FileNotFoundError(f"{folder} has no {SCAN_FILE}; prepare the scan first")
+    try:  # collect rewrites points/ and result/, so it holds the scan folder's lock
+        lock = scan_lock(folder).acquire()
+    except TimeoutError:
+        raise ScanBusy(f"a scan is already running in {folder}") from None
+    try:
+        return _collect_locked(folder, cache)
+    finally:
+        lock.release()
+
+
+def _collect_locked(folder: Path, cache) -> ScanResult:
     scan = Scan.from_yaml(folder / SCAN_FILE)
     if isinstance(scan.ions, Precision):
         raise SpecError(_PRECISION_MESSAGE)

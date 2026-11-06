@@ -914,13 +914,14 @@ def _scan_prepare(args) -> int:
 
 def _scan_collect(args) -> int:
     from srim.scan import collect_slurm
+    from srim.scan.executor import ScanBusy
     from srim.scan.result import STATUSES
     from srim.spec import SpecError
 
     folder = Path(os.path.abspath(args.dir))
     try:
         result = collect_slurm(folder, cache=_cache_arg(args))
-    except (FileNotFoundError, SpecError, ValueError) as exc:
+    except (FileNotFoundError, SpecError, ValueError, ScanBusy) as exc:
         print(f"{folder}: {exc}", file=sys.stderr)
         return EXIT_BAD_INPUT
     counts = result.table["status"].value_counts()
