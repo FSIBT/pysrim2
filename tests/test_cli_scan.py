@@ -369,6 +369,7 @@ def test_clean_all_refuses_the_home_folder(work, monkeypatch, capsys):
     home.mkdir()
     (home / ".pysrim2-scan").write_text("pysrim2 scan folder\n", encoding="utf-8")
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))  # what Path.home() reads on Windows
     monkeypatch.chdir(work)
     assert cli.main(["scan", "clean", str(home), "--all"]) == 1
     assert "is the home folder" in capsys.readouterr().err
