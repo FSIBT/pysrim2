@@ -25,7 +25,6 @@ from srim.installer.container import ContainerError
 from srim.output import Results
 from srim.scan import Scan, ScanResult, backends, derive_seed, run_scan
 from srim.scan.backends import ContainerRunner, read_job, run_job, write_job
-from srim.scan.events import PointStarted
 from srim.spec import RunSpec, SpecError
 
 FIXTURE = Path(__file__).resolve().parents[2] / "test_files" / "1"
@@ -343,12 +342,24 @@ def test_a_bad_job_folder_is_refused_before_any_unit_runs(tmp_path):
 
 @pytest.mark.skipif(os.name != "posix", reason="folder modes are POSIX")
 def test_outputs_of_a_world_writable_job_folder_are_writable_by_all(tmp_path):
-    """Docker runs the container as uid 1000 and the host must still remove its outputs."""
+    """Docker runs the container as uid 1000 (any host uid): out/ and each unit folder are
+    created 0o777, so the host can remove what the container made. Modes are set explicitly
+    (not left to the umask), and a failing unit's folder is opened too."""
     job = job_dir(tmp_path)
     os.chmod(job, 0o777)
+    run_job(job, runner=counting([], fail=10.0))
+    mode = lambda p: stat.S_IMODE(os.stat(p).st_mode) & 0o777  # noqa: E731
+    assert mode(job / "out") == 0o777
+    assert mode(job / "out" / "unit0") == 0o777  # failed unit
+    assert mode(job / "out" / "unit1") == 0o777  # done unit
+
+
+@pytest.mark.skipif(os.name != "posix", reason="folder modes are POSIX")
+def test_a_job_folder_that_is_not_world_writable_is_left_alone(tmp_path):
+    job = job_dir(tmp_path)
+    os.chmod(job, 0o755)
     run_job(job, runner=counting([]))
-    out = job / "out" / "unit0"
-    assert stat.S_IMODE(os.stat(out).st_mode) & 0o777 == 0o777
+    assert stat.S_IMODE(os.stat(job / "out").st_mode) & 0o022 == 0  # not opened to others
 
 
 # -- the CLI ----------------------------------------------------------------------------------
@@ -412,6 +423,28 @@ def test_the_temporary_job_folders_are_removed_after_each_point(tmp_path, fake_r
     assert list(fake_runtime.tmpdir.glob("pysrim2-job-*")) == []
 
 
+def test_the_done_marker_does_not_reach_the_points_or_the_cache(tmp_path, fake_runtime):
+    scan_dir = tmp_path / "scan"
+    result = run_scan(
+        energy_scan(),
+        workers=1,
+        backend="container",
+        runtime="podman",
+        image="pysrim2:test",
+        scan_dir=scan_dir,
+        cache=scan_dir / "cache",
+    )
+    assert result.table["status"].tolist() == ["done", "done"]
+    for point in result.scan.points():
+        assert not (scan_dir / "points" / point.id[:16] / ".done").exists()
+    entries = [p.parent for p in (scan_dir / "cache").rglob(".complete")]
+    assert len(entries) == 2
+    for entry in entries:
+        assert not (entry / ".done").exists()
+        assert not (entry / "error.log").exists()
+        assert (entry / "RANGE.txt").is_file()
+
+
 def test_docker_gets_the_seccomp_profile_and_a_world_writable_job_folder(tmp_path, fake_runtime):
     result = run_container(tmp_path, runtime="docker", workers=1)
     assert result.table["status"].tolist() == ["done", "done"]
@@ -463,22 +496,30 @@ def test_a_unit_that_keeps_failing_is_reported_with_its_error(tmp_path, fake_run
     monkeypatch.setenv(MODE_VAR, "fail_20")
     result = run_container(tmp_path, workers=1, retries=0)
     assert result.table["status"].tolist() == ["done", "failed"]  # 10 keV, then 20 keV
-    error = result.table["error"].iloc[1]
-    assert "ValueError: SRIM said no second line" in error  # the unit's own error
+    assert result.table["error"].iloc[1] == "ValueError: SRIM said no second line"
 
 
 def test_stopping_the_scan_removes_the_running_container(tmp_path, fake_runtime, monkeypatch):
+    """A watcher thread stops the scan once the fake container has started (its marker
+    file appears). If that takes longer than WAIT_SECONDS it stops the scan anyway and the
+    test fails with a message, rather than hanging."""
     monkeypatch.setenv(MODE_VAR, "hang")
     stop = threading.Event()
+    timed_out = []
 
-    def on_event(event):
-        if isinstance(event, PointStarted):
-            deadline = time.monotonic() + WAIT_SECONDS
-            while time.monotonic() < deadline and not list(fake_runtime.state.iterdir()):
-                time.sleep(0.05)  # the container is running now
-            stop.set()
+    def watch():
+        deadline = time.monotonic() + WAIT_SECONDS
+        while time.monotonic() < deadline and not list(fake_runtime.state.iterdir()):
+            time.sleep(0.05)
+        if not list(fake_runtime.state.iterdir()):
+            timed_out.append(True)
+        stop.set()
 
-    result = run_container(tmp_path, workers=1, stop_event=stop, on_event=on_event)
+    watcher = threading.Thread(target=watch, daemon=True)
+    watcher.start()
+    result = run_container(tmp_path, workers=1, stop_event=stop)
+    watcher.join(timeout=WAIT_SECONDS)
+    assert not timed_out, "the fake container never started (no marker file)"
     assert result.table["status"].tolist() == ["stopped", "stopped"]
     names = [r["name"] for r in fake_runtime.runs()]
     assert names and fake_runtime.removed() == names[:1]
@@ -509,6 +550,13 @@ def test_the_image_is_the_argument_then_the_environment_then_the_release(
 def test_a_runner_cannot_be_combined_with_the_container_backend(tmp_path):
     with pytest.raises(ValueError, match="runner"):
         run_scan(energy_scan(), backend="container", runner=fixture_runner, runtime="podman")
+
+
+def test_the_docker_runner_resolves_its_seccomp_profile_once(tmp_path, monkeypatch):
+    monkeypatch.setenv("PYSRIM2_HOME", str(tmp_path / "home"))
+    docker = ContainerRunner("docker", "pysrim2:test")
+    assert docker.seccomp is not None and Path(docker.seccomp).is_file()
+    assert ContainerRunner("podman", "pysrim2:test").seccomp is None
 
 
 def test_the_runner_is_picklable_for_the_worker_processes():

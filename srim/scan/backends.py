@@ -19,12 +19,20 @@ returns the unit's outputs; the executor copies them. Podman maps the host user 
 (``--userns=keep-id``) and relabels the mount (``:Z``); Docker gets the seccomp profile that
 wine needs and a world-writable job folder, because the container user is uid 1000 whatever
 the host user is. The runtime's output goes to a file, never to a pipe (its daemon keeps
-pipes open). A container is removed with ``--rm``. If the worker is told to stop (or its
-parent dies) while its container runs, the worker runs ``<runtime> rm -f <name>`` (at most
-30 s, detached from the worker's process group so that a SIGKILL after the grace period does
-not stop it) and removes the job folder, so no container keeps running. On Windows the stop
-ends the worker's process tree at once, which cannot run that cleanup: a container started
-then may keep running until its SRIM run ends (``--rm`` removes it then).
+pipes open). A container is removed with ``--rm``.
+
+Stopping. When the worker is told to stop (SIGTERM from the parent, or the parent is gone),
+it runs ``<runtime> rm -f <name>`` (at most 30 s) and removes the job folder. The removal
+runs detached from the worker's process group, so it finishes even if the parent SIGKILLs
+the group after its 10 s grace period; the job folder is removed only if the worker itself
+was still alive to do it. Limits, stated plainly:
+
+- A worker killed from outside with SIGKILL (for example by the out-of-memory killer) runs
+  no cleanup. Its container keeps running until its SRIM run ends (``--rm`` then removes
+  it), and its job folder stays in the temporary directory (``TMPDIR``) until someone
+  deletes it. ``pysrim2 clean runs`` does not look there.
+- On Windows the stop ends the worker's process tree at once, so ``rm -f`` never runs: the
+  container may keep running until its SRIM run ends (``--rm`` then removes it).
 """
 
 import contextlib
@@ -41,6 +49,7 @@ from pathlib import Path
 
 import yaml
 
+from ..installer.container import seccomp_profile_path
 from ..output import Results
 from ..rundir import remove_tree
 from ..spec import RunSpec, SpecError
@@ -140,9 +149,11 @@ def run_job(job_dir, *, runner: Callable | None = None, report: Callable | None 
     """
     job = Path(job_dir)
     units = read_job(job)
+    out_root = job / OUT_DIR
+    out_root.mkdir(exist_ok=True)
     failed = 0
     for name, spec in units:
-        out = job / OUT_DIR / name
+        out = out_root / name
         if (out / DONE).is_file():
             _tell(report, f"{name}: done before")
             continue
@@ -154,7 +165,7 @@ def run_job(job_dir, *, runner: Callable | None = None, report: Callable | None 
             summary = _summary(exc)
             _write_error(out, summary, traceback.format_exc())
             failed += 1
-        _open_to_host(job, out)
+        _open_to_host(job, out_root)
         if summary is None:
             (out / DONE).write_text("done\n", encoding="utf-8")  # the last thing written
             _tell(report, f"{name}: done")
@@ -189,9 +200,10 @@ def _write_error(out: Path, summary: str, tb: str):
 
 
 def _open_to_host(job: Path, out: Path):
-    """When the job folder is world-writable (Docker: the container user is not the host
-    user), make the unit's folders writable too, so the host can remove what the container
-    made. Folder modes only; nothing is made readable or writable that was not before."""
+    """When the job folder is world-writable (Docker: the container user is uid 1000 whatever
+    the host uid is), make ``out`` (the outputs root, or a unit's folder) and every folder
+    below it writable by all, so the host can remove what the container made. Only folder
+    modes change."""
     if not (os.stat(job).st_mode & 0o002) or not out.is_dir():
         return
     for dirpath, dirnames, _filenames in os.walk(out):
@@ -218,6 +230,8 @@ class ContainerRunner:
     def __init__(self, runtime: str, image: str):
         self.runtime = runtime
         self.image = image
+        #: Docker's seccomp profile file (resolved once, here in the parent), else None
+        self.seccomp = str(seccomp_profile_path()) if self._is_docker() else None
 
     def __call__(self, spec: RunSpec) -> Results:
         parent = Path(tempfile.mkdtemp(prefix="pysrim2-job-"))  # mode 0o700
@@ -234,7 +248,11 @@ class ContainerRunner:
                 set_unit_abort(None)
             unit = job / OUT_DIR / CONTAINER_UNIT
             if not (unit / DONE).is_file():
-                raise RuntimeError(self._failure(code, unit, parent))
+                summary, detail = self._failure(code, unit, parent)
+                raise UnitFailed(summary, detail)
+            # the markers are the container's own bookkeeping: the executor must not copy them
+            for marker in (DONE, ERROR_LOG):
+                (unit / marker).unlink(missing_ok=True)
             results = Results(str(unit))
             results._own_run_dir(parent)  # results.close() removes the job folder
             return results
@@ -250,10 +268,7 @@ class ContainerRunner:
         mount = f"{job}:{CONTAINER_JOB}"
         run = [self.runtime, "run", "--rm", "--name", name]
         if self._is_docker():
-            from ..installer.container import seccomp_profile_path
-
-            profile = seccomp_profile_path()
-            run += ["--security-opt", f"seccomp={profile}", "-v", mount]
+            run += ["--security-opt", f"seccomp={self.seccomp}", "-v", mount]
         else:
             run += [f"--userns=keep-id:uid={IMAGE_UID},gid={IMAGE_UID}", "-v", f"{mount}:Z"]
         return [*run, self.image, "pysrim2", "run-job", CONTAINER_JOB]
@@ -270,15 +285,17 @@ class ContainerRunner:
             )
         return done.returncode
 
-    def _failure(self, code: int, unit: Path, parent: Path) -> str:
+    def _failure(self, code: int, unit: Path, parent: Path) -> tuple[str, str]:
+        """``(summary, detail)``: the unit's own error line, and the full text (its
+        error.log), or the container's exit code and last output when there is none."""
         error = unit / ERROR_LOG
         if error.is_file():
-            first = error.read_text(encoding="utf-8").splitlines()
-            return f"the unit failed in its container ({first[0] if first else 'no message'})"
+            text = error.read_text(encoding="utf-8")
+            first = text.splitlines()
+            return (first[0] if first else "the unit failed"), text
+        summary = f"container exited with code {code} and left no outputs"
         tail = _tail(parent / "runtime.log")
-        return f"container exited with code {code} and left no outputs" + (
-            f"; its last output: {tail}" if tail else ""
-        )
+        return summary, summary + (f"; its last output: {tail}" if tail else "")
 
     def _abort(self, name: str, parent: Path):
         """The worker is stopped: remove the container and the job folder."""
@@ -299,6 +316,16 @@ class ContainerRunner:
                 )
             except (OSError, subprocess.SubprocessError) as exc:
                 log.warning("could not remove container %s: %s", name, exc)
+
+
+class UnitFailed(RuntimeError):
+    """A unit failed in its container. ``scan_summary`` (the unit's own error line, e.g.
+    ``ValueError: message``) is what the scan reports as the point's error; the message
+    (the full error log) goes to the point's ``error.log``."""
+
+    def __init__(self, summary: str, detail: str):
+        super().__init__(detail)
+        self.scan_summary = summary
 
 
 def _tail(path: Path, lines: int = 3) -> str:

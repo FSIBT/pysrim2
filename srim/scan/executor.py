@@ -1106,7 +1106,11 @@ def _open_cache(cache, folder):
 
 
 def _summary(exc) -> str:
-    """One line: ``ValueError: message`` (the message's line breaks become spaces)"""
+    """One line: ``ValueError: message`` (the message's line breaks become spaces). An
+    exception may name its own summary in ``scan_summary`` (container units do)."""
+    own = getattr(exc, "scan_summary", None)
+    if own:
+        return str(own)
     text = " ".join(str(exc).split())
     name = type(exc).__name__
     return f"{name}: {text}" if text else name
