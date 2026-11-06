@@ -358,13 +358,14 @@ def test_clear_cache_leaves_strays_alone_and_warns(tmp_path, caplog):
     (stray_dir / "thesis.txt").write_text("keep me")
     (root / "zz").mkdir()  # not a shard name
     (root / "zz" / ("f" * 64)).mkdir()
-    (root / "ab").mkdir()
-    (root / "ab" / "not-a-key").mkdir()  # a shard holding something that is not an entry
+    shard = "ab" if key[:2] != "ab" else "cd"  # never the stored key's own shard
+    (root / shard).mkdir()
+    (root / shard / "not-a-key").mkdir()  # a shard holding something that is not an entry
     with caplog.at_level(logging.WARNING, logger="srim.scan.cache"):
         assert clear_cache(root) == 1
     assert (stray_dir / "thesis.txt").read_text() == "keep me"
     assert (root / "zz" / ("f" * 64)).is_dir()
-    assert (root / "ab" / "not-a-key").is_dir()
+    assert (root / shard / "not-a-key").is_dir()
     assert cache.lookup(key) is None
     messages = " ".join(r.getMessage() for r in caplog.records if r.name == "srim.scan.cache")
     for name in ("notes", "zz", "not-a-key"):
