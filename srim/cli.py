@@ -245,7 +245,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="delete the result cache of a scan, or a whole scan folder",
         description="Without --all, remove the cache entries of scan folder DIR (DIR/cache), "
         "or of the shared cache given with --cache. Entries that a running scan uses are "
-        "kept. --all removes the whole folder DIR, but only one with a scan.yaml.",
+        "kept. --all removes the whole folder DIR, but only one with the .pysrim2-scan marker.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     scan_clean.add_argument("dir", metavar="DIR", nargs="?", help="scan folder")

@@ -39,7 +39,8 @@ wine, `wine/` (the run's own wine prefix, see below).
 ### What happens to a run directory
 
 - `TRIM.run(output_dir=DIR)` copies the outputs and `run.yaml` to `DIR`, reads the results
-  from there, and removes the run directory (unless `keep=True`).
+  from there, and removes the run directory at once (`keep=True` only skips that removal,
+  and the directory is then pruned like any other after 7 days).
 - Without `output_dir`, the run directory stays, and `Results.directory` is its path. Read
   the outputs from there or from the returned `Results`.
 - `Results.close()`, or leaving a `with trim.run() as results:` block, removes the run
@@ -141,8 +142,9 @@ results = trim.run(srim_directory=srim_dir())
 Things that changed with it:
 
 - Run directories are deleted after 7 days when unused. A path you keep (such as
-  `results.directory`) can disappear later. Copy what you need, or use `output_dir=` or
-  `keep=True`.
+  `results.directory`) can disappear later. Copy what you need, or use `output_dir=` (the
+  outputs then live in that folder, which is yours). `keep=True` does not exempt a run
+  directory from the pruning.
 - `run(work_dir=...)` and `run(run_dir=...)` choose where the run directory is and let a
   worker reuse one.
 - `pysrim2 run run.yaml` already writes its outputs to `--output` (default

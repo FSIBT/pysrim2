@@ -48,8 +48,8 @@ looked up in the cache; a hit is linked into the unit's folder and no worker run
 another process is computing waits, and is reused once that run is stored) and the run is
 stored when it succeeds. Failed runs are never stored.
 
-Scripts that use the default ``spawn`` start method of the workers (macOS, Windows) must
-guard their entry point with ``if __name__ == "__main__":``.
+Scripts that run a scan must guard their entry point with ``if __name__ == "__main__":``:
+the workers use the ``spawn`` start method on every platform, and spawn imports the script.
 """
 
 import contextlib

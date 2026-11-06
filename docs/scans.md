@@ -76,7 +76,7 @@ def main():
     print(result.table)
 
 
-if __name__ == "__main__":  # required: worker processes import this file (macOS, Windows)
+if __name__ == "__main__":  # required: worker processes import this file (on every platform)
     main()
 ```
 
@@ -375,7 +375,7 @@ Clearing the cache:
 ```shell
 pysrim2 scan clean scan-si                  # the cache of that scan folder
 pysrim2 scan clean --cache ~/pysrim-cache   # a shared cache
-pysrim2 scan clean scan-si --all            # the whole scan folder (only one with a scan.yaml and marker)
+pysrim2 scan clean scan-si --all            # the whole scan folder (only one with the .pysrim2-scan marker)
 pysrim2 scan clean scan-si --dry-run        # list what would go
 ```
 
