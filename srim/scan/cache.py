@@ -195,7 +195,7 @@ class RunCache:
 
     def try_lock(self, key: str) -> FileLock | None:
         """The exclusive lock of ``key``, or None if another process holds it (no waiting)."""
-        self.prepare()
+        (self.root / "locks").mkdir(parents=True, exist_ok=True)
         lock = FileLock(self.root / "locks" / f"{key}.lock", timeout=0)
         try:
             return lock.acquire()

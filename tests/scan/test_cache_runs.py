@@ -23,6 +23,7 @@ import yaml
 
 from srim.output import Results
 from srim.scan import MergedResults, Precision, Scan, run_scan
+from srim.scan.cache import RunCache
 from srim.scan.events import PointCached, PointFinished, PointStarted
 from srim.scan.extract import register
 from srim.spec import RunSpec
@@ -220,6 +221,25 @@ def test_an_entry_of_another_srim_build_is_computed_again_and_replaced(
     assert result.table["status"].tolist() == ["cached"]
 
 
+def test_the_cache_folder_is_prepared_once_per_scan(tmp_path, state_dir, monkeypatch):
+    calls_to_prepare = []
+    original = RunCache.prepare
+
+    def counting(self):
+        calls_to_prepare.append(1)
+        return original(self)
+
+    monkeypatch.setattr(RunCache, "prepare", counting)
+    run_scan(
+        fixed_scan(),
+        workers=2,
+        scan_dir=tmp_path / "s",
+        runner=recording_runner,
+        cache=tmp_path / "cache",
+    )
+    assert len(calls_to_prepare) == 1
+
+
 def test_a_rerun_of_a_finished_scan_runs_nothing_and_gives_the_same_values(tmp_path, state_dir):
     cache_dir = tmp_path / "cache"
     first = run_scan(
@@ -397,16 +417,19 @@ def test_a_precision_point_that_is_all_cached_has_status_cached(tmp_path, state_
 
 def test_an_all_cached_point_that_hit_max_ions_keeps_max_ions(tmp_path, state_dir):
     cache_dir = tmp_path / "cache"
-    scan = precision_scan(Precision("cache_draw", rel=0.0001, min_ions=10, max_ions=20,
-                                    batch_ions=10))
+    scan = precision_scan(
+        Precision("cache_draw", rel=0.0001, min_ions=10, max_ions=20, batch_ions=10)
+    )
     with pytest.warns(UserWarning, match="max_ions"):
-        first = run_scan(scan, workers=1, scan_dir=tmp_path / "a", runner=recording_runner,
-                         cache=cache_dir)
+        first = run_scan(
+            scan, workers=1, scan_dir=tmp_path / "a", runner=recording_runner, cache=cache_dir
+        )
     assert first.table["status"].tolist() == ["max_ions"]
     before = len(calls(state_dir))
     with pytest.warns(UserWarning, match="max_ions"):
-        again = run_scan(scan, workers=1, scan_dir=tmp_path / "b", runner=recording_runner,
-                         cache=cache_dir)
+        again = run_scan(
+            scan, workers=1, scan_dir=tmp_path / "b", runner=recording_runner, cache=cache_dir
+        )
     assert len(calls(state_dir)) == before  # every batch came from the cache
     assert again.table["status"].tolist() == ["max_ions"]
 
