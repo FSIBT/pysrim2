@@ -98,6 +98,13 @@ def test_failed_rows_keep_the_point_with_status_and_error(scan):
     assert pd.isna(result.table["seeds"].iloc[1])
 
 
+def test_stopped_rows_are_accepted(scan):
+    rows = rows_for(scan, [1.0, float("nan"), 3.0, 4.0])
+    rows[1].update(status="stopped", n_ions=None, seeds=None)
+    result = ScanResult.from_rows(scan, rows)
+    assert result.table["status"].tolist() == ["done", "stopped", "done", "done"]
+
+
 @pytest.mark.parametrize(
     "change, message",
     [

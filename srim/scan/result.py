@@ -9,8 +9,8 @@ Columns, in order (the table is a :class:`pandas.DataFrame`):
   estimator filled it in)
 - ``n_ions``: ions run for the point (``NaN`` if it did not run)
 - ``seeds``: the batch seeds as text, comma-separated (``"11,12,13"``), ``NaN`` if none
-- ``status``: ``done``, ``failed``, ``max_ions`` (precision not reached within the limit)
-  or ``cached``
+- ``status``: ``done``, ``failed``, ``max_ions`` (precision not reached within the limit),
+  ``cached`` or ``stopped`` (the scan was stopped before the point finished)
 - ``error``: the error message of a failed point, else ``NaN``
 - ``path``: where the point's outputs are, relative to the scan folder
   (``base_dir``); ``NaN`` if none
@@ -36,7 +36,7 @@ from .spec import Scan
 
 #: the columns of a row that are not values or parameters
 _META = ("n_ions", "seeds", "status", "error", "path")
-STATUSES = ("done", "failed", "max_ions", "cached")
+STATUSES = ("done", "failed", "max_ions", "cached", "stopped")
 
 
 def _seeds_text(value):
