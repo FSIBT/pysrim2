@@ -7,6 +7,8 @@ guard fails a test that hangs.
 """
 
 import os
+import random
+import shutil
 import signal
 import stat
 import threading
@@ -17,10 +19,13 @@ import pytest
 from srim.output import Results
 from srim.scan import Precision, Scan, ScanResult, collect, prepare, run_scan
 from srim.scan.backends import read_job, run_job
+from srim.scan.extract import register
+from srim.scan.batches import MergedResults
 from srim.spec import RunSpec, SpecError
 
 FIXTURE = Path(__file__).resolve().parents[2] / "test_files" / "1"
 GUARD_SECONDS = 120
+STATE_VAR = "PYSRIM2_TEST_STATE"
 
 BASE = RunSpec.from_dict(
     {
@@ -240,3 +245,108 @@ def test_collect_runs_extractors_that_need_the_run_spec(tmp_path):
     assert collected.table["status"].tolist() == ["done", "done"]
     values = collected.table["fraction_of_stopped_ions_in_layer_0"].tolist()
     assert all(0.0 <= float(v) <= 1.0 for v in values)
+
+
+# -- fixed ion counts split into batches (batch_ions) -------------------------------------------
+
+
+def seed_draw(seed):
+    return 10.0 + random.Random(seed).gauss(0.0, 1.0)
+
+
+def seeded_value(results, point=None):
+    """Extractor: one run's seed draw, or for merged batches the ion-weighted mean."""
+    if isinstance(results, MergedResults):
+        pairs = [(b.seed, b.n_ions) for b in results.batches]
+    else:
+        pairs = [(int(Path(results.directory, "seed.txt").read_text()), 1)]
+    total = sum(weight for _, weight in pairs)
+    return {"seeded_value": sum(w * seed_draw(s) for s, w in pairs) / total}
+
+
+register("seeded_value", seeded_value, replace=True)
+
+
+def seeded_runner(spec):
+    """A run whose seed is written into its copy of test_files/1 (the extractor reads it)."""
+    seed = spec.to_dict()["seed"]
+    directory = Path(os.environ[STATE_VAR]) / f"run-{seed}-{spec.to_dict()['number_ions']}"
+    shutil.copytree(FIXTURE, directory, dirs_exist_ok=True)
+    (directory / "seed.txt").write_text(str(seed), encoding="utf-8")
+    return Results(str(directory))
+
+
+def never_runs_batch(spec):
+    raise AssertionError("a cached batch must not be computed again")
+
+
+def failing_small_batches(spec):
+    if spec.to_dict()["number_ions"] == 5:
+        raise ValueError("the last batch is broken")
+    return seeded_runner(spec)
+
+
+def batched_scan(**kwargs):
+    kwargs.setdefault("seed", 7)
+    return Scan(
+        BASE,
+        grid={"ion.energy_keV": [20.0, 30.0]},
+        ions=25,
+        batch_ions=10,
+        extract=["seeded_value"],
+        **kwargs,
+    )
+
+
+@pytest.fixture
+def batch_state(tmp_path, monkeypatch):
+    directory = tmp_path / "batch-state"
+    directory.mkdir()
+    monkeypatch.setenv(STATE_VAR, str(directory))
+    return directory
+
+
+def test_prepare_puts_each_batch_of_a_point_in_its_own_unit(tmp_path):
+    folder = prepare(batched_scan(), tmp_path / "s")
+    units = [name for job in sorted((folder / "jobs").iterdir()) for name, _ in read_job(job)]
+    assert len(units) == 6  # two points of ceil(25 / 10) = 3 batches
+    assert len(set(units)) == 6
+    assert sorted((folder / "jobs").iterdir()) == sorted(
+        folder / "jobs" / f"{k:04d}" for k in range(6)
+    )
+
+
+def test_collect_of_batches_equals_a_local_run(tmp_path, batch_state):
+    scan = batched_scan()
+    folder = prepare(scan, tmp_path / "s", jobs=4)
+    run_all_jobs(folder, seeded_runner)
+    collected = collect(folder, cache=False)
+    local = run_scan(scan, workers=3, runner=seeded_runner, scan_dir=tmp_path / "l", cache=False)
+    assert collected.table["status"].tolist() == ["done", "done"]
+    for column in ("seeds", "n_ions", "seeded_value", "seeded_value_err"):
+        assert collected.table[column].tolist() == local.table[column].tolist()
+    point = folder / "points" / scan.points()[0].id[:16] / "batches"
+    assert sorted(p.name for p in point.iterdir()) == ["0", "1", "2"]
+
+
+def test_collect_reports_a_point_with_a_failed_batch(tmp_path, batch_state):
+    folder = prepare(batched_scan(), tmp_path / "s")
+    run_all_jobs(folder, failing_small_batches)
+    collected = collect(folder, cache=False)
+    assert collected.table["status"].tolist() == ["failed", "failed"]
+    assert all("the last batch is broken" in e for e in collected.table["error"])
+
+
+def test_collected_batches_are_cached_for_a_local_run(tmp_path, batch_state):
+    scan = batched_scan()
+    folder = prepare(scan, tmp_path / "s")
+    run_all_jobs(folder, seeded_runner)
+    collect(folder)  # default cache: <scan folder>/cache
+    again = run_scan(
+        scan,
+        workers=2,
+        runner=never_runs_batch,
+        scan_dir=tmp_path / "local",
+        cache=folder / "cache",
+    )
+    assert again.table["status"].tolist() == ["cached", "cached"]

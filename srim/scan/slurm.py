@@ -4,7 +4,8 @@
 login node::
 
     scan.yaml                 the scan, with its base seed (as run_scan records it)
-    jobs/0000/job.yaml ...    job folders (srim.scan.backends format), one unit per point
+    jobs/0000/job.yaml ...    job folders (srim.scan.backends format), one unit per point,
+                              or one unit per batch of a point with ``batch_ions``
     submit.sbatch             #SBATCH --array=0-<jobs-1>; task k runs pysrim2 run-job jobs/k
 
 Submit it from the scan folder: ``cd <scan folder> && sbatch submit.sbatch`` (the script
@@ -14,8 +15,9 @@ tasks are done, :func:`collect` runs the extractors in this process and writes t
 result as a local run (``result/``, the points' folders, the cache). Seeds are the seeds
 of :func:`srim.scan.run_scan`, so the two give the same numbers.
 
-Only fixed ion counts: a precision target runs in batches decided from the results of
-earlier batches, which needs the parent process (use ``backend="local"`` or ``"container"``).
+Only fixed ion counts (with or without ``batch_ions``): a precision target runs in batches
+decided from the results of earlier batches, which needs the parent process (use
+``backend="local"`` or ``"container"``).
 """
 
 import logging
@@ -30,9 +32,16 @@ from .. import __version__
 from ..output import Results
 from ..spec import SpecError
 from .backends import DONE, ERROR_LOG, OUT_DIR, read_job, write_job
-from .batches import MAX_SEED, derive_seed
+from .batches import MAX_SEED, BatchInfo, derive_seed
 from .cache import cache_key
-from .executor import _RESERVED, _open_cache, _summary, mark_scan_folder
+from .executor import (
+    _RESERVED,
+    _open_cache,
+    _summary,
+    estimate_batches,
+    fixed_batch_sizes,
+    mark_scan_folder,
+)
 from .extract import combine
 from .precision import Precision
 from .result import ScanResult
@@ -58,8 +67,8 @@ def prepare(scan: Scan, scan_dir, *, jobs=None) -> Path:
     scan_dir : path-like
         the scan folder (made if missing). It must not hold a prepared scan already.
     jobs : int, optional
-        number of job folders; the points are dealt round-robin into them. Default: one job
-        per point. At most one job per point.
+        number of job folders; the units (a point, or a batch of a point with ``batch_ions``)
+        are dealt round-robin into them. Default: one job per unit. At most one job per unit.
 
     Returns
     -------
@@ -76,7 +85,6 @@ def prepare(scan: Scan, scan_dir, *, jobs=None) -> Path:
     if isinstance(scan.ions, Precision):
         raise SpecError(_PRECISION_MESSAGE)
     points = scan.points()
-    n_jobs = _job_count(jobs, len(points))
     names = [point.id[:16] for point in points]
     if len(set(names)) != len(names):
         raise SpecError("two scan points have the same id; the scan cannot be prepared")
@@ -90,10 +98,11 @@ def prepare(scan: Scan, scan_dir, *, jobs=None) -> Path:
         folder / SCAN_FILE, provenance={"pysrim2_version": __version__}
     )
     seeds = _seeds(points, base_seed)
+    units = _units(scan, points, seeds)
+    n_jobs = _job_count(jobs, len(units))
     for k in range(n_jobs):
-        members = [i for i in range(len(points)) if i % n_jobs == k]
-        units = [(names[i], points[i].spec.with_overrides([f"seed={seeds[i]}"])) for i in members]
-        write_job(folder / JOBS_DIR / f"{k:04d}", units)
+        members = [unit for i, unit in enumerate(units) if i % n_jobs == k]
+        write_job(folder / JOBS_DIR / f"{k:04d}", [(name, spec) for name, _, spec in members])
     script = folder / SUBMIT_FILE
     script.write_text(submit_script(n_jobs), encoding="utf-8")
     script.chmod(0o755)
@@ -160,8 +169,12 @@ def collect(scan_dir, *, cache=None) -> ScanResult:
     homes = _job_folders(folder)
     rows = []
     for point, seed in zip(points, seeds, strict=True):
-        spec = point.spec.with_overrides([f"seed={seed}"])
-        rows.append(_collect_point(scan, point, spec, homes.get(point.id[:16]), folder, store))
+        if scan.batch_ions is None:
+            spec = point.spec.with_overrides([f"seed={seed}"])
+            job = homes.get(point.id[:16])
+            rows.append(_collect_point(scan, point, spec, job, folder, store))
+        else:
+            rows.append(_collect_batched(scan, point, seed, homes, folder, store))
     result = ScanResult.from_rows(scan, rows, base_dir=folder)
     result.to_csv(folder / "result")
     return result
@@ -170,14 +183,37 @@ def collect(scan_dir, *, cache=None) -> ScanResult:
 # -- helpers -----------------------------------------------------------------------------------
 
 
-def _job_count(jobs, n_points: int) -> int:
+def _job_count(jobs, n_units: int) -> int:
     if jobs is None:
-        return n_points
+        return n_units
     if isinstance(jobs, bool) or not isinstance(jobs, Integral) or jobs < 1:
         raise SpecError(f"jobs must be a whole number >= 1, got {jobs!r}")
-    if jobs > n_points:
-        raise SpecError(f"jobs={jobs} is more than the {n_points} points (at most one per point)")
+    if jobs > n_units:
+        raise SpecError(f"jobs={jobs} is more than the {n_units} units (at most one per unit)")
     return int(jobs)
+
+
+def _unit_name(point_name: str, batch: int | None) -> str:
+    """The name of a unit: the point's name, or the point's name and a batch number."""
+    return point_name if batch is None else f"{point_name}-b{batch:04d}"
+
+
+def _units(scan: Scan, points, seeds):
+    """The units of the scan, in order: ``(name, point, RunSpec)``. A point is one unit,
+    or one unit per batch with ``batch_ions`` (the seeds of :func:`srim.scan.run_scan`)."""
+    units = []
+    for point, seed in zip(points, seeds, strict=True):
+        name = point.id[:16]
+        if scan.batch_ions is None:
+            units.append((name, point, point.spec.with_overrides([f"seed={seed}"])))
+            continue
+        sizes = fixed_batch_sizes(point.spec.number_ions, scan.batch_ions)
+        for batch, size in enumerate(sizes):
+            spec = point.spec.with_overrides(
+                [f"number_ions={size}", f"seed={derive_seed(seed, batch)}"]
+            )
+            units.append((_unit_name(name, batch), point, spec))
+    return units
 
 
 def _seeds(points, base_seed: int) -> list[int]:
@@ -233,6 +269,85 @@ def _collect_point(scan: Scan, point, spec, job, folder: Path, store):
         summary = first[0] if first else "the unit failed"
         return _row(index, "failed", None, spec.seed, dest, error=summary)
     return _row(index, "missing", None, None, None, error=NOT_RUN)
+
+
+def _collect_batched(scan: Scan, point, seed: int, homes, folder: Path, store):
+    """The row of a point with ``batch_ions``: its batches are read from their job folders.
+
+    Every finished batch is copied to ``points/<id>/batches/<b>/`` and cached. The point is
+    ``done`` when all its batches are, and then its extractors run on the batches merged
+    (:func:`srim.scan.executor.estimate_batches`); a failed batch makes the point ``failed``
+    with the first line of its ``error.log``; otherwise it is ``missing``.
+    """
+    index = point.index
+    name = point.id[:16]
+    dest = folder / "points" / name
+    shutil.rmtree(dest, ignore_errors=True)
+    sizes = fixed_batch_sizes(point.spec.number_ions, scan.batch_ions)
+    specs = [
+        point.spec.with_overrides([f"number_ions={size}", f"seed={derive_seed(seed, batch)}"])
+        for batch, size in enumerate(sizes)
+    ]
+    finished, error = 0, None
+    for batch, spec in enumerate(specs):
+        unit = _unit_name(name, batch)
+        job = homes.get(unit)
+        out = job / OUT_DIR / unit if job is not None else None
+        if out is None or not out.is_dir():
+            continue
+        target = dest / "batches" / str(batch)
+        if (out / DONE).is_file():
+            shutil.copytree(out, target, ignore=shutil.ignore_patterns(DONE, ERROR_LOG))
+            _store(store, spec, target)
+            finished += 1
+        elif (out / ERROR_LOG).is_file() and error is None:
+            target.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(out / ERROR_LOG, target / ERROR_LOG)
+            first = (out / ERROR_LOG).read_text(encoding="utf-8").splitlines()
+            error = first[0] if first else "the unit failed"
+    if error is not None:
+        return _row(index, "failed", None, None, dest, error=error)
+    if finished < len(specs):
+        return _row(index, "missing", None, None, None, error=NOT_RUN)
+    return _extracted_batches(scan, point, seed, specs, dest)
+
+
+def _extracted_batches(scan: Scan, point, seed: int, specs, dest: Path):
+    """The row of a finished batched point: the batches' extractors and the batch-means
+    estimate run here, in this process (as the local executor does)."""
+    index = point.index
+    extract = combine(scan.extract)
+    n_ions = point.spec.number_ions
+    try:
+        dirs, infos, batch_values = [], [], []
+        for batch, spec in enumerate(specs):
+            directory = dest / "batches" / str(batch)
+            dirs.append(directory)
+            infos.append(BatchInfo(batch, spec.seed, spec.number_ions, directory=str(directory)))
+            with Results(str(directory)) as results:
+                results.spec = spec.to_dict()
+                batch_values.append(dict(extract(results, point)))
+        values, errs = estimate_batches(
+            extract, point, dirs, infos, point.spec.to_dict(), seed, batch_values
+        )
+        clash = sorted(set(values) & (set(scan.param_names) | _RESERVED))
+        if clash:
+            raise ValueError(f"extractor column(s) {clash} clash with the scan's own columns")
+    except Exception as exc:
+        summary = _summary(exc)
+        with open(dest / ERROR_LOG, "a", encoding="utf-8") as f:
+            f.write(f"extraction: {summary}\n{traceback.format_exc()}\n")
+        return _row(index, "failed", n_ions, seed, dest, error=summary)
+    return {
+        "index": index,
+        "status": "done",
+        "n_ions": n_ions,
+        "seeds": ",".join(str(spec.seed) for spec in specs),
+        "path": str(dest),
+        "error": None,
+        **values,
+        **{f"{name}_err": err for name, err in errs.items()},
+    }
 
 
 def _extracted(scan: Scan, point, dest: Path, spec):

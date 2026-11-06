@@ -807,12 +807,12 @@ class _ScanRun:
     # -- units of work ----------------------------------------------------------------
 
     def _plan_fixed(self, index):
-        """Plan all batches of a fixed-count point with ``batch_ions``: the last one holds
-        the remaining ions. Their count is known, so none is added later."""
-        total = self.points[index].spec.number_ions
-        size = self.batch_ions
-        for batch in range(math.ceil(total / size)):
-            self.plan[index].append(min(size, total - batch * size))
+        """Plan all batches of a fixed-count point with ``batch_ions`` (their count is known,
+        so none is added later)."""
+        for batch, size in enumerate(
+            fixed_batch_sizes(self.points[index].spec.number_ions, self.batch_ions)
+        ):
+            self.plan[index].append(size)
             self.pending.append((index, batch, 1))
 
     def _schedule(self, index, count):
@@ -1276,6 +1276,11 @@ def _summary(exc) -> str:
     text = " ".join(str(exc).split())
     name = type(exc).__name__
     return f"{name}: {text}" if text else name
+
+
+def fixed_batch_sizes(total: int, batch_ions: int) -> list[int]:
+    """The ions of each batch of a fixed count: ``batch_ions`` each, the last one the rest."""
+    return [min(batch_ions, total - i * batch_ions) for i in range(math.ceil(total / batch_ions))]
 
 
 def estimate_batches(extract, point, directories, infos, spec, base_seed, batch_values):
