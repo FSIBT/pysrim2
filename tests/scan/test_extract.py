@@ -265,7 +265,7 @@ def test_ions_in_layer_from_boundaries(single):
     depth = single.range3d.df["depth_A"].to_numpy(float)
     row = extract.ions_in_layer(0, boundaries_nm=[0, 1000.0])(single, None)
     expected = np.mean((depth >= 0) & (depth < 10000.0))
-    assert row == {"ions_in_layer_0_fraction": pytest.approx(expected)}
+    assert row == {"fraction_of_stopped_ions_in_layer_0": pytest.approx(expected)}
 
 
 def test_ions_in_layer_from_spec_second_layer(single):
@@ -277,7 +277,7 @@ def test_ions_in_layer_from_spec_second_layer(single):
         single.spec = None
     # layer 1 spans 100 nm .. 300 nm
     expected = np.mean((depth >= 1000.0) & (depth < 3000.0))
-    assert row == {"ions_in_layer_1_fraction": pytest.approx(expected)}
+    assert row == {"fraction_of_stopped_ions_in_layer_1": pytest.approx(expected)}
 
 
 def test_ions_in_layer_errors(single):
@@ -333,3 +333,4 @@ def test_combine_duplicate_key_raises(single):
 def test_predefined_values_are_plain_floats(single):
     row = combine([extract.peak_vacancy_depth, extract.energy_to_recoils])(single, None)
     assert all(type(v) is float for v in row.values())
+

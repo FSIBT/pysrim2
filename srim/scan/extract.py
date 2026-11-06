@@ -379,7 +379,8 @@ def ions_in_layer(layer_index: int, boundaries_nm=None) -> Extractor:
     Returns
     -------
     extractor
-        with the key ``ions_in_layer_{layer_index}_fraction`` (dimensionless)
+        with the key ``fraction_of_stopped_ions_in_layer_{layer_index}``: the denominator is
+        the number of stopped ions (rows of ``range3d``), not the number of incident ions
     """
     index = int(layer_index)
     if index < 0:
@@ -388,7 +389,7 @@ def ions_in_layer(layer_index: int, boundaries_nm=None) -> Extractor:
         boundaries_nm = [float(b) for b in boundaries_nm]
         if len(boundaries_nm) < 2 or np.any(np.diff(boundaries_nm) <= 0):
             raise ValueError("boundaries_nm must be at least two strictly increasing depths")
-    key = f"ions_in_layer_{index}_fraction"
+    key = f"fraction_of_stopped_ions_in_layer_{index}"
 
     def extract(results, point=None):
         lower, upper = _layer_bounds_A(results, index, boundaries_nm)
