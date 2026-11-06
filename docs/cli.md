@@ -8,6 +8,7 @@ pysrim2 --version
 pysrim2 install [COMPONENT ...] [--dry-run] [--yes] [--agent claude|all] [--scope user|project]
 pysrim2 doctor [--json]
 pysrim2 run run.yaml [--set KEY=VALUE ...] [--output DIR]
+pysrim2 run-job DIR
 pysrim2 import TRIM.IN [-o run.yaml]
 ```
 

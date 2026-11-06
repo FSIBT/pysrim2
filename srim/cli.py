@@ -1,4 +1,4 @@
-"""Command line interface: ``pysrim2 install``, ``doctor``, ``run`` and ``import``."""
+"""Command line interface: ``pysrim2 install``, ``doctor``, ``run``, ``run-job`` and ``import``."""
 
 import argparse
 import json
@@ -82,6 +82,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     clean.add_argument("--dry-run", action="store_true", help="list what would be deleted")
 
+    job = sub.add_parser(
+        "run-job",
+        help="run the units of a job folder that are not done (exit 0: all done, "
+        "1: some failed, 2: not a job folder)",
+    )
+    job.add_argument("job_dir", metavar="DIR", help="job folder with job.yaml (see srim.scan)")
+
     imp = sub.add_parser("import", help="turn a TRIM.IN into a run.yaml")
     imp.add_argument("trim_in", metavar="TRIM.IN")
     imp.add_argument("-o", "--output", metavar="run.yaml", help="file to write (default run.yaml)")
@@ -99,6 +106,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run(args)
     if args.command == "import":
         return _import(args)
+    if args.command == "run-job":
+        return _run_job(args)
     if args.command == "clean":
         return _clean(args)
     return _doctor(args)
@@ -223,6 +232,21 @@ def _run(args) -> int:
         print(f"run failed: {exc}", file=sys.stderr)
         return EXIT_FAILED
     print(f"outputs and run.yaml: {output}")
+    return EXIT_OK
+
+
+def _run_job(args) -> int:
+    from srim.scan.backends import run_job
+    from srim.spec import SpecError
+
+    try:
+        failed = run_job(args.job_dir, report=print)
+    except SpecError as exc:
+        print(f"{args.job_dir}: {exc}", file=sys.stderr)
+        return EXIT_BAD_INPUT
+    if failed:
+        print(f"{failed} unit(s) failed; see their error.log files", file=sys.stderr)
+        return EXIT_FAILED
     return EXIT_OK
 
 

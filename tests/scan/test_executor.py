@@ -654,9 +654,10 @@ def test_an_extractor_failure_fails_the_point_without_a_srim_retry(tmp_path, sta
     assert "Traceback" in log and "no good" in log
 
 
-def test_other_backends_are_not_available_yet(tmp_path):
-    with pytest.raises(NotImplementedError, match="Task 9"):
-        run_scan(energy_scan(), backend="container", runner=fixture_runner)
+def test_unknown_backends_are_refused(tmp_path):
+    with pytest.raises(ValueError, match="backend must be 'local' or 'container'"):
+        run_scan(energy_scan(), backend="slurm", runner=fixture_runner, scan_dir=tmp_path / "s")
+    assert not (tmp_path / "s").exists()  # refused before anything is written
 
 
 def plain_extractor(results, point):

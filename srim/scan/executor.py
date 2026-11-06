@@ -33,6 +33,8 @@ reaches SRIM; the worker then stops its wine server; SIGKILL after a grace perio
 points are kept; the others get status ``stopped`` (a precision point keeps the partial
 estimate of its finished batches). POSIX only for the process groups; on Windows
 ``taskkill /T`` ends each worker and its children.
+With ``backend="container"`` a stopped worker also removes the container it runs (see
+:mod:`srim.scan.backends`).
 
 Result cache (:mod:`srim.scan.cache`): before a unit runs, its key (the run spec and seed) is
 looked up in the cache; a hit is linked into the unit's folder and no worker runs it
@@ -122,6 +124,8 @@ def run_scan(
     runner=None,
     cache=None,
     retries=1,
+    image=None,
+    runtime=None,
 ) -> ScanResult:
     """Run every point of ``scan`` and return the :class:`~srim.scan.ScanResult`.
 
@@ -136,8 +140,10 @@ def run_scan(
         worker processes; default ``max(1, os.cpu_count() - 1)``, never more than the units
         of work the scan can have (points, or batches for precision targets).
     backend : :obj:`str`
-        ``"local"`` (the default) runs on this machine. The container back end is planned
-        (Task 9); other names raise :class:`NotImplementedError`.
+        ``"local"`` (the default) runs on this machine. ``"container"`` runs each unit in its
+        own container of the pysrim2 image (``pysrim2 run-job``, see
+        :mod:`srim.scan.backends`); the events and the result are the same. Slurm is not a
+        back end of this function: see :func:`srim.scan.prepare`.
     scan_dir : path-like, optional
         the scan folder (made if missing). Default: a new ``./scan-<UTC time>`` folder. An
         existing folder is reused: ``scan.yaml`` is overwritten and each point's folder
@@ -153,7 +159,7 @@ def run_scan(
         :func:`srim.scan.run_batches`) in place of SRIM. Its results folder is copied to
         the point's (or batch's) folder and the runner owns its run directory. For tests and
         custom back ends. Default: ``TRIM.from_spec(spec).run(...)`` in a private run
-        directory.
+        directory. Not allowed with ``backend="container"``.
     cache : optional
         the result cache (see :mod:`srim.scan.cache`). ``None`` (the default): the folder
         named by ``$PYSRIM2_CACHE``, else ``<scan_dir>/cache``. ``False``: no cache. A path:
@@ -162,6 +168,12 @@ def run_scan(
     retries : :obj:`int`
         how often a failed unit (a point, or a batch) is run again before it is reported as
         failed (default 1)
+    image : :obj:`str`, optional
+        container image for ``backend="container"``. Default: ``$PYSRIM2_IMAGE``, else the
+        image of this pysrim2 release (``srim.installer.container.image_ref``).
+    runtime : :obj:`str`, optional
+        ``"podman"`` or ``"docker"`` for ``backend="container"``. Default: the first one
+        found (:func:`srim.installer.container.find_runtime`).
 
     Returns
     -------
@@ -171,19 +183,23 @@ def run_scan(
 
     Raises
     ------
-    NotImplementedError
-        for ``backend`` other than ``"local"``
+    ValueError
+        for an unknown ``backend``, or ``runner=`` with the container back end
+    ContainerError
+        for ``backend="container"`` when no container runtime is found (before any worker
+        starts)
     FileNotFoundError
-        when there is no SRIM install and no ``runner`` is given
+        when there is no SRIM install and no ``runner`` is given (local back end)
     """
-    if backend != "local":
-        raise NotImplementedError(
-            f"backend {backend!r} is not available: only 'local' is (the 'container' "
-            "backend is Task 9)"
-        )
+    if backend not in ("local", "container"):
+        raise ValueError(f"backend must be 'local' or 'container', got {backend!r}")
     workers = _worker_count(workers)
     retries = _retry_count(retries)
-    if runner is None:
+    if backend == "container":
+        if runner is not None:
+            raise ValueError("runner= is for the local back end; the container runs pysrim2")
+        runner = _container_runner(image, runtime)
+    elif runner is None:
         _require_srim()
         _prune_old_runs()
     base_seed = scan.seed if scan.seed is not None else secrets.randbelow(MAX_SEED) + 1
@@ -219,8 +235,27 @@ def run_scan(
 
 # -- worker processes ----------------------------------------------------------------------
 
-#: state of the worker process itself: its one reusable run directory
-_WORKER: dict = {"run_dir": None}
+#: state of the worker process itself: its one reusable run directory, and the callback
+#: that stops the unit it runs (see :func:`set_unit_abort`)
+_WORKER: dict = {"run_dir": None, "abort": None}
+
+
+def set_unit_abort(callback):
+    """Register ``callback()`` for the unit that this worker runs now (``None``: none).
+
+    A runner that starts something outside the worker (a container) registers a callback
+    that stops it. The worker calls it once, in its main thread from the SIGTERM handler (or
+    from its parent-watch thread when the parent is gone), then exits. Keep it short and
+    bounded: it may run a subprocess, but must not wait for long.
+    """
+    _WORKER["abort"] = callback
+
+
+def _abort_unit():
+    callback, _WORKER["abort"] = _WORKER["abort"], None
+    if callback is not None:
+        with contextlib.suppress(Exception):
+            callback()
 
 
 def _worker_main(ident, tasks, results, runner, parent_pid):
@@ -278,10 +313,12 @@ def _release_run_dir():
 
 
 def _terminate_worker(signum, frame):
-    """SIGTERM in a worker: release its run directory and exit.
+    """SIGTERM in a worker: stop the unit's outside process (if any), release the run
+    directory and exit.
 
     The parent signals the whole process group, so SRIM stops at the same time.
     """
+    _abort_unit()
     _release_run_dir()
     os._exit(1)
 
@@ -299,6 +336,7 @@ def _watch_parent(parent_pid):
     while True:
         time.sleep(_PARENT_CHECK_SECONDS)
         if os.getppid() != parent_pid:
+            _abort_unit()
             _release_run_dir()
             if os.getpgid(0) == os.getpid():  # our own group only, never the parent's
                 with contextlib.suppress(OSError):
@@ -1037,6 +1075,24 @@ class _ScanRun:
 
 
 # -- helpers -------------------------------------------------------------------------------
+
+
+def _container_runner(image, runtime):
+    """The runner of the container back end: one container per unit, checked before the
+    scan starts (no runtime is an error now, not in each worker)."""
+    from ..installer import container
+    from .backends import ContainerRunner
+
+    if runtime is None:
+        runtime = container.find_runtime()
+        if runtime is None:
+            raise container.ContainerError(
+                "no container runtime (podman or docker) is available: install one with "
+                "'pysrim2 install runtime', or use backend='local'"
+            )
+    reference = image or os.environ.get("PYSRIM2_IMAGE")
+    reference = reference or container.image_ref(container.image_tag())
+    return ContainerRunner(runtime, reference)
 
 
 def _open_cache(cache, folder):
