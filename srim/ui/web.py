@@ -123,14 +123,17 @@ def stop_server(server) -> None:
     SIGTERM to its process group, a short wait for the leader, then SIGKILL to the group; on
     Windows ``taskkill /T /F`` of its tree. Never raises for a process that is gone."""
     if IS_WINDOWS:
-        subprocess.run(
-            tree_kill_argv(server.pid),
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=STOP_SECONDS * 10,
-            check=False,
-        )
+        try:
+            subprocess.run(
+                tree_kill_argv(server.pid),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=STOP_SECONDS * 10,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):  # taskkill missing or stuck: give up
+            pass
         return
     _signal_group(server, signal.SIGTERM)
     _wait_quietly(server)

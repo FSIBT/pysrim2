@@ -291,6 +291,20 @@ def test_stopping_on_windows_ends_the_process_tree_with_taskkill(monkeypatch):
     assert ran == [["taskkill", "/T", "/F", "/PID", "4242"]]
 
 
+def test_stopping_on_windows_never_raises_when_taskkill_fails_or_hangs(monkeypatch):
+    monkeypatch.setattr(web, "IS_WINDOWS", True)
+
+    def hangs(argv, **options):
+        raise subprocess.TimeoutExpired(argv, options["timeout"])
+
+    def missing(argv, **options):
+        raise FileNotFoundError("taskkill")
+
+    for fake in (hangs, missing):
+        monkeypatch.setattr(web.subprocess, "run", fake)
+        web.stop_server(SimpleNamespace(pid=4242))  # no exception
+
+
 def test_the_parent_watch_calls_its_action_once_the_parent_changes(monkeypatch):
     parents = iter([7, 7, 7])
     current = {"pid": 7}
