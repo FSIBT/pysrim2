@@ -2,7 +2,7 @@
 
 from .batches import BatchInfo, MergedResults, derive_seed, run_batches
 from .cache import cache_key, clear_cache
-from .executor import run_scan
+from .executor import ScanBusy, run_scan
 from .precision import Precision
 from .result import ScanResult
 from .slurm import collect_slurm, prepare_slurm
@@ -13,6 +13,7 @@ __all__ = [
     "MergedResults",
     "Precision",
     "Scan",
+    "ScanBusy",
     "ScanPoint",
     "ScanResult",
     "cache_key",
