@@ -380,7 +380,8 @@ def _srim_decision(rel_parts, name, size):
 
 def _wine_decision(rel_parts, name):
     lower = name.lower()
-    if lower in WINE_SKIP_NAMES:
+    # reg*.tmp: wine's half-written registry while another process saves it
+    if lower in WINE_SKIP_NAMES or (lower.startswith("reg") and lower.endswith(".tmp")):
         return "skip"
     if any(part.lower() in WINE_COPY_DIRS for part in rel_parts):
         return "copy"
@@ -388,12 +389,20 @@ def _wine_decision(rel_parts, name):
 
 
 def _tree(src_root):
-    """Yield ``(relative parts, DirEntry)`` for everything below ``src_root`` (depth first)."""
+    """Yield ``(relative parts, DirEntry)`` for everything below ``src_root`` (depth first).
+
+    A folder that disappears before it is listed is skipped (not the root).
+    """
     stack = [((), src_root)]
     while stack:
         parts, directory = stack.pop()
-        with os.scandir(directory) as it:
-            entries = sorted(it, key=lambda e: e.name)
+        try:
+            with os.scandir(directory) as it:
+                entries = sorted(it, key=lambda e: e.name)
+        except FileNotFoundError:
+            if not parts:
+                raise
+            continue
         for entry in entries:
             yield parts, entry
             if entry.is_dir(follow_symlinks=False):
@@ -405,21 +414,26 @@ def clone_wine_prefix(src, dst):
 
     Large read-only binaries are hard-linked; registry files (``*.reg``), the user
     profile and everything else wine may write are copied; symlinks (``dosdevices``)
-    are recreated. Falls back to a full copy where hard links are not possible.
+    are recreated. Falls back to a full copy where hard links are not possible. Files that
+    disappear while the prefix is copied (another process may be using it) are skipped.
     """
     src, dst = str(src), Path(dst)
     dst.mkdir(parents=True)
     placer = _Placer("the wine prefix")
     for parts, entry in _tree(src):
         target = dst.joinpath(*parts, entry.name)
-        if entry.is_symlink():
-            os.symlink(os.readlink(entry.path), target)
-        elif entry.is_dir(follow_symlinks=False):
-            target.mkdir()
-        else:
-            decision = _wine_decision(parts, entry.name)
-            if decision != "skip":
-                placer.place(entry.path, target, copy=decision == "copy")
+        try:
+            if entry.is_symlink():
+                os.symlink(os.readlink(entry.path), target)
+            elif entry.is_dir(follow_symlinks=False):
+                target.mkdir()
+            else:
+                decision = _wine_decision(parts, entry.name)
+                if decision != "skip":
+                    placer.place(entry.path, target, copy=decision == "copy")
+        except FileNotFoundError:
+            if os.path.lexists(entry.path):
+                raise
     return dst
 
 

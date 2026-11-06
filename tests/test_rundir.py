@@ -422,6 +422,27 @@ def test_clone_wine_prefix_links_binaries_and_copies_state(tmp_path):
 
 
 @WINE_SKIP
+def test_clone_skips_registry_temp_files_and_files_that_vanish(tmp_path, monkeypatch):
+    import srim.rundir as rundir_module
+
+    src = make_prefix(tmp_path / "wine")
+    (src / "reg1ea50000.tmp").write_text("half written")
+    (src / "gone.txt").write_text("x")
+    real_place = rundir_module._Placer.place
+
+    def vanish(self, s, d, copy=False):
+        if s.endswith("gone.txt"):
+            os.remove(s)  # another wine process removed it after it was listed
+        return real_place(self, s, d, copy)
+
+    monkeypatch.setattr(rundir_module._Placer, "place", vanish)
+    clone = clone_wine_prefix(src, tmp_path / "clone")
+    assert not (clone / "reg1ea50000.tmp").exists()
+    assert not (clone / "gone.txt").exists()
+    assert (clone / "system.reg").is_file()
+
+
+@WINE_SKIP
 def test_clone_without_links_copies(tmp_path, monkeypatch):
     src = make_prefix(tmp_path / "wine")
     monkeypatch.setattr(rundir_module, "_warned_full_copy", False)
