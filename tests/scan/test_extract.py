@@ -112,6 +112,12 @@ def test_implant_summary_needs_range3d():
 # -- vacancy_at and peak_vacancy_depth ----------------------------------------------------
 
 
+def bin_centres_and_widths(depth_a):
+    """Centres and widths [A] of bins whose ``depth_A`` is the upper edge (first bin from 0)"""
+    lower = np.concatenate([[0.0], depth_a[:-1]])
+    return (lower + depth_a) / 2, depth_a - lower
+
+
 def raw_vacancy_profile(results):
     """``(depth_A, elements, knock_ons)`` from the raw VACANCY table, per A per ion"""
     df = results.vacancy.df
@@ -142,17 +148,26 @@ def test_element_vacancies_integrate_to_header_total(folder):
 
 def test_vacancy_at_gives_element_vacancies_and_knock_ons_separately(single):
     depth_a, elements, knock_ons = raw_vacancy_profile(single)
-    row = extract.vacancy_at(50)(single, None)  # 500 A
+    centres, _ = bin_centres_and_widths(depth_a)
+    row = extract.vacancy_at(50)(single, None)  # 500 A, between two bin centres
     assert row.keys() == {
         "vacancies_per_A_per_ion_at_50nm",
         "knock_ons_per_A_per_ion_at_50nm",
     }
     assert row["vacancies_per_A_per_ion_at_50nm"] == pytest.approx(
-        np.interp(500.0, depth_a, elements)
+        np.interp(500.0, centres, elements)
     )
     assert row["knock_ons_per_A_per_ion_at_50nm"] == pytest.approx(
-        np.interp(500.0, depth_a, knock_ons)
+        np.interp(500.0, centres, knock_ons)
     )
+
+
+def test_vacancy_at_first_bin_is_nonzero_and_equals_first_bin(single):
+    # the first bin covers [0, first depth_A]: 10 nm = 100 A lies in it
+    _, elements, _ = raw_vacancy_profile(single)
+    row = extract.vacancy_at(10)(single, None)
+    assert row["vacancies_per_A_per_ion_at_10nm"] == pytest.approx(elements[0])
+    assert elements[0] > 0
 
 
 def test_vacancy_at_outside_table_is_zero(single):
@@ -171,8 +186,9 @@ def test_vacancy_at_rejects_bad_depth():
 
 def test_peak_vacancy_depth_uses_element_vacancies(single):
     depth_a, elements, _ = raw_vacancy_profile(single)
+    centres, _ = bin_centres_and_widths(depth_a)
     assert extract.peak_vacancy_depth(single) == {
-        "peak_vacancy_depth_A": depth_a[int(np.argmax(elements))]
+        "peak_vacancy_depth_A": centres[int(np.argmax(elements))]
     }
 
 
@@ -258,9 +274,7 @@ def test_ions_in_layer_errors(single):
 
 def test_energy_to_recoils_integrates_over_depth(single):
     df = single.etorecoils.df
-    depth = df["depth_A"].to_numpy(float)
-    width = np.diff(depth)
-    width = np.append(width, width[-1])
+    _, width = bin_centres_and_widths(df["depth_A"].to_numpy(float))
     expected = float(np.sum(df["ions_eV_per_A_per_ion"].to_numpy(float) * width))
     row = extract.energy_to_recoils(single)
     assert row == {"energy_to_recoils_eV_per_ion": pytest.approx(expected, rel=1e-12)}

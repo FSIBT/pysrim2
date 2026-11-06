@@ -170,12 +170,15 @@ def _vacancy_profile(results):
     return df["depth_A"].to_numpy(dtype=float), vacancies, knock_ons
 
 
-def _bin_widths(depth):
-    """Width [A] of each bin of a table whose ``depth_A`` is the left edge of the bin"""
-    if len(depth) < 2:
-        return np.full(len(depth), np.nan)
-    widths = np.diff(depth)
-    return np.append(widths, widths[-1])
+def _bin_geometry(depth_a):
+    """``(lower, centre, width)`` of each depth bin [A].
+
+    ``depth_A`` of the depth tables is the UPPER edge of its bin; the first bin starts at
+    the surface (0).
+    """
+    upper = np.asarray(depth_a, dtype=float)
+    lower = np.concatenate([[0.0], upper[:-1]])
+    return lower, (lower + upper) / 2.0, upper - lower
 
 
 def _spec_dict(spec):
@@ -209,8 +212,8 @@ def vacancy_at(depth_nm: float) -> Extractor:
 
     ``vacancies`` is the vacancies of the target elements (the sum of the element columns
     of the ``vacancy`` table); ``knock_ons`` the primary knock-on atoms. Each is linearly
-    interpolated between the bins of the table (``depth_A`` is the bin's left edge) and is
-    0 outside the table's depth range.
+    interpolated between the bin centres of the table (``depth_A`` is the bin's upper
+    edge, see :func:`_bin_geometry`) and is 0 beyond the table's last bin.
 
     YAML: ``{"vacancy_at": {"depth_nm": 50}}``.
 
@@ -237,11 +240,16 @@ def vacancy_at(depth_nm: float) -> Extractor:
 
 
 def _at_depth(depth_a, values, x_a):
-    """``values`` interpolated at depth ``x_a`` [A]; 0 outside the table, nan if empty"""
+    """``values`` (one per bin) interpolated at depth ``x_a`` [A] between the bin centres.
+
+    0 beyond the last bin edge (the table's depth range), nan for an empty table. A depth
+    in the first bin (``[0, first edge]``) gets the first bin's value.
+    """
     if len(depth_a) == 0:
         return math.nan
-    if depth_a[0] <= x_a <= depth_a[-1]:
-        return float(np.interp(x_a, depth_a, values))
+    if 0.0 <= x_a <= depth_a[-1]:
+        _, centres, _ = _bin_geometry(depth_a)
+        return float(np.interp(x_a, centres, values))
     return 0.0
 
 
@@ -251,13 +259,14 @@ def peak_vacancy_depth(results, point=None) -> dict[str, float]:
     Returns
     -------
     dict
-        ``peak_vacancy_depth_A`` [A]: the bin with the most vacancies (the first one on
-        a tie); ``nan`` for an empty table.
+        ``peak_vacancy_depth_A`` [A]: centre of the bin with the most vacancies (the first
+        one on a tie); ``nan`` for an empty table.
     """
     depth_a, vacancies, _ = _vacancy_profile(results)
     if len(depth_a) == 0:
         return {"peak_vacancy_depth_A": math.nan}
-    return {"peak_vacancy_depth_A": float(depth_a[int(np.argmax(vacancies))])}
+    _, centres, _ = _bin_geometry(depth_a)
+    return {"peak_vacancy_depth_A": float(centres[int(np.argmax(vacancies))])}
 
 
 def sputter_yield(results, point=None) -> dict[str, float]:
@@ -385,7 +394,8 @@ def energy_to_recoils(results, point=None) -> dict[str, float]:
     """Energy the ions transfer to recoil atoms, summed over depth (``E2RECOIL.txt``).
 
     Integrates the ``ions_eV_per_A_per_ion`` column (energy lost by the primary ions to
-    recoils) over the depth bins, each bin weighted by its width in Angstrom.
+    recoils) over the depth bins, each bin weighted by its width in Angstrom (see
+    :func:`_bin_geometry`).
 
     Returns
     -------
@@ -393,7 +403,7 @@ def energy_to_recoils(results, point=None) -> dict[str, float]:
         ``energy_to_recoils_eV_per_ion`` (eV per incident ion)
     """
     df = results.etorecoils.df
-    widths = _bin_widths(df["depth_A"].to_numpy(dtype=float))
+    _, _, widths = _bin_geometry(df["depth_A"].to_numpy(dtype=float))
     values = df["ions_eV_per_A_per_ion"].to_numpy(dtype=float)
     return {"energy_to_recoils_eV_per_ion": float(np.sum(values * widths))}
 
