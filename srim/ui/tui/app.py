@@ -56,10 +56,12 @@ class ScanApp(App):
     BINDINGS = [
         Binding("p", "toggle_pause", "pause/resume"),
         Binding("q", "stop", "stop"),
-        Binding("ctrl+c", "stop", "stop", priority=True, show=False),
+        Binding("ctrl+c", "interrupt", "stop", priority=True, show=False),
         Binding("v", "switch_view", "plot/dashboard"),
         Binding("l", "show_log", "error log"),
     ]
+    #: the keys that do nothing while a modal (the log) is open; ctrl+c always works
+    MODAL_BLOCKED = frozenset({"toggle_pause", "stop", "switch_view", "show_log"})
 
     def __init__(
         self,
@@ -83,6 +85,7 @@ class ScanApp(App):
         #: a line the views show after the status (``stopping…``)
         self.note = ""
         self.ended = False
+        self.hint_shown = False  # "press ctrl+c again to quit now" has been shown
 
     def on_mount(self) -> None:
         self.install_screen(PlotScreen(), "plot")
@@ -121,9 +124,27 @@ class ScanApp(App):
         else:
             self.pause_event.set()
 
+    def check_action(self, action, parameters):
+        if isinstance(self.screen, ModalScreen) and action in self.MODAL_BLOCKED:
+            return False
+        return super().check_action(action, parameters)
+
     def action_stop(self) -> None:
-        self.stop_event.set()
-        self.note = "stopping…"
+        """``q``: stop the scan cleanly. Pressed again while it stops, it says how to quit."""
+        if not self.stop_event.is_set():
+            self.stop_event.set()
+            self.note = "stopping…"
+        elif not self.hint_shown:
+            self.hint_shown = True
+            self.note = "still stopping… press ctrl+c again to quit now"
+
+    def action_interrupt(self) -> None:
+        """``ctrl+c``: stop the scan; once it is stopping, the next press quits the app now
+        (the scan thread goes on stopping in the background, see ``_run_in_app``)."""
+        if self.stop_event.is_set() and self.hint_shown:
+            self.exit()
+            return
+        self.action_stop()
 
     def action_switch_view(self) -> None:
         self.view_name = "plot" if self.view_name == "dashboard" else "dashboard"
@@ -330,13 +351,17 @@ class DashboardScreen(Screen):
 
 
 class LogScreen(ModalScreen):
-    """The text of an ``error.log``; ``escape`` (or ``l``) closes it."""
+    """The text of an ``error.log``; ``escape``, ``q`` or ``l`` closes it."""
 
     DEFAULT_CSS = """
     LogScreen { align: center middle; }
     LogScreen VerticalScroll { width: 90%; height: 80%; border: round $accent; padding: 0 1; }
     """
-    BINDINGS = [Binding("escape", "close", "close"), Binding("l", "close", "close", show=False)]
+    BINDINGS = [
+        Binding("escape", "close", "close"),
+        Binding("q", "close", "close", show=False),
+        Binding("l", "close", "close", show=False),
+    ]
 
     def __init__(self, title: str, text: str):
         super().__init__()

@@ -232,3 +232,69 @@ def test_a_pause_from_the_scan_shows_in_the_status_line(tmp_path):
             await pilot.pause()
 
     run(scenario())
+
+
+def open_log(app, pilot, events, scan, tmp_path):
+    """Put a failed point with an error.log in place and open its log (``l``)."""
+    feed_start(events, scan, tmp_path)
+    point = scan.points()[1]
+    log_dir = tmp_path / "points" / point.id[:16]
+    log_dir.mkdir(parents=True)
+    (log_dir / "error.log").write_text("attempt 2: SRIM said no\nTraceback here\n")
+    events.put(PointFailed(1, point.id, "SRIM said no", 2, final=True))
+
+
+def test_keys_do_not_leak_through_the_log_modal(tmp_path):
+    scan = scan_of()
+    app, events, stop, pause = make_app(scan, tmp_path)
+
+    async def scenario():
+        async with app.run_test() as pilot:
+            open_log(app, pilot, events, scan, tmp_path)
+            await until(lambda: app.state.last_failed == 1)
+            await pilot.press("l")
+            await until(lambda: isinstance(app.screen, LogScreen))
+            await pilot.press("p")  # no pause from inside the modal
+            await pilot.press("v")  # no view switch either
+            assert not pause.is_set() and app.view_name == "plot"
+            assert isinstance(app.screen, LogScreen)
+            await pilot.press("q")  # q closes the log, it does not stop the scan
+            await until(lambda: not isinstance(app.screen, LogScreen))
+            assert not stop.is_set()
+            events.put(None)
+            await pilot.pause()
+
+    run(scenario())
+
+
+def test_q_again_while_stopping_asks_again_and_ctrl_c_quits_now(tmp_path):
+    scan = scan_of()
+    app, events, stop, _ = make_app(scan, tmp_path)
+    feed_start(events, scan, tmp_path)
+
+    async def scenario():
+        async with app.run_test() as pilot:
+            await pilot.press("q")
+            assert stop.is_set() and app.note == "stopping…"
+            await pilot.press("q")
+            assert "still stopping" in app.note and "ctrl+c again" in app.note
+            assert app.return_code is None
+            await pilot.press("ctrl+c")  # the second press: quit now, scan or not
+            await until(lambda: app.return_code is not None)
+
+    run(scenario())
+
+
+def test_ctrl_c_while_running_stops_the_scan_the_first_time(tmp_path):
+    scan = scan_of()
+    app, events, stop, _ = make_app(scan, tmp_path)
+    feed_start(events, scan, tmp_path)
+
+    async def scenario():
+        async with app.run_test() as pilot:
+            await pilot.press("ctrl+c")
+            assert stop.is_set() and app.return_code is None
+            events.put(None)
+            await until(lambda: app.return_code is not None)
+
+    run(scenario())
