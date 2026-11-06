@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `srim.ui.PlainProgress` (a status line when a scan's state changes, at most every 2 s, no escape codes) and `srim.ui.JsonLines` (every event as one line of JSON) are event consumers for `run_scan(on_event=...)`; `pysrim2 scan run --ui plain|json` uses them.
 - `srim.scan.run_batches(spec, n_ions, batch_ions, seed)` runs a calculation as batches with deterministic recorded seeds (`derive_seed`) and returns `MergedResults` (per-ion tables concatenated with global `ion` numbers and a `batch` column, depth profiles merged as ion-count-weighted means, collisions streamed), usable like `Results` by the extractors and exports.
 - `srim.rundir.RunDir` (private working copy of SRIM, `reset()`, disk usage) and `Results.directory`.
 - `srim.scan.extract`: extractors turn a run's outputs into scan columns (`register`, `get`, `available`, `resolve`, `combine`) with predefined `implant_summary`, `vacancy_at(depth_nm)`, `peak_vacancy_depth`, `sputter_yield`, `backscattered_fraction`, `transmitted_fraction`, `ions_in_layer(layer_index)` and `energy_to_recoils`.
