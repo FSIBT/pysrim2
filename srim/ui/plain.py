@@ -2,7 +2,7 @@
 
 A line looks like::
 
-    12:03 done 3/10  running 2  queued 5  failed 0  ions 1200  elapsed 0:01:02  eta 0:02:10
+    done 3/10  running 2  queued 5  failed 0  ions 1200  elapsed 0:01:02  eta 0:02:10
 
 The line is printed when the counts or the ions change, and at most once every ``interval``
 seconds (2 by default); the last change is printed when the scan ends, always. Lines are

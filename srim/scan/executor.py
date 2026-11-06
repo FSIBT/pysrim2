@@ -289,6 +289,15 @@ def _abort_unit():
             callback()
 
 
+def _outputs_to_stderr():
+    """A worker's stdout goes to stderr: stdout belongs to the scan's view (``--ui json``
+    writes only events there). Children such as SRIM and wine inherit file descriptor 1,
+    so that is redirected too."""
+    with contextlib.suppress(OSError):
+        os.dup2(2, 1)
+    sys.stdout = sys.stderr
+
+
 def _worker_main(ident, tasks, results, runner, parent_pid):
     """Worker process: run the units it is handed until it gets ``None``.
 
@@ -297,6 +306,7 @@ def _worker_main(ident, tasks, results, runner, parent_pid):
     traceback)`` for each unit. The worker leads its own process group so that the parent
     can stop it and everything it started (SRIM) at once.
     """
+    _outputs_to_stderr()
     if hasattr(os, "setpgid"):
         with contextlib.suppress(OSError):
             os.setpgid(0, 0)
