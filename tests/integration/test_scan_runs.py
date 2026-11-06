@@ -13,7 +13,7 @@ BASE = RunSpec.from_dict(
         "target": [
             {
                 "name": "Si",
-                "thickness_nm": 100.0,
+                "thickness_nm": 1000.0,  # thick enough to stop 40 keV B (range ~130 nm)
                 "density_g_cm3": 2.33,
                 "elements": [{"symbol": "Si", "stoich": 1.0}],
             }
@@ -29,7 +29,7 @@ def test_four_points_on_two_workers(tmp_path):
     events = []
     result = run_scan(scan, workers=2, scan_dir=folder, on_event=events.append)
 
-    assert result.table["status"].tolist() == ["done"] * 4
+    assert result.table["status"].tolist() == ["done"] * 4, result.table["error"].tolist()
     assert result.table["n_ions"].tolist() == [10] * 4
     assert result.table["mean_depth_A"].notna().all()
     for point in scan.points():
