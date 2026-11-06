@@ -15,6 +15,7 @@ import shutil
 import signal
 import threading
 import time
+import uuid
 from pathlib import Path
 
 import pandas as pd
@@ -80,12 +81,19 @@ def energy_of(spec):
     return spec.to_dict()["ion"]["energy_keV"]
 
 
+def _record_call(line):
+    """One file per call: appends from several processes can lose lines on Windows."""
+    folder = Path(os.environ[CALLS_VAR])
+    folder.mkdir(exist_ok=True)
+    name = f"{time.time_ns():020d}-{os.getpid()}-{uuid.uuid4().hex}.txt"
+    (folder / name).write_text(line, encoding="utf-8")
+
+
 def recording_runner(spec):
     """Stands in for SRIM: records the call, optionally sleeps, returns a copy of test_files/1."""
     data = spec.to_dict()
     seed = data["seed"]
-    with open(os.environ[CALLS_VAR], "a", encoding="utf-8") as f:
-        f.write(f"{seed} {data['number_ions']}\n")
+    _record_call(f"{seed} {data['number_ions']}")
     sleep = float(os.environ.get(SLEEP_VAR, "0") or 0)
     if sleep:
         time.sleep(sleep)
@@ -103,8 +111,7 @@ def switchable_runner(spec):
     """recording_runner, except that the energy in FAIL_VAR (if set) fails every time."""
     fail = os.environ.get(FAIL_VAR)
     if fail and energy_of(spec) == float(fail):
-        with open(os.environ[CALLS_VAR], "a", encoding="utf-8") as f:
-            f.write(f"{spec.to_dict()['seed']} failed\n")
+        _record_call(f"{spec.to_dict()['seed']} failed")
         raise RuntimeError("SRIM said no")
     return recording_runner(spec)
 
@@ -133,7 +140,7 @@ def state_dir(tmp_path, monkeypatch):
     directory = tmp_path / "state"
     directory.mkdir()
     monkeypatch.setenv(STATE_VAR, str(directory))
-    monkeypatch.setenv(CALLS_VAR, str(directory / "calls.txt"))
+    monkeypatch.setenv(CALLS_VAR, str(directory / "calls"))
     monkeypatch.delenv(SLEEP_VAR, raising=False)
     monkeypatch.delenv(FAIL_VAR, raising=False)
     monkeypatch.delenv("PYSRIM2_CACHE", raising=False)
@@ -142,10 +149,10 @@ def state_dir(tmp_path, monkeypatch):
 
 def calls(state):
     """The runs computed so far, as ``(seed, ions)`` pairs (failed attempts included)."""
-    path = state / "calls.txt"
-    if not path.exists():
+    folder = state / "calls"
+    if not folder.exists():
         return []
-    return [tuple(line.split()) for line in path.read_text().splitlines() if line]
+    return [tuple(p.read_text(encoding="utf-8").split()) for p in sorted(folder.iterdir())]
 
 
 class Recorder:

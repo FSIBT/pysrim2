@@ -173,7 +173,13 @@ class RunCache:
             # atomic, so a concurrent scan never reads a half-written tag
             part = root / f".{TAG_NAME}.{uuid.uuid4().hex}"
             part.write_text(_TAG_TEXT, encoding="utf-8")
-            os.replace(part, root / TAG_NAME)
+            try:
+                os.replace(part, root / TAG_NAME)
+            except PermissionError:
+                # Windows: another scan has the tag open; fine if it is complete
+                part.unlink(missing_ok=True)
+                if not is_cache(root):
+                    raise
         (root / "locks").mkdir(exist_ok=True)
         (root / "tmp").mkdir(exist_ok=True)
 
