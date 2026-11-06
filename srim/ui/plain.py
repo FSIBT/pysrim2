@@ -33,15 +33,17 @@ class PlainProgress:
         self.n_points = 0
         self.workers = 0
         self.started = clock()
-        self.status: dict[int, str] = {}  # point index -> queued, running, done, failed, stopped
+        self.status: dict[int, str] = {}  # point index -> queued, running, done, cached, ...
         self.ions: dict[int, int] = {}  # point index -> ions run so far
+        self.cache_hits: set[int] = set()  # points with a unit taken from the cache
+        self.ran: set[int] = set()  # points with a unit that a worker ran
         self._last_key = None
         self._last_printed = None
         self._handlers = {
             "scan_started": self._scan_started,
             "point_queued": self._queued,
             "point_started": self._started,
-            "point_cached": self._started,
+            "point_cached": self._cached,
             "point_progress": self._progress,
             "point_finished": self._finished,
             "point_failed": self._failed,
@@ -69,13 +71,20 @@ class PlainProgress:
         self.status[event.index] = "queued"
 
     def _started(self, event):
+        self.ran.add(event.index)
         self.status[event.index] = "running"
+
+    def _cached(self, event):
+        self.cache_hits.add(event.index)
+        self.status[event.index] = "running"  # as a unit that is being run, until it is done
 
     def _progress(self, event):
         self.ions[event.index] = event.ions_done
 
     def _finished(self, event):
-        self.status[event.index] = "done"
+        # a point all of whose units came from the cache is "cached", as in the result table
+        cached = event.index in self.cache_hits and event.index not in self.ran
+        self.status[event.index] = "cached" if cached else "done"
         self.ions[event.index] = event.n_ions
 
     def _failed(self, event):
@@ -94,9 +103,8 @@ class PlainProgress:
         return sum(1 for s in self.status.values() if s == state)
 
     def _key(self) -> tuple:
-        return tuple(self._count(s) for s in ("queued", "running", "done", "failed", "stopped")) + (
-            sum(self.ions.values()),
-        )
+        states = ("queued", "running", "done", "cached", "failed", "stopped")
+        return tuple(self._count(s) for s in states) + (sum(self.ions.values()),)
 
     def _print(self, *, force=False, final=False, stopped=False):
         key = self._key()
@@ -112,14 +120,16 @@ class PlainProgress:
         self._last_key = key
         self._last_printed = now
         elapsed = now - self.started
-        queued, running, done, failed, stopped_n, ions = key
+        queued, running, done, cached, failed, stopped_n, ions = key
+        done += cached  # the points that came from the cache are done too
         finished = done + failed
         remaining = self.n_points - finished - stopped_n
         if final:
             text = (
-                f"finished {done}/{self.n_points} done, {failed} failed, {stopped_n} stopped"
-                f"{' (stopped by the user)' if stopped else ''}  ions {ions}  "
-                f"elapsed {_hms(elapsed)}"
+                f"finished {done}/{self.n_points} done"
+                f"{f' ({cached} cached)' if cached else ''}, {failed} failed, "
+                f"{stopped_n} stopped{' (stopped by the user)' if stopped else ''}  "
+                f"ions {ions}  elapsed {_hms(elapsed)}"
             )
         else:
             if finished and remaining > 0:

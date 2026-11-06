@@ -6,6 +6,7 @@ import json
 import pytest
 
 from srim.scan.events import (
+    PointCached,
     PointFailed,
     PointFinished,
     PointProgress,
@@ -141,3 +142,20 @@ def test_json_turns_non_finite_numbers_into_null():
     stream = io.StringIO()
     JsonLines(stream)(PointFinished(0, "id0", {"x": float("nan")}, 1, 0.0))
     assert json.loads(stream.getvalue())["values"] == {"x": None}
+
+
+def test_plain_final_line_counts_the_cached_points_as_done(view):
+    progress, clock, stream = view
+    progress(start(n_points=3))
+    for event in queue_all(3):
+        progress(event)
+    progress(PointCached(0, "id0", 0))  # every unit of this point came from the cache
+    progress(PointFinished(0, "id0", {}, 100, 0.0))
+    progress(PointStarted(1, "id1", 0, 1))  # this one ran
+    progress(PointFinished(1, "id1", {}, 100, 1.0))
+    progress(PointCached(2, "id2", 0))
+    progress(PointFinished(2, "id2", {}, 100, 0.0))
+    progress(ScanFinished(n_done=3, n_failed=0, seconds=2.0, stopped=False))
+    assert lines(stream)[-1] == (
+        "finished 3/3 done (2 cached), 0 failed, 0 stopped  ions 300  elapsed 0:00:00"
+    )
