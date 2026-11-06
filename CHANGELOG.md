@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-06
+
 ### Changed
 
 - **`TRIM.run()` and `SR.run()` now run in an isolated directory by default.** Every run works in its own private copy of the SRIM install (hard links for the read-only files, so a copy adds well under 15 % of SRIM's size; real copies of what SRIM writes) under `<data dir>/runs` (or `work_dir=`); the installed SRIM directory is never written to, so any number of runs, scripts, scans or users can run at the same time. On Linux each run also gets its own clone of the wine prefix, so cleaning up after a failure only stops that run's wine processes. The returned `Results` points at the run directory (`results.directory`); pass `output_dir=` to get the output files and `run.yaml` in a folder of your choice (the run directory is then removed unless `keep=True`); `run_dir=` reuses a `srim.rundir.RunDir`. A failed run keeps its directory for debugging and names it in the error.
@@ -231,7 +233,8 @@ Changes since pysrim 0.5.10. See
 
 Versions up to and including 0.5.10 were released as `pysrim` by Chris Ostrouchov.
 
-[Unreleased]: https://github.com/FSIBT/pysrim2/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/FSIBT/pysrim2/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/FSIBT/pysrim2/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/FSIBT/pysrim2/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/FSIBT/pysrim2/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/FSIBT/pysrim2/compare/0421575...v0.6.0
