@@ -38,6 +38,9 @@ RUN_KIND = "run"
 REQUESTS = ("pause", "resume", "stop")
 #: seconds between two reads of the control file
 POLL_SECONDS = 0.5
+#: seconds after the start of the server before it is checked (one that has exited by then
+#: did not start: its port is taken, say)
+STARTUP_SECONDS = 1.0
 #: seconds the server stays up after a finished scan, so that its final state can be seen
 GRACE_SECONDS = 5.0
 #: seconds the server process gets to exit after SIGTERM to its group, before SIGKILL
@@ -256,10 +259,28 @@ class WebView:
             self._start(event)
             if self._disabled:
                 return
-        self._log.write(event.to_json() + "\n")
-        self._log.flush()
+        try:
+            self._log.write(event.to_json() + "\n")
+            self._log.flush()
+        except OSError as exc:  # the scan goes on without the view
+            self._disable(f"the events file cannot be written ({exc})")
+            return
         if event.kind == "scan_finished":
             self.finished = True
+
+    def _disable(self, reason: str) -> None:
+        """Turn the view off, with one notice: the scan goes on without it."""
+        _notice(f"--ui web: {reason}; the scan goes on without the web view")
+        self._disabled = True
+        if self._server is not None:
+            stop_server(self._server)
+            self._server = None
+        if self._log is not None:
+            try:
+                self._log.close()
+            except OSError:
+                pass
+            self._log = None
 
     def apply_requests(self) -> list[str]:
         """Act on the requests written to the control file since the last call; returns the
@@ -316,11 +337,14 @@ class WebView:
             command = viewer_command(self.folder.resolve(), self.plot)
             self._server = start_server(server_argv(self.host, self.port, command))
         except OSError as exc:
-            _notice(f"--ui web: the web view did not start ({exc}); the scan goes on")
-            self._disabled = True
-            if self._log is not None:
-                self._log.close()
-                self._log = None
+            self._disable(f"the web view did not start ({exc})")
+            return
+        time.sleep(STARTUP_SECONDS)
+        code = self._server.poll()
+        if code is not None:
+            self._disable(
+                f"the web server exited at once (code {code}; is port {self.port} in use?)"
+            )
             return
         if self.host not in LOOPBACK_HOSTS:
             _notice(
@@ -335,8 +359,17 @@ class WebView:
         self._poller.start()
 
     def _poll_until_closed(self) -> None:
+        warned = False
         while not self._closing.wait(self.poll):
-            self.apply_requests()
+            try:
+                self.apply_requests()
+            except OSError as exc:  # keep polling: the next read may work
+                if not warned:
+                    warned = True
+                    _notice(
+                        f"warning: the control file cannot be read ({exc}); p and q may "
+                        "not reach the scan"
+                    )
 
 
 def _notice(text: str, stdout: bool = False) -> None:

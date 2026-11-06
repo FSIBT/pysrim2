@@ -9,6 +9,7 @@ import socket
 import subprocess
 import sys
 import threading
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -64,6 +65,7 @@ def started(monkeypatch):
         web, "_signal_group", lambda server, sig: fake.send_group_signal(server.pid, sig)
     )
     monkeypatch.setattr(web, "STOP_SECONDS", 0.01)
+    monkeypatch.setattr(web, "STARTUP_SECONDS", 0.0)
     return SimpleNamespace(argv=calls, server=fake)
 
 
@@ -336,3 +338,66 @@ def test_each_run_starts_its_events_file_with_a_run_header(tmp_path, started):
     assert header == {"kind": "run", "run_id": view.run_id}
     assert json.loads(lines[1])["kind"] == "scan_started"
     assert len(view.run_id) == 32
+
+
+def test_a_control_file_that_cannot_be_read_is_warned_once_and_polling_goes_on(
+    tmp_path, started, monkeypatch, capsys
+):
+    view, _, _ = make_view(tmp_path)
+    view.on_event(scan_started(tmp_path))
+    calls = []
+
+    def flaky():
+        calls.append(1)
+        if len(calls) <= 3:
+            raise OSError("disk trouble")
+        return []
+
+    monkeypatch.setattr(view, "apply_requests", flaky)
+    deadline = time.monotonic() + TIMEOUT
+    while len(calls) < 5 and time.monotonic() < deadline:
+        time.sleep(0.01)
+    view.close()
+    err = capsys.readouterr().err
+    assert len(calls) >= 5  # still polling after the failures
+    assert err.count("the control file cannot be read (disk trouble)") == 1
+
+
+def test_an_events_file_that_cannot_be_written_turns_the_view_off_with_one_notice(
+    tmp_path, started, capsys
+):
+    class Broken:
+        def write(self, text):
+            raise OSError("disk full")
+
+        def flush(self):
+            pass
+
+        def close(self):
+            pass
+
+    view, _, _ = make_view(tmp_path)
+    view.on_event(scan_started(tmp_path))
+    view._log = Broken()
+    view.on_event(PointQueued(index=0, id="ab"))  # does not raise into the scan
+    view.on_event(PointQueued(index=1, id="cd"))
+    err = capsys.readouterr().err
+    assert err.count("the events file cannot be written (disk full)") == 1
+    assert started.server.terminated  # the server goes with the view
+    view.close()
+
+
+def test_a_server_that_exits_at_once_is_a_notice_and_the_scan_goes_on(
+    tmp_path, monkeypatch, capsys
+):
+    dead = FakeServer()
+    dead.exited = True
+    monkeypatch.setattr(web, "start_server", lambda argv: dead)
+    monkeypatch.setattr(web, "STARTUP_SECONDS", 0.0)
+    view, _, _ = make_view(tmp_path, port=8123)
+    view.on_event(scan_started(tmp_path))
+    view.on_event(PointQueued(index=0, id="ab"))  # no error
+    err = capsys.readouterr().err
+    assert "the web server exited at once (code 0; is port 8123 in use?)" in err
+    assert "the scan goes on without the web view" in err
+    view.close()
