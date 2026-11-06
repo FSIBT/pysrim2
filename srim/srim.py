@@ -585,7 +585,9 @@ class TRIM:
         dest_directory : :obj:`str`
             destination directory to copy TRIM output files to
         check_srim_output : :obj:`bool`, optional
-            ensure that all files exist
+            also copy the files that SRIM writes to its ``SRIM Outputs`` subfolder
+            (``RANGE_3D.txt``, ``COLLISON.txt`` ...). Files are copied, never moved: the
+            source is left as it is, so a :class:`~srim.output.Results` of it keeps working.
         """
         known_files = {
             "run.yaml",
@@ -622,7 +624,7 @@ class TRIM:
                 os.path.isfile(os.path.join(src_directory, "SRIM Outputs", known_file))
                 and check_srim_output
             ):
-                shutil.move(os.path.join(src_directory, "SRIM Outputs", known_file), dest_directory)
+                shutil.copy(os.path.join(src_directory, "SRIM Outputs", known_file), dest_directory)
 
     def run(
         self,

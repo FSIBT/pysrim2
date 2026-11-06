@@ -2,6 +2,7 @@
 
 import os
 import random
+import shutil
 from pathlib import Path
 
 import pytest
@@ -548,3 +549,22 @@ def test_run_yaml_accepts_a_scan_section_and_ignores_it(tmp_path):
             yaml.safe_dump({"version": 1, "spec": spec, "colour": 1})
         )
         RunSpec.from_yaml(tmp_path / "bad.yaml")
+
+
+
+def test_copy_output_files_leaves_the_sources_in_place_for_results(tmp_path):
+    """Files of SRIM Outputs are copied, so Results of the source keeps reading them."""
+    from srim.output import Results
+
+    run = tmp_path / "run"
+    shutil.copytree(TEST_FILES / "1", run)
+    outputs = run / "SRIM Outputs"
+    outputs.mkdir()
+    shutil.move(run / "RANGE_3D.txt", outputs / "RANGE_3D.txt")
+    results = Results(str(run))
+    out = tmp_path / "out"
+    out.mkdir()
+    TRIM.copy_output_files(str(run), str(out))
+    assert (out / "RANGE_3D.txt").is_file()
+    assert (outputs / "RANGE_3D.txt").is_file()
+    assert len(results.range3d.df) > 0
