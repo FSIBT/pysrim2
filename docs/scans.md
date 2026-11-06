@@ -33,7 +33,9 @@ for a plot or a report.
   on one worker, so one big point uses one core. The batches are merged like a precision
   point's: the values are the extractors applied to all the ions, and `<value>_err` is the
   batch-means error (see [Precision targets](#precision-targets)). Each batch is cached.
-  Not allowed with `precision`, which has its own `batch_ions`.
+  Not allowed with `precision`, which has its own `batch_ions`. Batches use seeds derived
+  from the point's seed, so a scan with `batch_ions` gives different (equally valid) numbers
+  than the same scan without it, even when `batch_ions >= ions`.
 - **Seeds.** The base seed (`seed`) is recorded in `scan.yaml`. Each point gets a seed
   derived from the base seed and its id, so a point keeps its seed when other points
   are added or reordered. Without `seed`, each `run_scan` draws a base seed and records
