@@ -337,7 +337,11 @@ class Scan:
 
     @classmethod
     def from_yaml(cls, path):
-        """Read a ``run.yaml`` with a ``scan:`` section. Raises :class:`SpecError`."""
+        """Read a ``run.yaml`` with a ``scan:`` section. Raises :class:`SpecError`.
+
+        Extractors written as ``python:<module>:<qualname>`` are imported, which runs that
+        module's top-level code: only load scan files you trust.
+        """
         base = RunSpec.from_yaml(path)  # validates the spec, the version and the keys
         document = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
         section = document.get("scan")

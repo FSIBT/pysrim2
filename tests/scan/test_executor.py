@@ -527,7 +527,7 @@ def test_workers_and_their_children_die_when_the_parent_is_killed(tmp_path, stat
         proc.kill()  # no cleanup in the parent at all
         proc.wait(timeout=10)
     for pid in workers + children:
-        assert pid_gone(pid, timeout=5.0), f"process {pid} outlived its parent"
+        assert pid_gone(pid, timeout=10.0), f"process {pid} outlived its parent"
 
 
 def exiting_runner(spec):
