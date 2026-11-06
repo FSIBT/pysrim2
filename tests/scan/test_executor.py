@@ -858,3 +858,42 @@ def test_a_stop_while_paused_ends_the_scan_without_starting_points(tmp_path, lif
     assert result.table["status"].tolist() == ["stopped", "stopped"]
     assert not any(isinstance(e, PointStarted) for e in recorder.events)
     assert recorder.events[-1].stopped is True
+
+
+# -- predefined extractors that need the run spec ------------------------------------------
+
+
+def test_ions_in_layer_works_in_a_scan_with_fixed_ions(tmp_path):
+    """The extractor reads the layer edges from the run spec, which the results must carry."""
+    scan = energy_scan(
+        energies=(10.0, 20.0),
+        extract=[{"ions_in_layer": {"layer_index": 0}}],
+    )
+    result = run_scan(scan, workers=2, runner=fixture_runner, scan_dir=tmp_path / "s", cache=False)
+    assert result.table["status"].tolist() == ["done", "done"]
+    values = result.table["fraction_of_stopped_ions_in_layer_0"].tolist()
+    assert all(0.0 <= float(v) <= 1.0 for v in values)
+
+
+def test_ions_in_layer_works_for_cached_points(tmp_path):
+    scan = energy_scan(
+        energies=(10.0,),
+        extract=[{"ions_in_layer": {"layer_index": 0}}],
+    )
+    first = run_scan(scan, workers=1, runner=fixture_runner, scan_dir=tmp_path / "a")
+    again = run_scan(
+        scan,
+        workers=1,
+        runner=never_runs,
+        scan_dir=tmp_path / "b",
+        cache=tmp_path / "a" / "cache",
+    )
+    assert again.table["status"].tolist() == ["cached"]
+    assert (
+        again.table["fraction_of_stopped_ions_in_layer_0"].tolist()
+        == first.table["fraction_of_stopped_ions_in_layer_0"].tolist()
+    )
+
+
+def never_runs(spec):
+    raise AssertionError("a cached run must not be computed again")

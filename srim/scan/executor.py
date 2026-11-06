@@ -895,6 +895,7 @@ class _ScanRun:
         self._emit(PointProgress(index, n_ions, n_ions))
         try:
             with Results(str(out)) as results:
+                results.spec = self._unit_spec(index, 0).to_dict()  # ions_in_layer reads it
                 values = dict(self.extract(results, point))
             self._check_names(values)
         except Exception as exc:
@@ -925,6 +926,7 @@ class _ScanRun:
         size = self.plan[index][batch]
         try:
             with Results(str(self._unit_dir(index, batch))) as results:
+                results.spec = self._unit_spec(index, batch).to_dict()
                 values = dict(self.extract(results, point))
             self._check_names(values)
         except Exception as exc:

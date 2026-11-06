@@ -224,7 +224,7 @@ def _collect_point(scan: Scan, point, spec, job, folder: Path, store):
     if (out / DONE).is_file():
         shutil.copytree(out, dest, ignore=shutil.ignore_patterns(DONE, ERROR_LOG))
         _store(store, spec, dest)
-        return _extracted(scan, point, dest, spec.seed)
+        return _extracted(scan, point, dest, spec)
     if (out / ERROR_LOG).is_file():
         dest.mkdir(parents=True)
         shutil.copy2(out / ERROR_LOG, dest / ERROR_LOG)
@@ -234,10 +234,12 @@ def _collect_point(scan: Scan, point, spec, job, folder: Path, store):
     return _row(index, "missing", None, None, None, error=NOT_RUN)
 
 
-def _extracted(scan: Scan, point, dest: Path, seed: int):
+def _extracted(scan: Scan, point, dest: Path, spec):
     """The row of a finished point: its extractors run here, in this process."""
+    seed = spec.seed
     try:
         with Results(str(dest)) as results:
+            results.spec = spec.to_dict()  # ions_in_layer reads the layer edges from it
             values = dict(combine(scan.extract)(results, point))
         clash = sorted(set(values) & (set(scan.param_names) | _RESERVED))
         if clash:

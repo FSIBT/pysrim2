@@ -229,3 +229,14 @@ def test_collect_reads_a_python_extractor_that_cannot_be_imported(tmp_path):
 def test_collect_needs_a_prepared_scan(tmp_path):
     with pytest.raises(FileNotFoundError, match="prepare the scan first"):
         collect(tmp_path / "nothing", cache=False)
+
+
+def test_collect_runs_extractors_that_need_the_run_spec(tmp_path):
+    """ions_in_layer reads the layer edges from the run spec the collected results carry."""
+    scan = scan_of(energies=(10.0, 20.0), extract=[{"ions_in_layer": {"layer_index": 0}}])
+    folder = prepare(scan, tmp_path / "s")
+    run_all_jobs(folder)
+    collected = collect(folder, cache=False)
+    assert collected.table["status"].tolist() == ["done", "done"]
+    values = collected.table["fraction_of_stopped_ions_in_layer_0"].tolist()
+    assert all(0.0 <= float(v) <= 1.0 for v in values)
