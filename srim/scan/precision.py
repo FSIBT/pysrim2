@@ -174,9 +174,10 @@ def batches_to_add(precision: Precision, ions: int, err: float, goal: float, n_b
     remaining = math.ceil((precision.max_ions - ions) / precision.batch_ions)
     if remaining <= 0:
         return 0
+    count = n_batches
     if math.isfinite(err) and math.isfinite(goal) and goal > 0:
-        needed = math.ceil(ions * (err / goal) ** 2 * 1.1)
+        # a huge err/goal ratio would overflow; anything that large means "the maximum"
+        ratio = min(err / goal, 1e6)
+        needed = ions * ratio**2 * 1.1
         count = math.ceil((needed - ions) / precision.batch_ions)
-    else:
-        count = n_batches
     return min(max(count, 1), remaining)

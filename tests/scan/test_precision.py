@@ -184,3 +184,8 @@ def test_synthetic_noise_that_never_converges_stops_at_the_maximum():
 def test_synthetic_runs_are_deterministic_given_the_seed():
     p = Precision("x", rel=0.02, min_ions=40, max_ions=20_000, batch_ions=20)
     assert simulate_until(p, seed=7) == simulate_until(p, seed=7)
+
+
+def test_batches_to_add_survives_a_huge_error_ratio():
+    p = Precision(target="x", rel=0.01, min_ions=10, max_ions=1000, batch_ions=10)
+    assert batches_to_add(p, ions=20, err=1e300, goal=5e-324, n_batches=2) == 98
