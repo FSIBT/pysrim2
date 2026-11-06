@@ -8,9 +8,11 @@ Every wait has a timeout, and a SIGALRM guard (POSIX) fails a test that hangs.
 
 import io
 import json
+import os
 import signal
 import sys
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -24,10 +26,14 @@ from srim.spec import RunSpec
 FIXTURE = Path(__file__).resolve().parent.parent / "test_files" / "1"
 GUARD_SECONDS = 120
 RUNNER_MODULE = "fake_srim_for_scan_cli"
+RUNNER_REF = f"{RUNNER_MODULE}:run"
 
 RUNNER_SOURCE = f'''"""Stands in for SRIM in the scan command tests."""
 
 import os
+import subprocess
+import sys
+import time
 from pathlib import Path
 
 from srim.output import Results
@@ -36,6 +42,14 @@ FIXTURE = Path({str(FIXTURE)!r})
 
 
 def run(spec):
+    started = os.environ.get("PYSRIM2_TEST_STARTED")
+    if started:
+        Path(started).touch()  # tells the test that a unit is running
+    if os.environ.get("PYSRIM2_TEST_SLEEP"):
+        time.sleep(float(os.environ["PYSRIM2_TEST_SLEEP"]))
+    if os.environ.get("PYSRIM2_TEST_NOISE"):
+        print("noise from the runner")  # what SRIM or wine may print
+        subprocess.run([sys.executable, "-c", "print('noise from a child')"], check=True)
     fail = os.environ.get("PYSRIM2_TEST_FAIL_ENERGY")
     if fail and spec.to_dict()["ion"]["energy_keV"] == float(fail):
         raise ValueError("SRIM said no")
@@ -85,7 +99,7 @@ def work(tmp_path, monkeypatch):
     cache or failure left over from the developer's shell."""
     (tmp_path / f"{RUNNER_MODULE}.py").write_text(RUNNER_SOURCE, encoding="utf-8")
     monkeypatch.syspath_prepend(str(tmp_path))
-    monkeypatch.setenv(cli.SCAN_RUNNER_VAR, f"{RUNNER_MODULE}:run")
+    monkeypatch.setenv(cli.SCAN_RUNNER_VAR, RUNNER_REF)
     monkeypatch.delenv("PYSRIM2_CACHE", raising=False)
     monkeypatch.delenv("PYSRIM2_TEST_FAIL_ENERGY", raising=False)
     return tmp_path
@@ -121,7 +135,10 @@ def test_plain_run_with_every_point_done_exits_0(work, capsys):
     code = cli.main(["scan", "run", str(write_scan(work)), "--workers", "2", "--ui", "plain",
                      "-o", str(work / "o")])  # fmt: skip
     assert code == 0
-    assert capsys.readouterr().err == ""
+    assert (
+        capsys.readouterr().err
+        == f"pysrim2: using test runner {RUNNER_REF} (PYSRIM2_SCAN_RUNNER)\n"
+    )
 
 
 def test_json_run_writes_only_events_to_stdout(work, monkeypatch, capsys):
@@ -307,3 +324,169 @@ def test_clean_of_a_shared_cache_and_its_argument_rules(work, capsys):
     assert cli.main(["scan", "clean", str(work), "--cache", str(shared)]) == 2
     assert cli.main(["scan", "clean", "--cache", str(shared), "--all"]) == 2
     capsys.readouterr()
+
+
+def scan_folder(work: Path, name: str = "out") -> Path:
+    """A finished scan folder (it has the marker) under ``work``."""
+    out = work / name
+    assert cli.main(["scan", "run", str(write_scan(work)), "--ui", "plain", "-o", str(out)]) == 0
+    return out
+
+
+def test_clean_all_needs_the_marker_not_just_scan_yaml(work, capsys):
+    folder = work / "project"
+    folder.mkdir()
+    (folder / "scan.yaml").write_text("not pysrim2's\n", encoding="utf-8")
+    (folder / "data.csv").write_text("precious\n", encoding="utf-8")
+    assert cli.main(["scan", "clean", str(folder), "--all"]) == 2
+    assert "no .pysrim2-scan marker" in capsys.readouterr().err
+    assert (folder / "data.csv").exists() and (folder / "scan.yaml").exists()
+
+
+def test_clean_all_refuses_a_symbolic_link_and_keeps_the_target(work, capsys):
+    out = scan_folder(work)
+    link = work / "link"
+    link.symlink_to(out, target_is_directory=True)
+    assert cli.main(["scan", "clean", str(link), "--all"]) == 1
+    assert "is a symbolic link" in capsys.readouterr().err
+    assert (out / "scan.yaml").exists()
+
+
+def test_clean_all_refuses_the_working_directory_and_its_parents(work, monkeypatch, capsys):
+    out = scan_folder(work)
+    inner = out / "inner"
+    inner.mkdir()
+    monkeypatch.chdir(out)
+    assert cli.main(["scan", "clean", str(out), "--all"]) == 1
+    assert "holds the working directory" in capsys.readouterr().err
+    monkeypatch.chdir(inner)  # the folder is above the working directory
+    assert cli.main(["scan", "clean", str(out), "--all"]) == 1
+    assert (out / "scan.yaml").exists()
+
+
+def test_clean_all_refuses_the_home_folder(work, monkeypatch, capsys):
+    home = work / "home"
+    home.mkdir()
+    (home / ".pysrim2-scan").write_text("pysrim2 scan folder\n", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.chdir(work)
+    assert cli.main(["scan", "clean", str(home), "--all"]) == 1
+    assert "is the home folder" in capsys.readouterr().err
+    assert home.exists()
+
+
+def test_clean_all_reports_a_removal_that_fails(work, monkeypatch, capsys):
+    out = scan_folder(work)
+
+    def refuse(path, **kwargs):
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(cli.shutil, "rmtree", refuse)
+    assert cli.main(["scan", "clean", str(out), "--all"]) == 1
+    assert "could not remove it: denied" in capsys.readouterr().err
+
+
+def test_clean_is_refused_while_a_scan_holds_the_folder(work, capsys):
+    from srim.scan.executor import scan_lock
+
+    out = scan_folder(work)
+    held = scan_lock(out).acquire()
+    try:
+        assert cli.main(["scan", "clean", str(out), "--all"]) == 1
+        assert "a scan is running" in capsys.readouterr().err
+        assert cli.main(["scan", "clean", str(out)]) == 1
+        assert cli.main(["scan", "clean", str(out), "--all", "--dry-run"]) == 0
+    finally:
+        held.release()
+    assert (out / "scan.yaml").exists()
+    assert cli.main(["scan", "clean", str(out), "--all"]) == 0
+    assert not out.exists()
+
+
+def test_scan_run_in_a_folder_that_a_scan_holds_exits_2(work, capsys):
+    from srim.scan.executor import scan_lock
+
+    out = work / "busy"
+    out.mkdir()
+    held = scan_lock(out).acquire()
+    try:
+        code = cli.main(["scan", "run", str(write_scan(work)), "--ui", "plain", "-o", str(out)])
+    finally:
+        held.release()
+    assert code == 2
+    assert "a scan is already running in" in capsys.readouterr().err
+    assert not (out / "scan.yaml").exists()
+
+
+def test_json_stdout_holds_only_events_even_when_the_runner_prints(work, monkeypatch, capfd):
+    # prints from the runner, and from a child it starts, go to stderr
+    monkeypatch.setenv("PYSRIM2_TEST_NOISE", "1")
+    out = work / "out"
+    code = cli.main(["scan", "run", str(write_scan(work)), "--ui", "json", "-o", str(out)])
+    captured = capfd.readouterr()
+    assert code == 0
+    rows = json_rows(captured.out)
+    assert rows[0]["kind"] == "scan_started" and rows[-1]["kind"] == "scan_finished"
+    assert "noise from the runner" in captured.err
+    assert "noise from a child" in captured.err
+
+
+def test_ctrl_c_during_a_scan_exits_130_with_the_partial_result(work, monkeypatch, capsys):
+    if sys.platform == "win32":
+        pytest.skip("the SIGINT test uses POSIX signals")
+    started = work / "started"
+    monkeypatch.setenv("PYSRIM2_TEST_SLEEP", "60")  # the units run until they are stopped
+    monkeypatch.setenv("PYSRIM2_TEST_STARTED", str(started))
+
+    def press_ctrl_c_once_a_unit_runs():
+        deadline = time.monotonic() + 60
+        while not started.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        os.kill(os.getpid(), signal.SIGINT)
+
+    presser = threading.Thread(target=press_ctrl_c_once_a_unit_runs, daemon=True)
+    presser.start()
+    out = work / "out"
+    code = cli.main(["scan", "run", str(write_scan(work)), "--workers", "2", "--ui", "plain",
+                     "-o", str(out)])  # fmt: skip
+    presser.join(timeout=5)
+    assert code == 130
+    assert (out / "result" / "scan.csv").is_file()
+    assert "stopped by Ctrl-C" in capsys.readouterr().err
+
+
+def test_an_error_before_the_scan_starts_exits_2(work, monkeypatch, capsys):
+    import srim.scan
+
+    def refuse(scan, **kwargs):
+        raise ValueError("workers must be a whole number >= 1, got 0")
+
+    monkeypatch.setattr(srim.scan, "run_scan", refuse)
+    assert cli.main(["scan", "run", str(write_scan(work)), "-o", str(work / "o")]) == 2
+    assert "scan did not start: workers must be" in capsys.readouterr().err
+
+
+def test_an_error_after_the_scan_starts_exits_1(work, monkeypatch, capsys):
+    import srim.scan
+    from srim.scan.events import ScanStarted
+
+    def fail_midway(scan, *, on_event, **kwargs):
+        on_event(ScanStarted(2, 1, 7, "x"))
+        raise ValueError("the result table is broken")
+
+    monkeypatch.setattr(srim.scan, "run_scan", fail_midway)
+    assert cli.main(["scan", "run", str(write_scan(work)), "-o", str(work / "o")]) == 1
+    assert "scan failed: the result table is broken" in capsys.readouterr().err
+
+
+def test_reusing_a_folder_warns_only_when_its_scan_differs(work, capsys):
+    scan = write_scan(work)
+    out = work / "out"
+    assert cli.main(["scan", "run", str(scan), "--ui", "plain", "-o", str(out)]) == 0
+    capsys.readouterr()
+    assert cli.main(["scan", "run", str(scan), "--ui", "plain", "-o", str(out)]) == 0
+    assert "describes another scan" not in capsys.readouterr().err
+    other = work / "other.yaml"
+    Scan(BASE, grid={"ion.energy_keV": [10.0]}, seed=7).to_yaml(other)
+    assert cli.main(["scan", "run", str(other), "--ui", "plain", "-o", str(out)]) == 0
+    assert "describes another scan" in capsys.readouterr().err

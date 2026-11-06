@@ -39,6 +39,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `pysrim2 scan clean DIR --all` removes only a folder with the `.pysrim2-scan` marker. It refuses a symbolic link, the working directory or a folder above it, and the home folder, and it refuses a folder that a running scan holds (`pysrim2 scan clean` does the same for the cache). A removal that fails is reported with exit 1.
+- A scan that fails after it started exits 1 (`scan failed`); only an error before the start exits 2, and so does a folder that another scan holds.
+- `pysrim2 scan run` reuses a scan folder whose `scan.yaml` describes another scan only with a warning on stderr. `PYSRIM2_SCAN_RUNNER` prints a notice on stderr when it replaces SRIM.
+- `pysrim2 run` and `scan run` take the path after `--set` in both orders, also for a path with `=` in its folder name (`runs/x=1/run.yaml`).
 - `pysrim2 run --set KEY=VALUE run.yaml` works: the path after `--set` was read as one of its values, so the command failed with a missing `run.yaml`. `pysrim2 scan run` and `prepare` take the same order.
 - `implant_summary` on an empty frame returns NaN values without emitting RuntimeWarnings.
 - `pysrim2 run` no longer leaves an empty output folder behind when the run fails.

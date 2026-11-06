@@ -175,3 +175,34 @@ def test_run_set_before_the_spec_path(srim_install, run_yaml, tmp_path):
 def test_run_without_a_spec_path_exits_2(srim_install, capsys):
     assert cli.main(["run", "--set", "ion.energy_keV=30"]) == 2
     assert "no run.yaml" in capsys.readouterr().err
+
+
+def test_run_set_with_a_path_that_holds_an_equals_sign(srim_install, run_yaml, tmp_path):
+    folder = tmp_path / "runs" / "x=1"
+    folder.mkdir(parents=True)
+    target = folder / "run.yaml"
+    target.write_text(run_yaml.read_text(), encoding="utf-8")
+    first = tmp_path / "first"
+    assert cli.main(["run", "--set", "ion.energy_keV=30", str(target), "-o", str(first)]) == 0
+    assert RunSpec.from_yaml(first / "run.yaml").ion.energy_keV == 30.0
+    last = tmp_path / "last"
+    assert cli.main(["run", "--set", "ion.energy_keV=31", str(target), "-o", str(last)]) == 0
+    assert RunSpec.from_yaml(last / "run.yaml").ion.energy_keV == 31.0
+
+
+@pytest.mark.parametrize(
+    ("value", "overrides", "expected"),
+    [
+        (None, ["ion.energy_keV=30", "run.yaml"], ("run.yaml", ["ion.energy_keV=30"])),
+        (None, ["a=1", "runs/x=1/run.yaml"], ("runs/x=1/run.yaml", ["a=1"])),
+        ("given.yaml", ["a=1"], ("given.yaml", ["a=1"])),
+        (None, ["a=1"], (None, ["a=1"])),
+    ],
+)
+def test_spec_path_rules(value, overrides, expected):
+    assert cli._spec_path(value, overrides) == expected
+
+
+def test_run_without_a_path_says_to_put_it_before_set(srim_install, capsys):
+    assert cli.main(["run", "--set", "ion.energy_keV=30"]) == 2
+    assert "put the path before --set" in capsys.readouterr().err

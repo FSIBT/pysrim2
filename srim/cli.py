@@ -345,12 +345,21 @@ def _install(args) -> int:
 
 
 def _spec_path(value, overrides):
-    """The ``run.yaml`` path and the ``--set`` items. ``--set`` takes several values, so
-    ``run --set a=1 run.yaml`` reads the path as a value: it is the first item with no "="."""
+    """The ``run.yaml`` / ``scan.yaml`` path and the ``--set`` items.
+
+    ``--set`` takes several values, so ``run --set a=1 run.yaml`` reads the path as a value.
+    The path is then the first item with no "=", or else the last item that is an existing
+    file or ends in .yaml/.yml (a folder name may hold "=": ``runs/x=1/run.yaml``). None
+    when neither is there.
+    """
     if value is not None:
         return value, overrides
     for i, item in enumerate(overrides):
         if "=" not in item:
+            return item, overrides[:i] + overrides[i + 1 :]
+    for i in reversed(range(len(overrides))):
+        item = overrides[i]
+        if Path(item).is_file() or item.endswith((".yaml", ".yml")):
             return item, overrides[:i] + overrides[i + 1 :]
     return None, overrides
 
@@ -362,7 +371,9 @@ def _run(args) -> int:
     path, overrides = _spec_path(args.spec, args.overrides)
     if path is None:
         print(
-            "no run.yaml given (usage: pysrim2 run run.yaml [--set KEY=VALUE ...])", file=sys.stderr
+            "no run.yaml given (usage: pysrim2 run run.yaml [--set KEY=VALUE ...]); "
+            "put the path before --set",
+            file=sys.stderr,
         )
         return EXIT_BAD_INPUT
     try:
@@ -492,7 +503,10 @@ def _read_scan(value, overrides):
 
     path, overrides = _spec_path(value, overrides)
     if path is None:
-        raise SpecError("no scan.yaml given (usage: pysrim2 scan run scan.yaml [--set KEY=VALUE])")
+        raise SpecError(
+            "no scan.yaml given (usage: pysrim2 scan run scan.yaml [--set KEY=VALUE]); "
+            "put the path before --set"
+        )
     scan = Scan.from_yaml(path)
     if not overrides:
         return scan
@@ -506,14 +520,32 @@ def _read_scan(value, overrides):
     )
 
 
+def _describes_other_scan(scan_file: Path, scan) -> bool:
+    """True if the scan file in a reused folder describes another scan than ``scan``."""
+    from srim.scan import Scan
+    from srim.spec import SpecError
+
+    try:
+        existing = Scan.from_yaml(scan_file)
+    except (OSError, ValueError, SpecError):
+        return True  # unreadable: it is replaced, so say so
+    wanted = {"base": scan.base.to_dict(), **scan.to_dict()}
+    current = {"base": existing.base.to_dict(), **existing.to_dict()}
+    return current != wanted
+
+
 def _scan_folder_problem(folder: Path) -> str | None:
     """Why ``folder`` cannot hold a scan (None if it is new, empty or a scan folder)."""
+    from srim.scan.executor import LOCK_NAME
+
     if not folder.exists():
         return None
     if not folder.is_dir():
         return f"{folder} is not a folder"
-    if (folder / "scan.yaml").is_file() or not any(folder.iterdir()):
+    if (folder / "scan.yaml").is_file():
         return None
+    if not [item for item in folder.iterdir() if item.name != LOCK_NAME]:
+        return None  # empty, or holds only the lock of a scan that is starting
     return f"{folder} is not a scan folder (no scan.yaml) and is not empty; choose another folder"
 
 
@@ -526,9 +558,11 @@ def _runner_from_env():
     if not module_name or not name:
         raise ValueError(f"{SCAN_RUNNER_VAR} must look like module:function, got {ref!r}")
     try:
-        return getattr(importlib.import_module(module_name), name)
+        runner = getattr(importlib.import_module(module_name), name)
     except (ImportError, AttributeError) as exc:
         raise ValueError(f"{SCAN_RUNNER_VAR}={ref}: {exc}") from None
+    print(f"pysrim2: using test runner {ref} ({SCAN_RUNNER_VAR})", file=sys.stderr)
+    return runner
 
 
 def _view_for(ui: str) -> str:
@@ -579,6 +613,7 @@ def _scan(args) -> int:
 
 def _scan_run(args) -> int:
     from srim.scan import run_scan
+    from srim.scan.executor import ScanBusy
     from srim.spec import SpecError
 
     label = args.spec or "scan.yaml"
@@ -595,13 +630,21 @@ def _scan_run(args) -> int:
         return EXIT_BAD_INPUT
     if (folder / "scan.yaml").is_file():
         print(f"reusing the scan folder {folder}: scan.yaml is rewritten", file=sys.stderr)
+        if _describes_other_scan(folder / "scan.yaml", scan):
+            print(
+                f"warning: {folder / 'scan.yaml'} describes another scan; it is replaced "
+                "(points run again unless the cache has them)",
+                file=sys.stderr,
+            )
     view = _view_for(args.ui)
     consumer = JsonLines(sys.stdout) if view == "json" else PlainProgress(sys.stdout)
-    finished = {}
+    state = {}  # "started" once the scan has begun, "stopped" from its last event
 
     def on_event(event):
+        if event.kind == "scan_started":
+            state["started"] = True
         if event.kind == "scan_finished":
-            finished["stopped"] = event.stopped
+            state["stopped"] = event.stopped
         consumer(event)
 
     try:
@@ -619,13 +662,17 @@ def _scan_run(args) -> int:
     except KeyboardInterrupt:
         print("cancelled", file=sys.stderr)
         return EXIT_INTERRUPTED
-    except (SpecError, ValueError, FileNotFoundError, container.ContainerError) as exc:
-        print(f"scan did not start: {exc}", file=sys.stderr)
+    except ScanBusy as exc:
+        print(f"{exc}; wait for it or choose another folder", file=sys.stderr)
         return EXIT_BAD_INPUT
-    except (RuntimeError, subprocess.SubprocessError, OSError) as exc:
-        print(f"scan failed: {exc}", file=sys.stderr)
+    except (SpecError, ValueError, FileNotFoundError, container.ContainerError, RuntimeError,
+            subprocess.SubprocessError, OSError) as exc:  # fmt: skip
+        if not state.get("started"):  # nothing ran: bad input, or no SRIM / container runtime
+            print(f"scan did not start: {exc}", file=sys.stderr)
+            return EXIT_BAD_INPUT
+        print(f"scan failed: {exc}", file=sys.stderr)  # after scan_started: the run failed
         return EXIT_FAILED
-    return _report_outcome(result, folder, view, finished.get("stopped", False))
+    return _report_outcome(result, folder, view, state.get("stopped", False))
 
 
 def _scan_prepare(args) -> int:
@@ -684,9 +731,10 @@ def _scan_clean(args) -> int:
         return EXIT_BAD_INPUT
     if args.dir is None:
         return _clear_cache(Path(args.cache), args.dry_run)
+    folder = Path(args.dir)
     if args.all:
-        return _remove_scan_folder(Path(args.dir), args.dry_run)
-    return _clear_cache(Path(args.dir) / "cache", args.dry_run)
+        return _remove_scan_folder(folder, args.dry_run)
+    return _clear_cache(folder / "cache", args.dry_run, scan_folder=folder)
 
 
 def _plural(count: int, word: str) -> str:
@@ -696,9 +744,12 @@ def _plural(count: int, word: str) -> str:
     return f"{count} {word[:-1]}ies" if word.endswith("y") else f"{count} {word}s"
 
 
-def _clear_cache(path: Path, dry_run: bool) -> int:
+def _clear_cache(path: Path, dry_run: bool, scan_folder: Path | None = None) -> int:
+    """Remove the cache entries at ``path``. With ``scan_folder`` (the folder that owns the
+    cache) the removal holds that folder's lock, so a scan running there is not disturbed."""
     from srim.rundir import disk_usage
     from srim.scan.cache import clear_cache, is_cache
+    from srim.scan.executor import scan_lock
 
     if not path.is_dir():
         print(f"no cache at {path}")
@@ -719,22 +770,67 @@ def _clear_cache(path: Path, dry_run: bool) -> int:
             f"would remove {_plural(len(entries), 'cache entry')} ({size / 1e6:.1f} MB) from {path}"
         )
         return EXIT_OK
-    removed = clear_cache(path)
+    lock = None
+    if scan_folder is not None:
+        lock = scan_lock(scan_folder)
+        try:
+            lock.acquire()
+        except TimeoutError:
+            print(f"a scan is running in {scan_folder}; nothing removed", file=sys.stderr)
+            return EXIT_FAILED
+    try:
+        removed = clear_cache(path)
+    finally:
+        if lock is not None:
+            lock.release()
     print(f"removed {_plural(removed, 'cache entry')} from {path}")
     return EXIT_OK
 
 
+def _removal_refusal(folder: Path) -> str | None:
+    """Why ``folder`` must never be removed (a symbolic link, the working directory or a
+    folder above it, the home folder), or None."""
+    if folder.is_symlink():
+        return "is a symbolic link"
+    target = folder.resolve()
+    cwd = Path.cwd().resolve()
+    if target == cwd or target in cwd.parents:
+        return "holds the working directory"
+    if target == Path.home().resolve():
+        return "is the home folder"
+    return None
+
+
 def _remove_scan_folder(folder: Path, dry_run: bool) -> int:
     from srim.rundir import disk_usage
+    from srim.scan.executor import MARKER_NAME, scan_lock
 
-    if not (folder / "scan.yaml").is_file():
-        print(f"{folder} is not a scan folder (no scan.yaml); nothing removed", file=sys.stderr)
+    refusal = _removal_refusal(folder)
+    if refusal:
+        print(f"{folder} {refusal}; nothing removed", file=sys.stderr)
+        return EXIT_FAILED
+    if not (folder / MARKER_NAME).is_file():
+        print(
+            f"{folder} is not a scan folder (no {MARKER_NAME} marker); nothing removed",
+            file=sys.stderr,
+        )
         return EXIT_BAD_INPUT
     size = disk_usage(folder)
     if dry_run:
         print(f"would remove {folder} ({size / 1e6:.1f} MB)")
         return EXIT_OK
-    shutil.rmtree(folder)
+    lock = scan_lock(folder)
+    try:
+        lock.acquire()
+    except TimeoutError:
+        print(f"a scan is running in {folder}; nothing removed", file=sys.stderr)
+        return EXIT_FAILED
+    lock.release()  # the lock file is inside the folder: release it before the removal
+    try:
+        shutil.rmtree(folder)
+    except OSError as exc:
+        print(f"{folder}: could not remove it: {exc}", file=sys.stderr)
+        return EXIT_FAILED
     print(f"removed {folder} ({size / 1e6:.1f} MB)")
     return EXIT_OK
 
