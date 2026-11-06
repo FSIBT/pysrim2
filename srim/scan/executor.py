@@ -472,9 +472,6 @@ class _ScanRun:
         try:
             with Results(str(out)) as results:
                 values = dict(self.extract(results, point))
-            # implant_summary counts the stopped ions as n_ions; the scan's n_ions (ions run)
-            # is the column, so the extractor's copy is left out
-            values.pop("n_ions", None)
             clash = sorted(set(values) & self.names)
             if clash:
                 raise ValueError(f"extractor column(s) {clash} clash with the scan's own columns")

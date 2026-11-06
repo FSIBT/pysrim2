@@ -99,8 +99,10 @@ def test_implant_summary_matches_analysis_and_raw_depths(single):
     row = extract.implant_summary(single)
     raw = single.range3d.df
     expected = analysis_implant_summary(raw)
+    expected["n_ions_stopped"] = expected.pop("n_ions")
     assert row == pytest.approx(expected, nan_ok=True)
-    assert row["n_ions"] == len(raw)
+    assert row["n_ions_stopped"] == len(raw)
+    assert "n_ions" not in row
     # hand check of the mean projected range from the raw depth column
     assert row["mean_depth_A"] == pytest.approx(raw["depth_A"].sum() / len(raw))
 
@@ -377,7 +379,7 @@ def test_extractors_on_merged_results(single):
         assert len(r3) == 2 * len(raw3d)
 
         # implant summary of both batches: the same ions twice
-        assert extract.implant_summary(merged)["n_ions"] == 2 * len(raw3d)
+        assert extract.implant_summary(merged)["n_ions_stopped"] == 2 * len(raw3d)
         assert extract.implant_summary(merged)["mean_depth_A"] == pytest.approx(
             raw3d["depth_A"].mean()
         )

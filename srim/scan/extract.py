@@ -219,12 +219,16 @@ def implant_summary(results, point=None) -> dict[str, float]:
     Returns
     -------
     dict
-        ``n_ions`` (count), ``mean_depth_A`` (projected range), ``straggle_depth_A``,
+        ``n_ions_stopped`` (count of stopped ions; ``n_ions`` is the scan's own column for
+        the ions run), ``mean_depth_A`` (projected range), ``straggle_depth_A``,
         ``lateral_range_A``, ``lateral_straggle_A``, ``radial_range_A``,
         ``radial_straggle_A``, ``skewness`` and ``kurtosis`` (dimensionless).
-        The same keys as :meth:`srim.analysis.implant_summary`; see its docstring.
+        The keys of :meth:`srim.analysis.implant_summary` with ``n_ions`` renamed to
+        ``n_ions_stopped``.
     """
-    return dict(_implant_summary(_range3d_df(results, "implant_summary")))
+    summary = dict(_implant_summary(_range3d_df(results, "implant_summary")))
+    summary["n_ions_stopped"] = summary.pop("n_ions")
+    return summary
 
 
 def vacancy_at(depth_nm: float) -> Extractor:
