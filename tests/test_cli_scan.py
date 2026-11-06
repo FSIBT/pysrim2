@@ -643,7 +643,8 @@ def test_quitting_before_the_scan_stopped_exits_130_with_the_partial_result(
 
 class FakeServerProcess:
     """The server process of --ui web, without a server: a group signal to its pid is recorded
-    (``terminated``) and makes it exit; the real group is never signalled."""
+    (``terminated``) and makes it exit; the real group is never signalled. The stop is the POSIX
+    one on every platform (the fake has no process tree for taskkill, and the pid is not real)."""
 
     def __init__(self, monkeypatch=None):
         self.pid = 4242
@@ -651,6 +652,7 @@ class FakeServerProcess:
         self.exited = False
         if monkeypatch is not None:
             monkeypatch.setattr(web, "_signal_group", lambda server, sig: self.signal_group(sig))
+            monkeypatch.setattr(web, "IS_WINDOWS", False)
 
     def signal_group(self, sig):
         self.terminated = self.terminated or sig == signal.SIGTERM
