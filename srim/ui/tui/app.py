@@ -305,9 +305,7 @@ class DashboardScreen(_LiveScreen):
         return self.query_one("#points", DataTable)
 
     def on_mount(self) -> None:
-        self.query_one("#workers", DataTable).add_columns(
-            "worker", "point", "ions", "ions/s", "cpu"
-        )
+        self.query_one("#workers", DataTable).add_columns("worker", "point", "ions", "ions/s")
 
     def forget(self) -> None:
         super().forget()
@@ -355,7 +353,6 @@ class DashboardScreen(_LiveScreen):
                 "idle" if worker.point is None else worker.point,
                 "" if worker.point is None else state.points[worker.point].ions,
                 "—" if worker.ions_per_s is None else f"{worker.ions_per_s:.4g}",
-                "n/a" if worker.cpu_percent is None else f"{worker.cpu_percent:.0f}%",
             )
             for worker in state.workers.values()
         ]

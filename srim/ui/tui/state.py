@@ -133,7 +133,6 @@ class WorkerRow:
     ident: int
     point: int | None = None
     ions_per_s: float | None = None
-    cpu_percent: float | None = None
 
 
 def _orderable(value):
@@ -318,7 +317,6 @@ class ScanState:
     def _on_worker_stats(self, event):
         worker = self._worker(event.worker)
         worker.ions_per_s = event.ions_per_s
-        worker.cpu_percent = event.cpu_percent
         if is_number(event.ions_per_s):
             self.throughput.append(event.ions_per_s)
 

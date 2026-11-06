@@ -82,10 +82,12 @@ def test_events_are_frozen():
         event.index = 5
 
 
-def test_worker_stats_cpu_is_optional_and_none_by_default():
+def test_worker_stats_has_no_cpu_field_and_reads_old_lines():
     stats = events.WorkerStats(worker=1, ions_per_s=None)
-    assert stats.cpu_percent is None
+    assert "cpu_percent" not in stats.to_dict()
     assert stats.to_dict()["ions_per_s"] is None
+    old = '{"kind": "worker_stats", "worker": 1, "ions_per_s": 2.0, "cpu_percent": null}'
+    assert events.event_from_dict(json.loads(old)).ions_per_s == 2.0
     assert not math.isnan(stats.time)
 
 

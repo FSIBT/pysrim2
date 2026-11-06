@@ -192,8 +192,9 @@ class PointRetried(_Event):
 @dataclass(frozen=True)
 class BatchFinished(_Event):
     """A decision of a precision target: ``batch`` is the batch that finished last, ``ions``
-    the ions of the point planned so far and ``value_estimates`` maps each numeric column to
-    ``[value, err]`` (``err`` is NaN with fewer than two batches)."""
+    the ions of the point *planned* so far (not yet run: the batches still running are
+    counted) and ``value_estimates`` maps each numeric column to ``[value, err]`` (``err`` is
+    NaN with fewer than two batches)."""
 
     kind: ClassVar[str] = "batch_finished"
     index: int
@@ -206,12 +207,11 @@ class BatchFinished(_Event):
 @dataclass(frozen=True)
 class WorkerStats(_Event):
     """Throughput of worker ``worker``: ``ions_per_s`` of its last point (``None`` if not
-    known); ``cpu_percent`` is not measured yet and is ``None``."""
+    known). CPU use is not measured."""
 
     kind: ClassVar[str] = "worker_stats"
     worker: int
     ions_per_s: float | None
-    cpu_percent: float | None = None
     time: float = field(default_factory=now)
 
 
