@@ -5,6 +5,7 @@ import pytest
 import yaml
 
 from srim.scan import Precision, Scan, ScanPoint
+from srim.scan.extract import resolve
 from srim.scan.spec import normalise_key, spec_hash
 from srim.spec import RunSpec, SpecError
 
@@ -250,13 +251,32 @@ def test_yaml_errors_name_the_dotted_key(base, tmp_path):
         Scan.from_yaml(path)
 
 
-def test_python_callables_cannot_be_written_to_yaml(base, tmp_path):
-    def mine(results, point=None):
-        return {"x": 1.0}
+def module_extractor(results, point=None):
+    return {"x": 1.0}
 
-    scan = Scan(base, extract=[mine])
-    with pytest.raises(SpecError, match="cannot store"):
-        scan.to_yaml(tmp_path / "run.yaml")
+
+def test_python_callables_are_written_as_references_and_read_back(base, tmp_path):
+    path = tmp_path / "run.yaml"
+    Scan(base, extract=[module_extractor]).to_yaml(path)
+    assert f"python:{__name__}:module_extractor" in path.read_text()
+    back = Scan.from_yaml(path)
+    assert resolve(back.extract[0]) is module_extractor
+
+
+def test_a_lambda_is_written_but_cannot_be_read_back(base, tmp_path):
+    path = tmp_path / "run.yaml"
+    Scan(base, extract=[lambda results, point=None: {"x": 1.0}]).to_yaml(path)
+    assert "<lambda>" in path.read_text()
+    with pytest.raises(SpecError, match="cannot be re-created from scan.yaml"):
+        Scan.from_yaml(path)
+
+
+def test_a_missing_python_reference_is_a_spec_error(base, tmp_path):
+    path = tmp_path / "run.yaml"
+    Scan(base, extract=[module_extractor]).to_yaml(path)
+    path.write_text(path.read_text().replace(f"{__name__}:module_extractor", "no_such_mod_xyz:f"))
+    with pytest.raises(SpecError, match="cannot import"):
+        resolve(Scan.from_yaml(path).extract[0])
 
 
 def test_point_spec_carries_the_ion_count(base):

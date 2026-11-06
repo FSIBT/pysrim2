@@ -18,6 +18,7 @@ Parameters of a factory come from a YAML mapping, ``{"vacancy_at": {"depth_nm": 
 Register your own with :func:`register`.
 """
 
+import importlib
 import math
 from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
@@ -84,6 +85,45 @@ def get(name: str) -> Callable:
         raise KeyError(f"unknown extractor {name!r}; known extractors: {known}") from None
 
 
+#: prefix of a run file's entry for a Python extractor: ``python:<module>:<qualname>``
+PYTHON_PREFIX = "python:"
+
+
+def reference(fn: Callable) -> str:
+    """The ``run.yaml`` entry of a Python extractor: ``python:<module>:<qualname>``.
+
+    Only module-level functions can be read back (:func:`resolve` imports them); lambdas and
+    functions made inside other functions are written but raise on reading.
+    """
+    module = getattr(fn, "__module__", None)
+    qualname = getattr(fn, "__qualname__", None)
+    if not module or not qualname:
+        raise ValueError(f"cannot name the extractor {fn!r} in a run file")
+    return f"{PYTHON_PREFIX}{module}:{qualname}"
+
+
+def _import_reference(text: str) -> Callable:
+    module_name, sep, qualname = text[len(PYTHON_PREFIX) :].partition(":")
+    if not sep or not module_name or not qualname:
+        raise ValueError(f"extractor {text!r} must be python:<module>:<name>")
+    if "<" in qualname:
+        raise ValueError(
+            f"extractor {text!r} cannot be re-created from scan.yaml; "
+            "pass it to Scan(extract=...) again"
+        )
+    try:
+        obj: Any = importlib.import_module(module_name)
+    except Exception as exc:
+        raise ValueError(f"extractor {text!r}: cannot import {module_name!r} ({exc})") from None
+    for part in qualname.split("."):
+        obj = getattr(obj, part, None)
+        if obj is None:
+            raise ValueError(f"extractor {text!r}: {module_name!r} has no {qualname!r}")
+    if not callable(obj):
+        raise ValueError(f"extractor {text!r} is not a function")
+    return obj
+
+
 def resolve(entry: Any) -> Extractor:
     """The extractor for a ``run.yaml`` style entry.
 
@@ -93,6 +133,8 @@ def resolve(entry: Any) -> Extractor:
     the factory needs its parameters; an extractor takes none in the mapping form.
     """
     if isinstance(entry, str):
+        if entry.startswith(PYTHON_PREFIX):
+            return _import_reference(entry)
         if entry in _FACTORIES:
             raise ValueError(f"extractor {entry!r} needs parameters, e.g. {{{entry!r}: {{...}}}}")
         return get(entry)

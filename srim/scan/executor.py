@@ -52,7 +52,7 @@ from .. import __version__
 from ..output import Results
 from ..paths import srim_dir
 from ..rundir import RunDir
-from ..spec import RunSpec, SpecError
+from ..spec import RunSpec
 from .batches import MAX_SEED, derive_seed
 from .events import (
     PointFailed,
@@ -98,8 +98,8 @@ def run_scan(
     Parameters
     ----------
     scan : :class:`~srim.scan.Scan`
-        the scan to run. Its ``extract`` entries must be registered names or mappings
-        (they are written to ``scan.yaml``); the extractors run in this process.
+        the scan to run. Python extractors run in this process (they need not be picklable)
+        and are written to ``scan.yaml`` as ``python:<module>:<name>`` references.
     workers : :obj:`int`, optional
         worker processes; default ``max(1, os.cpu_count() - 1)``, never more than points.
     backend : :obj:`str`
@@ -133,8 +133,6 @@ def run_scan(
     ------
     NotImplementedError
         for ``backend`` other than ``"local"`` and for precision targets (Task 7)
-    SpecError
-        when ``scan.extract`` holds a Python callable (it could not be written to scan.yaml)
     FileNotFoundError
         when there is no SRIM install and no ``runner`` is given
     """
@@ -148,11 +146,6 @@ def run_scan(
     workers = _worker_count(workers)
     retries = _retry_count(retries)
     del cache  # the result cache is Task 8
-    if any(callable(entry) for entry in scan.extract):
-        raise SpecError(
-            "scan.extract holds a Python function, which scan.yaml cannot store; "
-            "register it with srim.scan.extract.register and use its name"
-        )
     if runner is None:
         _require_srim()
     base_seed = scan.seed if scan.seed is not None else secrets.randbelow(MAX_SEED) + 1

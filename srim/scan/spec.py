@@ -35,7 +35,7 @@ from typing import Any
 import yaml
 
 from ..spec import RunSpec, SpecError
-from .extract import resolve
+from .extract import reference, resolve
 from .precision import Precision
 
 #: extractors used when ``extract`` is not given
@@ -195,6 +195,15 @@ def _seed(seed):
     return int(seed)
 
 
+def _entry(extractor):
+    if not callable(extractor):
+        return extractor
+    try:
+        return reference(extractor)
+    except ValueError as exc:
+        raise SpecError(f"scan.extract: {exc}") from None
+
+
 class Scan:
     """A base run spec, the parameters to vary and what to extract from each run.
 
@@ -210,7 +219,8 @@ class Scan:
         combined with each grid combination; a key may be in one of them only.
     extract : list, optional
         extractors: registered names, ``{name: params}`` mappings, or Python callables
-        (callables cannot be written to a run file). Default ``["implant_summary"]``.
+        (written to run files as ``python:`` references, readable for module-level
+        functions only). Default ``["implant_summary"]``.
     ions : int or :class:`~srim.scan.Precision`, optional
         ions per point, or a precision goal. Default: ``base.number_ions``.
     seed : int, optional
@@ -292,15 +302,13 @@ class Scan:
     # -- plain data and run.yaml -------------------------------------------------------
 
     def to_dict(self) -> dict:
-        """The ``scan:`` section as plain data (callables appear by name)."""
+        """The ``scan:`` section as plain data (Python extractors as ``python:`` references)."""
         out: dict[str, Any] = {}
         if self.grid is not None:
             out["grid"] = {k: list(v) for k, v in self.grid.items()}
         if self.rows is not None:
             out["points"] = [dict(row) for row in self.rows]
-        out["extract"] = [
-            getattr(e, "__name__", str(e)) if callable(e) else e for e in self.extract
-        ]
+        out["extract"] = [_entry(e) for e in self.extract]
         if isinstance(self.ions, Precision):
             out["precision"] = self.ions.to_dict()
         else:
@@ -310,12 +318,11 @@ class Scan:
         return out
 
     def to_yaml(self, path, provenance=None):
-        """Write a ``run.yaml`` with the base spec and this ``scan:`` section."""
-        if any(callable(e) for e in self.extract):
-            raise SpecError(
-                "scan.extract holds a Python function, which run.yaml cannot store; "
-                "register it with srim.scan.extract.register and use its name"
-            )
+        """Write a ``run.yaml`` with the base spec and this ``scan:`` section.
+
+        Python extractors are written as ``python:<module>:<name>`` (see
+        :func:`srim.scan.extract.reference`).
+        """
         spec = self.base.to_dict()
         document = {
             "version": spec.pop("version"),

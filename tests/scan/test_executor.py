@@ -29,8 +29,8 @@ from srim.scan.events import (
     ScanFinished,
     ScanStarted,
 )
-from srim.scan.extract import register
-from srim.spec import RunSpec, SpecError
+from srim.scan.extract import register, resolve
+from srim.spec import RunSpec
 
 FIXTURE = Path(__file__).resolve().parents[2] / "test_files" / "1"
 #: the environment variable the fake runners use to share state with the parent
@@ -486,10 +486,18 @@ def test_precision_targets_are_not_available_yet(tmp_path):
         run_scan(scan, runner=fixture_runner, scan_dir=tmp_path / "s")
 
 
-def test_a_python_extractor_cannot_be_recorded_in_scan_yaml(tmp_path):
-    scan = Scan(BASE, grid={"ion.energy_keV": [10.0]}, extract=[lambda r, p: {}])
-    with pytest.raises(SpecError, match="register it"):
-        run_scan(scan, runner=fixture_runner, scan_dir=tmp_path / "s")
+def plain_extractor(results, point):
+    """A module-level Python extractor: recorded in scan.yaml and read back by name."""
+    return {"plain_keV": point.params["ion.energy_keV"] * 2.0}
+
+
+def test_a_python_extractor_runs_and_is_recorded_as_a_reference(tmp_path):
+    folder = tmp_path / "s"
+    scan = Scan(BASE, grid={"ion.energy_keV": [10.0, 20.0]}, extract=[plain_extractor], seed=3)
+    result = run_scan(scan, workers=2, runner=fixture_runner, scan_dir=folder)
+    assert result.table["plain_keV"].tolist() == [20.0, 40.0]
+    assert f"python:{__name__}:plain_extractor" in (folder / "scan.yaml").read_text()
+    assert resolve(Scan.from_yaml(folder / "scan.yaml").extract[0]) is plain_extractor
 
 
 @pytest.mark.parametrize("workers", [0, -1, 1.5, True])
