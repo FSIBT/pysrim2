@@ -614,6 +614,8 @@ def test_prune_deletes_old_unused_run_dirs_only(installed, tmp_path):
     assert prune_runs(base, 7) == [stale.root]
     assert not stale.root.exists() and kept_new.root.exists() and busy.root.exists()
     busy.release_lock()
+    assert prune_runs(base, 7) == []  # releasing counts as use: it is new again
+    old(busy.root / RUN_LOCK_NAME, 30)
     assert prune_runs(base, 7) == [busy.root]
     foreign = base / "run-not-ours"
     foreign.mkdir()
