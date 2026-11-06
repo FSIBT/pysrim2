@@ -224,7 +224,8 @@ class Scan:
     ions : int or :class:`~srim.scan.Precision`, optional
         ions per point, or a precision goal. Default: ``base.number_ions``.
     seed : int, optional
-        base seed of the batches (``None``: the base spec's seed is used by the executor)
+        base seed of the batches (``None``: the scan draws a random base seed and records
+        it in ``scan.yaml``)
 
     With neither ``grid`` nor ``points`` the scan has the single point ``base``. Keys
     ``number_ions`` and ``seed`` cannot be parameters. Every error names the dotted key
