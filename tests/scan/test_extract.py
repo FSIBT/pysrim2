@@ -13,8 +13,9 @@ import pytest
 from srim.analysis import implant_summary as analysis_implant_summary
 from srim.output import Range, Results
 from srim.output.events import Backscat, Sputter, Transmit
-from srim.scan import extract
+from srim.scan import extract, run_batches
 from srim.scan.extract import combine, get, register, resolve
+from srim.spec import RunSpec
 
 D = os.path.join("test_files")
 SINGLE = os.path.join(D, "1")  # Ni 5 MeV, full set of profiles and RANGE_3D
@@ -334,3 +335,73 @@ def test_predefined_values_are_plain_floats(single):
     row = combine([extract.peak_vacancy_depth, extract.energy_to_recoils])(single, None)
     assert all(type(v) is float for v in row.values())
 
+
+# -- MergedResults (run_batches) ---------------------------------------------------------
+
+
+class RealBatch:
+    """Batch result for ``run_batches``: the real outputs of test_files/1, with ``close``."""
+
+    def __init__(self, real):
+        self._real = real
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+    def close(self):
+        pass
+
+
+def test_extractors_on_merged_results(single):
+    spec = RunSpec.from_dict(
+        {
+            "ion": {"symbol": "Ni", "energy_keV": 5000.0},
+            "number_ions": 10,
+            "seed": 1,
+            "target": [
+                {
+                    "name": "Si",
+                    "thickness_nm": 100.0,
+                    "density_g_cm3": 2.33,
+                    "elements": [{"symbol": "Si", "stoich": 1.0}],
+                }
+            ],
+        }
+    )
+    real = single  # Results of test_files/1 (the module fixture)
+    with run_batches(
+        spec, n_ions=2000, batch_ions=1000, seed=1, runner=lambda one: RealBatch(real)
+    ) as merged:
+        raw3d = real.range3d.df
+        r3 = merged.range3d.df
+        assert len(r3) == 2 * len(raw3d)
+
+        # implant summary of both batches: the same ions twice
+        assert extract.implant_summary(merged)["n_ions"] == 2 * len(raw3d)
+        assert extract.implant_summary(merged)["mean_depth_A"] == pytest.approx(
+            raw3d["depth_A"].mean()
+        )
+
+        # profiles: ion-weighted means of identical batches are the raw profile
+        _, elements, _ = raw_vacancy_profile(real)
+        centres, _ = bin_centres_and_widths(real.vacancy.df["depth_A"].to_numpy(float))
+        row = extract.vacancy_at(10)(merged, None)
+        assert row["vacancies_per_A_per_ion_at_10nm"] == pytest.approx(elements[0])
+        assert extract.peak_vacancy_depth(merged)["peak_vacancy_depth_A"] == pytest.approx(
+            centres[int(np.argmax(elements))]
+        )
+        _, width = bin_centres_and_widths(real.etorecoils.df["depth_A"].to_numpy(float))
+        expected = float(np.sum(real.etorecoils.df["ions_eV_per_A_per_ion"] * width))
+        assert extract.energy_to_recoils(merged)["energy_to_recoils_eV_per_ion"] == pytest.approx(
+            expected
+        )
+
+        # layer of the merged run's spec (100 nm of Si): stopped-ion fraction in it
+        depth = r3["depth_A"].to_numpy(float)
+        layer = extract.ions_in_layer(0)(merged, None)
+        key = "fraction_of_stopped_ions_in_layer_0"
+        assert layer[key] == pytest.approx(np.mean(depth < 1000.0))
+
+        # the merged results have no sputter output: a clear error, not a crash
+        with pytest.raises(ValueError, match="sputtered=1"):
+            extract.sputter_yield(merged)
