@@ -776,9 +776,9 @@ def _scan_run(args) -> int:
         )
         plain = PlainProgress(sys.stdout)
 
-        def consumer(event):  # the status lines in the terminal, and the browser's events
-            plain(event)
+        def consumer(event):  # the browser's events first, so its URL is printed first
             web_view.on_event(event)
+            plain(event)
     else:
         consumer = PlainProgress(sys.stdout)
 

@@ -669,7 +669,9 @@ def test_web_run_prints_the_url_writes_the_events_and_stops_the_server(work, mon
     captured = capsys.readouterr()
     assert code == 0
     assert f"web view: http://127.0.0.1:{port}" in captured.out
-    assert captured.out.splitlines()[0].startswith("done 0/2")  # the plain status lines too
+    lines = captured.out.splitlines()
+    assert lines[0].startswith("web view: ")  # the URL comes before the status lines
+    assert any(line.startswith("done 0/2") for line in lines)
     kinds = [json.loads(line)["kind"] for line in (out / "events.jsonl").read_text().splitlines()]
     assert kinds[0] == "scan_started" and kinds[-1] == "scan_finished"
     argv = started[0]
