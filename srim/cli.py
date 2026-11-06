@@ -164,8 +164,9 @@ def build_parser() -> argparse.ArgumentParser:
         default="127.0.0.1",
         metavar="HOST",
         help="web: the address the server listens on (default 127.0.0.1, this machine only). "
-        "Any other address lets everyone who can reach it pause and stop the scan: the web view "
-        "has no authentication",
+        "Any other address lets everyone who can reach it pause and stop the scan. The web view "
+        "has no authentication and no Origin check: a page open in a browser on this machine can "
+        "pause and stop the scan too, so use it on trusted machines only",
     )
     scan_run.add_argument(
         "--port",

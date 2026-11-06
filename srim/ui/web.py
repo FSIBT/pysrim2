@@ -9,8 +9,16 @@ scan and a tab opened late shows what has happened so far. The viewer's keys wri
 file and sets the scan's ``pause_event`` and ``stop_event``. Nothing else is accepted.
 
 textual-serve has no way to stop its server in the same process, so the server runs in a child
-process (:func:`start_server`, ``python -m srim.ui.web``), which exits on SIGTERM. This module
-needs only the standard library; textual-serve is imported in the child alone.
+process (:func:`start_server`, ``python -m srim.ui.web``), in a process group of its own, so
+stopping it ends the viewers of open tabs too. Server and viewers also exit when the process that
+started them is gone (POSIX). This module needs only the standard library; textual-serve is
+imported in the child alone.
+
+Security: there is no authentication, and textual-serve does not check the Origin of a
+WebSocket. Any web page that the browser of a user on the same machine opens can connect to the
+port and pause or stop the scan (loopback is the default host, which keeps other machines out but
+not the pages in the user's own browser). Use ``--ui web`` on trusted machines only. A ``--host``
+other than loopback also lets the network connect, and is warned about when the view starts.
 """
 
 from __future__ import annotations
