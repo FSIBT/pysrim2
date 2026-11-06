@@ -43,6 +43,15 @@ jobs:
       - name: pysrim2 doctor
         run: docker run --rm --security-opt seccomp=srim/data/seccomp-docker.json pysrim2:ci pysrim2 doctor
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+
+      # run_scan(backend="container") on this host: one container of pysrim2:ci per run.
+      - name: Scan container back end (host runner)
+        env:
+          PYSRIM2_IMAGE: pysrim2:ci
+        run: uv run pytest -m container -v tests/integration/test_scan_container.py
+
       # Docker 29's built-in seccomp profile blocks the 32-bit socket calls wine
       # makes ("socket: Function not implemented"); run wine with the packaged
       # profile (Docker's current default profile) instead.

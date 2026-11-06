@@ -85,8 +85,11 @@ docs = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-m 'not srim'"
-markers = ["srim: runs the real SRIM programs (needs SRIM; run with pytest -m srim)"]
+addopts = "-m 'not srim and not container'"
+markers = [
+    "srim: runs the real SRIM programs (needs SRIM; run with pytest -m srim)",
+    "container: runs pysrim2 in a container image (needs podman or docker and PYSRIM2_IMAGE; run with pytest -m container)",
+]
 
 [tool.ruff]
 line-length = 100

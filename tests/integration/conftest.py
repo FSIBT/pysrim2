@@ -16,8 +16,8 @@ def pytest_collection_modifyitems(items):
     missing = not (srim_dir() / "TRIM.exe").is_file()
     skip = pytest.mark.skip(reason=f"SRIM is not installed ({srim_dir()}/TRIM.exe is missing)")
     for item in items:
-        if "integration" not in item.path.parts:
-            continue
+        if "integration" not in item.path.parts or item.get_closest_marker("container"):
+            continue  # container tests run pysrim2 in an image: SRIM is not needed here
         item.add_marker(pytest.mark.srim)
         if missing:
             item.add_marker(skip)
