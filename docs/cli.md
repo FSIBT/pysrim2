@@ -10,6 +10,12 @@ pysrim2 doctor [--json]
 pysrim2 run run.yaml [--set KEY=VALUE ...] [--output DIR]
 pysrim2 run-job DIR
 pysrim2 import TRIM.IN [-o run.yaml]
+pysrim2 clean runs [--older-than DAYS] [--dry-run]
+pysrim2 scan run scan.yaml [--set KEY=VALUE ...] [--workers N] [--backend local|container]
+               [--ui plot|dashboard|web|plain|json] [--output DIR] [--cache DIR | --no-cache]
+pysrim2 scan prepare scan.yaml -o DIR [--jobs N] [--set KEY=VALUE ...]
+pysrim2 scan collect DIR [--cache DIR | --no-cache]
+pysrim2 scan clean [DIR] [--cache DIR] [--all] [--dry-run]
 ```
 
 ## `pysrim2 install`
@@ -94,10 +100,40 @@ explicit `-o`). Layer thicknesses are converted from Angstrom to nm; element
 masses that differ from pysrim2's element table are kept as `mass_amu`; the
 random seed in the file is kept (SRIM's own files often have 0).
 
+## `pysrim2 clean runs`
+
+Removes the run directories of `TRIM.run()` and `pysrim2 run` that no process uses. With
+`--older-than DAYS` only those unused for that long; without it, every unused one (folders
+younger than a minute are kept). `--dry-run` lists them. See {doc}`concurrency`.
+
+## `pysrim2 run-job`
+
+Runs the units of a job folder that are not done yet (`job.yaml`, outputs in `out/`).
+It is what the container back end and a Slurm array task run. See {doc}`scans`.
+
+## `pysrim2 scan`
+
+Parameter scans: `run` runs a `scan.yaml` on this machine (local workers, or one container
+per unit), `prepare` writes the job folders and `submit.sbatch` for a Slurm array, `collect`
+builds the result once the tasks are done, and `clean` removes cache entries or a whole scan
+folder. `--ui` picks the live view (`plot`, `dashboard`, `web`, `plain` or `json`; see
+{doc}`scans`). Scan options: `--workers`, `--backend`, `--image` (container), `--output` (the
+scan folder, default `./scan-<UTC time>`), `--cache` or `--no-cache`, `--retries` (default 1),
+`--host` and `--port` (web view, default `127.0.0.1:8000`), `--plot X,Y[,HUE]` (plot view), and
+`--set` (changes the scan's base run). The web view has no authentication: see the note in
+{doc}`scans`.
+
+```shell
+pysrim2 scan run scan.yaml --ui plain --output my-scan
+pysrim2 scan clean my-scan --dry-run
+```
+
 ## Exit codes
 
 For `run` and `import`: `0` ok, `1` SRIM failed or the output file exists, `2`
 the input is invalid (spec, `--set` value or `TRIM.IN`), `130` cancelled.
+For `scan` and `run-job` the codes are in {doc}`scans` (`run-job`: `0` all done, `1` some
+unit failed, `2` not a job folder).
 For `install` and `doctor`:
 
 | Code | Meaning |

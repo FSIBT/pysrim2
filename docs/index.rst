@@ -34,6 +34,8 @@ Use :ref:`modindex` to search the API documentation.
    dataframes
    run-spec
    export
+   scans
+   concurrency
    agents
    tutorial
    changes-from-pysrim
