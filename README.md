@@ -156,6 +156,23 @@ results = trim.run(output_dir="/home/user/scratch/srim")
 # or: TRIM.copy_output_files(results.directory, "/home/user/scratch/srim")
 ```
 
+## Parameter scans
+
+A scan runs a calculation over a grid or a list of parameter values, in worker processes,
+and keeps every run in a cache, so a rerun computes nothing new. Define it with
+`srim.scan.Scan` (or a `scan:` section in a `run.yaml`) and run it with `run_scan`, or with
+`pysrim2 scan run scan.yaml`:
+
+``` python
+from srim.scan import Scan, run_scan
+
+scan = Scan(base, grid={"ion.energy_keV": [10.0, 20.0, 30.0]}, ions=1000, seed=1)
+result = run_scan(scan)          # a table with one row per point, and a scan folder
+```
+
+Precision targets, batches of a fixed ion count, the result table, Slurm and containers are
+described in [docs/scans.md](https://github.com/FSIBT/pysrim2/blob/main/docs/scans.md).
+
 ## Post processes SRIM output as numpy arrays
 
 By far the hardest part about running TRIM calculations is analyzing
