@@ -3,6 +3,7 @@ command line and the notices. The server is never started: ``start_server`` is r
 fake process. Every wait has a timeout."""
 
 import json
+import os
 import shlex
 import signal
 import socket
@@ -18,6 +19,18 @@ from srim.scan.events import PointQueued, ScanFinished, ScanStarted
 from srim.ui import web
 
 TIMEOUT = 5.0
+
+requires_posix = pytest.mark.skipif(
+    os.name == "nt", reason="SIGKILL and process groups are POSIX-only"
+)
+
+
+def split_command(command: str) -> list[str]:
+    """The words of a command line as the shell of this platform reads them: sh rules on POSIX,
+    cmd.exe-quoted words (as :func:`subprocess.list2cmdline` writes them) on Windows."""
+    if os.name != "nt":
+        return shlex.split(command)
+    return [word.strip('"') for word in shlex.split(command, posix=False)]
 
 
 class FakeServer:
@@ -66,6 +79,8 @@ def started(monkeypatch):
     )
     monkeypatch.setattr(web, "STOP_SECONDS", 0.01)
     monkeypatch.setattr(web, "STARTUP_SECONDS", 0.0)
+    # the group signals above are the POSIX stop: pinned, so the fake is used on every platform
+    monkeypatch.setattr(web, "IS_WINDOWS", False)
     return SimpleNamespace(argv=calls, server=fake)
 
 
@@ -83,9 +98,10 @@ def scan_started(folder):
 def test_the_viewer_command_runs_the_viewer_of_the_folder_shell_quoted(tmp_path):
     folder = tmp_path / "my scans"
     folder.mkdir()
-    words = shlex.split(web.viewer_command(folder))
-    assert words == [sys.executable, "-m", "srim.ui.tui.view", str(folder)]
-    words = shlex.split(web.viewer_command(folder, plot="ion.energy_keV,mean"))
+    expected = [sys.executable, "-m", "srim.ui.tui.view", str(folder)]
+    assert web.viewer_command(folder) == web.command_line(expected)
+    assert split_command(web.viewer_command(folder)) == expected
+    words = split_command(web.viewer_command(folder, plot="ion.energy_keV,mean"))
     assert words[-2:] == ["--plot", "ion.energy_keV,mean"]
 
 
@@ -159,7 +175,7 @@ def test_the_scan_folder_gets_every_event_as_a_line_and_the_server_starts_once(
     assert len(started.argv) == 1
     argv = started.argv[0]
     assert argv[argv.index("--port") + 1] == "8123"
-    assert shlex.split(argv[-1])[1:3] == ["-m", "srim.ui.tui.view"]
+    assert split_command(argv[-1])[1:3] == ["-m", "srim.ui.tui.view"]
     assert "web view: http://127.0.0.1:8123" in capsys.readouterr().out
     view.close()
     assert started.server.terminated
@@ -168,7 +184,7 @@ def test_the_scan_folder_gets_every_event_as_a_line_and_the_server_starts_once(
 def test_the_viewer_gets_the_plot_option_it_was_given(tmp_path, started):
     view, _, _ = make_view(tmp_path, plot="ion.energy_keV,mean")
     view.on_event(scan_started(tmp_path))
-    assert shlex.split(started.argv[0][-1])[-2:] == ["--plot", "ion.energy_keV,mean"]
+    assert split_command(started.argv[0][-1])[-2:] == ["--plot", "ion.energy_keV,mean"]
     view.close()
 
 
@@ -268,6 +284,7 @@ def test_the_server_leads_its_own_process_group_on_posix(monkeypatch):
     assert seen["start_new_session"] is True
 
 
+@requires_posix
 def test_stopping_the_server_signals_its_group_then_kills_it(monkeypatch):
     stuck = FakeServer(exits_on_term=False)
     monkeypatch.setattr(
@@ -278,6 +295,7 @@ def test_stopping_the_server_signals_its_group_then_kills_it(monkeypatch):
     assert stuck.signals == [signal.SIGTERM, signal.SIGKILL]  # the viewers die with it
 
 
+@requires_posix
 def test_a_server_that_exits_on_term_is_still_killed_with_its_group(started):
     web.stop_server(started.server)
     assert started.server.signals == [signal.SIGTERM, signal.SIGKILL]
