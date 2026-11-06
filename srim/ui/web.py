@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import os
 import shlex
+import signal
 import socket
 import subprocess
 import sys
@@ -35,8 +36,11 @@ REQUESTS = ("pause", "resume", "stop")
 POLL_SECONDS = 0.5
 #: seconds the server stays up after a finished scan, so that its final state can be seen
 GRACE_SECONDS = 5.0
-#: seconds the server process gets to exit after SIGTERM before it is killed
-SERVER_EXIT_SECONDS = 5.0
+#: seconds the server process gets to exit after SIGTERM to its group, before SIGKILL
+STOP_SECONDS = 1.0
+#: seconds between two checks that the parent process is still there
+PARENT_POLL_SECONDS = 0.5
+IS_WINDOWS = os.name == "nt"
 #: hosts that only this machine can reach
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 
@@ -78,11 +82,84 @@ def port_problem(host: str, port: int) -> str | None:
 
 
 def start_server(argv: list[str]) -> subprocess.Popen:
-    """Start the server process of :func:`server_argv`. Its output is discarded (textual-serve
-    prints its logo and every request there)."""
+    """Start the server process of :func:`server_argv`, as the leader of a new process group
+    (POSIX) so that :func:`stop_server` can stop it and the viewers it starts. Its output is
+    discarded (textual-serve prints its logo and every request there)."""
+    options = {} if IS_WINDOWS else {"start_new_session": True}
     return subprocess.Popen(
-        argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        argv,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        **options,
     )
+
+
+def stop_server(server) -> None:
+    """Stop the server and every process it started (the viewers of open tabs): on POSIX
+    SIGTERM to its process group, a short wait for the leader, then SIGKILL to the group; on
+    Windows ``taskkill /T /F`` of its tree. Never raises for a process that is gone."""
+    if IS_WINDOWS:
+        subprocess.run(
+            tree_kill_argv(server.pid),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=STOP_SECONDS * 10,
+            check=False,
+        )
+        return
+    _signal_group(server, signal.SIGTERM)
+    _wait_quietly(server)
+    _signal_group(server, signal.SIGKILL)  # the viewers too, whether or not the leader exited
+    _wait_quietly(server)
+
+
+def tree_kill_argv(pid: int) -> list[str]:
+    """The command that ends the process tree of ``pid`` on Windows."""
+    return ["taskkill", "/T", "/F", "/PID", str(pid)]
+
+
+def exit_with_parent(on_orphaned=None, poll: float = PARENT_POLL_SECONDS):
+    """POSIX: a daemon thread that calls ``on_orphaned()`` (default: exit the process) once the
+    parent process has gone, which is when the process is re-parented. Returns the thread, or
+    None on Windows, where the parent is not watched."""
+    if IS_WINDOWS:
+        return None
+    parent = os.getppid()
+    action = on_orphaned if on_orphaned is not None else (lambda: os._exit(1))
+
+    def watch():
+        while True:
+            time.sleep(poll)
+            if os.getppid() != parent:
+                action()
+                return
+
+    thread = threading.Thread(target=watch, name="pysrim2-parent-watch", daemon=True)
+    thread.start()
+    return thread
+
+
+def _kill_own_group() -> None:
+    """The server's orphan action: end its group (the viewers) if it leads one."""
+    if os.getpgrp() == os.getpid():
+        os.killpg(os.getpid(), signal.SIGKILL)
+    os._exit(1)
+
+
+def _signal_group(server, sig) -> None:
+    try:
+        os.killpg(server.pid, sig)
+    except (ProcessLookupError, PermissionError):  # the group is gone
+        pass
+
+
+def _wait_quietly(server) -> None:
+    try:
+        server.wait(timeout=STOP_SECONDS)
+    except subprocess.TimeoutExpired:
+        pass
 
 
 def send_request(folder, word: str) -> None:
@@ -198,10 +275,10 @@ class WebView:
         finally:
             self._closing.set()
             if self._server is not None:
-                _stop_server(self._server)
+                stop_server(self._server)
                 self._server = None
             if self._poller is not None:
-                self._poller.join(timeout=SERVER_EXIT_SECONDS)
+                self._poller.join(timeout=STOP_SECONDS)
                 self._poller = None
             if self._log is not None:
                 self._log.close()
@@ -249,17 +326,6 @@ def _notice(text: str, stdout: bool = False) -> None:
     print(text, file=sys.stdout if stdout else sys.stderr, flush=True)
 
 
-def _stop_server(server) -> None:
-    if server.poll() is not None:
-        return
-    server.terminate()
-    try:
-        server.wait(timeout=SERVER_EXIT_SECONDS)
-    except subprocess.TimeoutExpired:
-        server.kill()
-        server.wait(timeout=SERVER_EXIT_SECONDS)
-
-
 def main(argv: list[str] | None = None) -> int:
     """``python -m srim.ui.web --host HOST --port PORT --command CMD``: serve ``CMD`` with
     textual-serve until SIGTERM or Ctrl-C. Run by :func:`start_server`, not by hand."""
@@ -270,6 +336,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     from textual_serve.server import Server
 
+    exit_with_parent(on_orphaned=_kill_own_group)  # the CLI is gone: so are the viewers
     Server(args.command, host=args.host, port=args.port, title="pysrim2 scan").serve()
     return 0
 

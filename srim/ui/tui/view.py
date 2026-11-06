@@ -23,7 +23,7 @@ from pathlib import Path
 from srim.scan import Scan
 from srim.scan.events import ScanPaused, event_from_dict
 from srim.spec import SpecError
-from srim.ui.web import EVENTS_FILE, send_request
+from srim.ui.web import EVENTS_FILE, exit_with_parent, send_request
 
 from .app import ScanApp
 from .plot import check_plot
@@ -136,6 +136,7 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, SpecError, ValueError) as exc:
         print(f"{folder}: not a scan folder ({exc})", file=sys.stderr)
         return 2
+    exit_with_parent()  # the server (or the CLI) is gone: so is this viewer
     events: queue.Queue = queue.Queue()
     pause_event, stop_event = threading.Event(), threading.Event()
     follower = EventFollower(folder / EVENTS_FILE, events, pause_event)

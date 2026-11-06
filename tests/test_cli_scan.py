@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 
 import srim.scan
+import srim.ui.web as web
 from srim import cli
 from srim.scan import Scan
 from srim.scan.backends import run_job
@@ -641,16 +642,22 @@ def test_quitting_before_the_scan_stopped_exits_130_with_the_partial_result(
 
 
 class FakeServerProcess:
-    """The server process of --ui web, without a server: it records that it was stopped."""
+    """The server process of --ui web, without a server: a group signal to its pid is recorded
+    (``terminated``) and makes it exit; the real group is never signalled."""
 
-    def __init__(self):
+    def __init__(self, monkeypatch=None):
+        self.pid = 4242
         self.terminated = False
+        self.exited = False
+        if monkeypatch is not None:
+            monkeypatch.setattr(web, "_signal_group", lambda server, sig: self.signal_group(sig))
+
+    def signal_group(self, sig):
+        self.terminated = self.terminated or sig == signal.SIGTERM
+        self.exited = True
 
     def poll(self):
-        return 0 if self.terminated else None
-
-    def terminate(self):
-        self.terminated = True
+        return 0 if self.exited else None
 
     def wait(self, timeout=None):
         return 0
@@ -659,7 +666,7 @@ class FakeServerProcess:
 def test_web_run_prints_the_url_writes_the_events_and_stops_the_server(work, monkeypatch, capsys):
     import srim.ui.web as web
 
-    started, server = [], FakeServerProcess()
+    started, server = [], FakeServerProcess(monkeypatch)
     monkeypatch.setattr(web, "start_server", lambda argv: started.append(argv) or server)
     monkeypatch.setattr(web, "GRACE_SECONDS", 0.0)
     port = free_port()
@@ -717,7 +724,7 @@ def test_a_stop_request_in_the_control_file_stops_a_web_run(work, monkeypatch, c
                 file.write("stop\n")
 
         threading.Thread(target=send, daemon=True).start()
-        return FakeServerProcess()
+        return FakeServerProcess(monkeypatch)
 
     monkeypatch.setattr(web, "start_server", viewer_sends_stop_once_a_unit_runs)
     code = cli.main(["scan", "run", str(write_scan(work)), "--workers", "2", "--ui", "web",

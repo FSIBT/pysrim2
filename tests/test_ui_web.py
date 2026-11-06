@@ -4,7 +4,9 @@ fake process. Every wait has a timeout."""
 
 import json
 import shlex
+import signal
 import socket
+import subprocess
 import sys
 import threading
 from types import SimpleNamespace
@@ -18,28 +20,38 @@ TIMEOUT = 5.0
 
 
 class FakeServer:
-    """A stand-in for the server process: records what was done to it."""
+    """A stand-in for the server process: the signals sent to its process group are recorded
+    (``signals``); it exits on SIGTERM unless ``exits_on_term`` is False, and on SIGKILL."""
 
-    def __init__(self):
-        self.terminated = False
-        self.killed = False
+    def __init__(self, pid=4242, exits_on_term=True):
+        self.pid = pid
+        self.exits_on_term = exits_on_term
+        self.signals = []
+        self.exited = False
+
+    @property
+    def terminated(self) -> bool:
+        return signal.SIGTERM in self.signals
+
+    def send_group_signal(self, pid, sig):
+        assert pid == self.pid  # the group is led by the server
+        self.signals.append(sig)
+        if sig == signal.SIGKILL or (sig == signal.SIGTERM and self.exits_on_term):
+            self.exited = True
 
     def poll(self):
-        return 0 if self.terminated or self.killed else None
-
-    def terminate(self):
-        self.terminated = True
-
-    def kill(self):
-        self.killed = True
+        return 0 if self.exited else None
 
     def wait(self, timeout=None):
-        return 0
+        if self.exited:
+            return 0
+        raise subprocess.TimeoutExpired("server", timeout)
 
 
 @pytest.fixture
 def started(monkeypatch):
-    """The argv of each server start, and the fake process it got (``started.server``)."""
+    """The argv of each server start, and the fake process it got (``started.server``); the
+    group signals of the fake go to it, never to a real process group."""
     calls = []
     fake = FakeServer()
 
@@ -48,6 +60,10 @@ def started(monkeypatch):
         return fake
 
     monkeypatch.setattr(web, "start_server", fake_start)
+    monkeypatch.setattr(
+        web, "_signal_group", lambda server, sig: fake.send_group_signal(server.pid, sig)
+    )
+    monkeypatch.setattr(web, "STOP_SECONDS", 0.01)
     return SimpleNamespace(argv=calls, server=fake)
 
 
@@ -231,3 +247,61 @@ def test_leaving_before_the_scan_finished_stops_the_server_at_once(tmp_path, sta
     with view:
         pass  # no scan_finished: no grace period
     assert started.server.terminated
+
+
+def test_the_server_leads_its_own_process_group_on_posix(monkeypatch):
+    monkeypatch.setattr(web, "IS_WINDOWS", False)
+    seen = {}
+
+    def record(argv, **options):
+        seen.update(options)
+        return FakeServer()
+
+    monkeypatch.setattr(web.subprocess, "Popen", record)
+    web.start_server(["x"])
+    assert seen["start_new_session"] is True
+
+
+def test_stopping_the_server_signals_its_group_then_kills_it(monkeypatch):
+    stuck = FakeServer(exits_on_term=False)
+    monkeypatch.setattr(
+        web, "_signal_group", lambda server, sig: stuck.send_group_signal(server.pid, sig)
+    )
+    monkeypatch.setattr(web, "STOP_SECONDS", 0.01)
+    web.stop_server(stuck)
+    assert stuck.signals == [signal.SIGTERM, signal.SIGKILL]  # the viewers die with it
+
+
+def test_a_server_that_exits_on_term_is_still_killed_with_its_group(started):
+    web.stop_server(started.server)
+    assert started.server.signals == [signal.SIGTERM, signal.SIGKILL]
+
+
+def test_stopping_on_windows_ends_the_process_tree_with_taskkill(monkeypatch):
+    monkeypatch.setattr(web, "IS_WINDOWS", True)
+    ran = []
+    monkeypatch.setattr(web.subprocess, "run", lambda argv, **options: ran.append(argv))
+    web.stop_server(SimpleNamespace(pid=4242))
+    assert ran == [["taskkill", "/T", "/F", "/PID", "4242"]]
+
+
+def test_the_parent_watch_calls_its_action_once_the_parent_changes(monkeypatch):
+    parents = iter([7, 7, 7])
+    current = {"pid": 7}
+
+    def getppid():
+        current["pid"] = next(parents, 1)  # the parent is gone from the third check on
+        return current["pid"]
+
+    monkeypatch.setattr(web, "IS_WINDOWS", False)
+    monkeypatch.setattr(web.os, "getppid", getppid)
+    gone = threading.Event()
+    thread = web.exit_with_parent(on_orphaned=gone.set, poll=0.001)
+    assert gone.wait(TIMEOUT)
+    thread.join(TIMEOUT)
+    assert not thread.is_alive()
+
+
+def test_the_parent_watch_is_not_started_on_windows(monkeypatch):
+    monkeypatch.setattr(web, "IS_WINDOWS", True)
+    assert web.exit_with_parent(on_orphaned=lambda: None) is None
