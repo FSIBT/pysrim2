@@ -1,7 +1,7 @@
 """run_scan with real SRIM: four points on two worker processes (``pytest -m srim``)."""
 
 from srim.paths import srim_dir
-from srim.scan import Scan, run_scan
+from srim.scan import Precision, Scan, run_scan
 from srim.spec import RunSpec
 
 BASE = RunSpec.from_dict(
@@ -43,3 +43,25 @@ def test_four_points_on_two_workers(tmp_path):
     assert (events[-1].n_done, events[-1].n_failed, events[-1].stopped) == (4, 0, False)
     # the installed SRIM is never written during a run
     assert sorted(p.name for p in srim_dir().iterdir()) == install_before
+
+
+def test_a_precision_target_completes_with_real_srim(tmp_path):
+    """One point in batches of 20 ions until the mean depth is known to 5 %."""
+    scan = Scan(
+        BASE,
+        grid={"ion.energy_keV": [20.0]},
+        seed=5,
+        ions=Precision(target="mean_depth_A", rel=0.05, min_ions=40, max_ions=200, batch_ions=20),
+    )
+    folder = tmp_path / "scan"
+    result = run_scan(scan, workers=2, scan_dir=folder)
+
+    row = result.table.iloc[0]
+    assert row["status"] == "done", row["error"]
+    assert row["mean_depth_A_err"] <= 0.05 * abs(row["mean_depth_A"])
+    assert 40 <= row["n_ions"] <= 200 and row["n_ions"] % 20 == 0
+    point_dir = folder / "points" / scan.points()[0].id[:16]
+    batches = sorted(point_dir.glob("batches/*"))
+    assert len(batches) == row["n_ions"] // 20
+    assert (batches[0] / "RANGE_3D.txt").is_file()
+    assert (batches[0] / "run.yaml").is_file()
