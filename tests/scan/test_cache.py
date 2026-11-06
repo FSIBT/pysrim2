@@ -211,6 +211,30 @@ def test_another_srim_build_is_a_miss_with_one_warning_and_the_entry_is_kept(tmp
     assert cache.lookup(key, None) == entry
 
 
+def test_a_run_of_another_srim_build_replaces_the_entry(tmp_path):
+    cache = RunCache(tmp_path / "cache")
+    key = new_key()
+    cache.store(key, make_run(tmp_path / "old", sha="a" * 64, text="old"))
+    stored = cache.store(key, make_run(tmp_path / "new", sha="b" * 64, text="new"))
+    assert (stored / "RANGE.txt").read_text() == "new"
+    assert _recorded(stored) == "b" * 64
+    assert not list((cache.root / "tmp").glob(f"{key}-*"))
+
+
+def test_a_run_of_the_same_srim_build_keeps_the_entry(tmp_path):
+    cache = RunCache(tmp_path / "cache")
+    key = new_key()
+    cache.store(key, make_run(tmp_path / "old", sha="a" * 64, text="old"))
+    stored = cache.store(key, make_run(tmp_path / "new", sha="a" * 64, text="new"))
+    assert (stored / "RANGE.txt").read_text() == "old"
+
+
+def _recorded(entry):
+    import yaml
+
+    return yaml.safe_load((entry / "run.yaml").read_text())["provenance"]["srim_sha256"]
+
+
 def test_an_unknown_srim_build_on_either_side_matches(tmp_path):
     cache = RunCache(tmp_path / "cache")
     unknown = new_key()
@@ -253,6 +277,7 @@ def _die_while_storing(root, source, key):
 def test_a_key_is_locked_while_held_and_clear_cache_keeps_it(tmp_path):
     root = tmp_path / "cache"
     cache = RunCache(root)
+    cache.prepare()
     key = new_key()
     cache.store(key, make_run(tmp_path / "run"))
     lock = cache.try_lock(key)
@@ -270,6 +295,7 @@ def test_a_key_is_locked_while_held_and_clear_cache_keeps_it(tmp_path):
 def test_clear_cache_removes_entries_and_keeps_the_tag(tmp_path):
     root = tmp_path / "cache"
     cache = RunCache(root)
+    cache.prepare()
     keys = [new_key(), new_key()]
     for number, key in enumerate(keys):
         cache.store(key, make_run(tmp_path / f"run{number}"))

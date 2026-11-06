@@ -28,6 +28,7 @@ entry made with another build than the installed one is not used: the run is com
 (with a warning, once per entry), and the old entry is kept until ``clear_cache`` removes it.
 """
 
+import contextlib
 import hashlib
 import logging
 import os
@@ -198,26 +199,41 @@ class RunCache:
     def store(self, key: str, source) -> Path:
         """Make ``source`` (a run's output folder) the entry of ``key``.
 
-        The caller holds the key's lock. Files named in ``_NOT_CACHED`` at the top level
-        are left out. If another writer has completed the entry meanwhile, its entry is kept.
+        The caller holds the key's lock. Files named in ``_NOT_CACHED`` at the top level are
+        left out. An entry that is already complete is kept, unless it records another SRIM
+        build than ``source`` does (both known): then the new run replaces it. If another
+        writer completed the entry meanwhile, its entry is kept.
         """
         final = self.entry_dir(key)
+        replace = False
         if (final / COMPLETE).is_file():
-            return final
-        self.prepare()
+            new_sha, old_sha = _recorded_sha(Path(source)), _recorded_sha(final)
+            if not (new_sha and old_sha and new_sha != old_sha):
+                return final
+            replace = True
+            log.info("cached run %s is replaced: it was made with another SRIM build", key[:12])
         _sweep_partial(self.root, key)
         tmp = self.root / "tmp" / f"{key}-{uuid.uuid4().hex}"
+        old = self.root / "tmp" / f"{key}-old-{uuid.uuid4().hex}"
+        moved = False
         try:
             _link_tree(source, tmp, skip=_NOT_CACHED)
             (tmp / COMPLETE).write_text(key + "\n", encoding="utf-8")
             final.parent.mkdir(parents=True, exist_ok=True)
+            if replace:
+                os.replace(final, old)
+                moved = True
             os.replace(tmp, final)
         except OSError:
-            if (final / COMPLETE).is_file():  # another writer finished first
+            if moved and not final.exists():  # put the old entry back
+                with contextlib.suppress(OSError):
+                    os.replace(old, final)
+            elif not replace and (final / COMPLETE).is_file():  # another writer finished first
                 return final
             raise
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
+            shutil.rmtree(old, ignore_errors=True)
         return final
 
 

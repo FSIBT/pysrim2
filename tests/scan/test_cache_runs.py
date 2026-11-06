@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+import yaml
 
 from srim.output import Results
 from srim.scan import MergedResults, Precision, Scan, run_scan
@@ -31,6 +32,7 @@ STATE_VAR = "PYSRIM2_TEST_STATE"
 CALLS_VAR = "PYSRIM2_TEST_CALLS"
 SLEEP_VAR = "PYSRIM2_TEST_SLEEP"
 FAIL_VAR = "PYSRIM2_TEST_FAIL_ENERGY"
+SHA_VAR = "PYSRIM2_TEST_SRIM_SHA"
 GUARD_SECONDS = 120
 #: seconds to wait for a child process or a file to appear
 WAIT_SECONDS = 120
@@ -89,6 +91,10 @@ def recording_runner(spec):
     directory = Path(os.environ[STATE_VAR]) / f"run-{seed}-{time.monotonic_ns()}"
     shutil.copytree(FIXTURE, directory)
     (directory / "seed.txt").write_text(str(seed))
+    sha = os.environ.get(SHA_VAR)
+    if sha:  # the run records the SRIM build it ran with, as TRIM.run does
+        document = {"version": 1, "spec": {}, "provenance": {"srim_sha256": sha}}
+        (directory / "run.yaml").write_text(yaml.safe_dump(document))
     return Results(str(directory))
 
 
@@ -179,6 +185,39 @@ def test_a_cache_path_that_holds_other_files_is_refused_before_a_run(tmp_path, s
         )
     assert (folder / "thesis.txt").read_text() == "keep me"
     assert calls(state_dir) == []
+
+
+def test_an_entry_of_another_srim_build_is_computed_again_and_replaced(
+    tmp_path, state_dir, monkeypatch
+):
+    import srim.scan.executor as executor_module
+
+    cache_dir = tmp_path / "cache"
+
+    def scan(name):
+        return run_scan(
+            fixed_scan((10.0,)),
+            workers=1,
+            scan_dir=tmp_path / name,
+            runner=recording_runner,
+            cache=cache_dir,
+        )
+
+    monkeypatch.setattr(executor_module, "current_srim_sha", lambda: "a" * 64)
+    monkeypatch.setenv(SHA_VAR, "a" * 64)
+    scan("s1")
+    assert len(calls(state_dir)) == 1
+
+    monkeypatch.setattr(executor_module, "current_srim_sha", lambda: "b" * 64)
+    monkeypatch.setenv(SHA_VAR, "b" * 64)
+    scan("s2")  # the entry is another build: computed again, and the entry replaced
+    assert len(calls(state_dir)) == 2
+    (entry,) = cache_dir.glob("??/*")
+    assert yaml.safe_load((entry / "run.yaml").read_text())["provenance"]["srim_sha256"] == "b" * 64
+
+    result = scan("s3")  # the replaced entry is the build's: a hit
+    assert len(calls(state_dir)) == 2
+    assert result.table["status"].tolist() == ["cached"]
 
 
 def test_a_rerun_of_a_finished_scan_runs_nothing_and_gives_the_same_values(tmp_path, state_dir):
