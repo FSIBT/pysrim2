@@ -20,6 +20,7 @@ What SRIM writes (determined by inspecting a TRIM and an SR run):
 """
 
 import contextlib
+import hashlib
 import os
 import shutil
 import stat
@@ -29,31 +30,29 @@ import time
 import warnings
 from pathlib import Path
 
-from ._lock import LOCK_NAME, FileLock
+from ._lock import FileLock
 from .paths import data_dir, srim_dir, wine_prefix
 
-RESULT_FILES = frozenset(
-    name.lower()
-    for name in (
-        "PHONON.txt",
-        "E2RECOIL.txt",
-        "IONIZ.txt",
-        "LATERAL.txt",
-        "NOVAC.txt",
-        "RANGE.txt",
-        "VACANCY.txt",
-        "COLLISON.txt",
-        "BACKSCAT.txt",
-        "SPUTTER.txt",
-        "RANGE_3D.txt",
-        "TRANSMIT.txt",
-        "TRIMOUT.txt",
-        "TDATA.txt",
-        "EXYZ.txt",
-        "SR_OUTPUT.txt",
-        "run.yaml",
-    )
+RESULT_NAMES = (
+    "PHONON.txt",
+    "E2RECOIL.txt",
+    "IONIZ.txt",
+    "LATERAL.txt",
+    "NOVAC.txt",
+    "RANGE.txt",
+    "VACANCY.txt",
+    "COLLISON.txt",
+    "BACKSCAT.txt",
+    "SPUTTER.txt",
+    "RANGE_3D.txt",
+    "TRANSMIT.txt",
+    "TRIMOUT.txt",
+    "TDATA.txt",
+    "EXYZ.txt",
+    "SR_OUTPUT.txt",
+    "run.yaml",
 )
+RESULT_FILES = frozenset(name.lower() for name in RESULT_NAMES)
 WRITABLE_NAMES = frozenset(
     name.lower()
     for name in (
@@ -69,7 +68,7 @@ WRITABLE_NAMES = frozenset(
 )
 COPY_ALWAYS_DIRS = frozenset({"sr module", "srim outputs", "srim restore"})
 SMALL_FILE_BYTES = 16 * 1024
-SKIP_NAMES = frozenset({LOCK_NAME})
+SKIP_NAMES = frozenset({".pysrim2.lock"})  # written by pysrim2 0.9.0 dev builds
 RUN_LOCK_NAME = ".pysrim2-run.lock"  # in the run folder: held while a process uses it
 MIN_AGE_SECONDS = 60
 RETENTION_ENV = "PYSRIM2_RUN_RETENTION_DAYS"
@@ -182,6 +181,15 @@ def retention_days():
     return max(days, 0.0)
 
 
+def install_lock_path(directory):
+    """The lock file for a SRIM directory (in pysrim2's data dir, never in the install).
+
+    In-place runs hold it exclusively, copies for isolated runs hold it shared.
+    """
+    key = hashlib.sha256(os.path.realpath(directory).encode()).hexdigest()
+    return data_dir() / "locks" / f"{key}.lock"
+
+
 def runs_base():
     """The default folder of the run directories: ``data_dir()/runs``."""
     return data_dir() / "runs"
@@ -259,15 +267,8 @@ def warn_if_stale_install(directory):
         if not marker.is_file() or not os.path.samefile(directory, srim_dir()):
             return
         installed = Path(directory)
-        newest = max(
-            (
-                p.stat().st_mtime
-                for name in RESULT_FILES
-                for p in (installed / name,)
-                if p.is_file()
-            ),
-            default=0.0,
-        )
+        found = [installed / name for name in RESULT_NAMES]  # exact case: Linux is case-sensitive
+        newest = max((p.stat().st_mtime for p in found if p.is_file()), default=0.0)
         # 2 s of slack: coarse file time stamps must not cause a false alarm
         if newest >= marker.stat().st_mtime - 2:
             return
@@ -489,13 +490,16 @@ class RunDir:
     @staticmethod
     def _populate(source, path):
         # A legacy in-place run (srim_directory=) holds an exclusive lock while it writes;
-        # wait for it so the copy is not torn. Nothing is created in the install: if no
-        # in-place run ever happened there is no lock file and nothing to wait for.
-        guard = FileLock(Path(source) / LOCK_NAME, shared=True)
+        # wait for it so the copy is not torn. The lock file is in pysrim2's data
+        # directory: nothing is ever created in the install.
+        guard = None
         try:
-            guard.acquire()
+            lock_file = install_lock_path(source)
+            lock_file.parent.mkdir(parents=True, exist_ok=True)
+            lock_file.touch()
+            guard = FileLock(lock_file, shared=True).acquire()
         except OSError:
-            guard = None
+            guard = None  # cannot lock (unwritable data dir): copy without waiting
         try:
             return RunDir._copy_tree(source, path)
         finally:

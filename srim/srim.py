@@ -14,7 +14,7 @@ import warnings
 from datetime import UTC, datetime
 
 from . import _xvfb
-from ._lock import LOCK_NAME, FileLock
+from ._lock import FileLock
 from .core import Element, Ion, Layer, Target
 from .core.utils import (
     check_input,
@@ -31,7 +31,14 @@ from .input import AutoTRIM, SRInput, TRIMInput
 from .installer.wine import XVFB_ARGS, _kill_wineserver, wine_env
 from .output import Results, SRResults
 from .paths import srim_dir, wine_prefix
-from .rundir import RunDir, note_isolated_run, prune_runs, runs_base, warn_if_stale_install
+from .rundir import (
+    RunDir,
+    install_lock_path,
+    note_isolated_run,
+    prune_runs,
+    runs_base,
+    warn_if_stale_install,
+)
 from .spec import (
     ALWAYS_SETTINGS,
     SCHEMA_VERSION,
@@ -362,8 +369,9 @@ def _managed_run(
             raise ValueError("work_dir= and run_dir= cannot be combined with srim_directory=")
         root = os.path.abspath(srim_directory)
         # Legacy in-place run: take turns with other runs in this directory.
-        lock = FileLock(os.path.join(root, LOCK_NAME), timeout=lock_timeout)
+        lock = FileLock(install_lock_path(root), timeout=lock_timeout)
         try:
+            install_lock_path(root).parent.mkdir(parents=True, exist_ok=True)
             lock.acquire()
         except OSError as exc:
             if isinstance(exc, TimeoutError) or not (
@@ -371,9 +379,9 @@ def _managed_run(
             ):
                 raise
             raise PermissionError(
-                f"cannot create the lock file {lock.path}: {root} is not writable, so a run "
-                "in place is impossible. Omit srim_directory= to run in an isolated copy "
-                "(the default), or make the directory writable."
+                f"cannot create the lock file {lock.path}: pysrim2's data directory is not "
+                "writable (set PYSRIM2_HOME to a writable folder). Omit srim_directory= to run "
+                "in an isolated copy (the default)."
             ) from exc
         try:
             value = execute(root, None)

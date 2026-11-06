@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Runs no longer change the process working directory (the input writers take a `directory=` argument and SRIM is started with `cwd=`), so `run()` is safe in threads. Under `xvfb-run` every run claims its own display number (`-n`, via lock files `<tmp>/.pysrim2-xvfb-<N>.lock`) instead of racing with `-a`; an X server that fails to start is retried up to three times.
 - Run directories without `output_dir=` are deleted automatically once unused for 7 days (`PYSRIM2_RUN_RETENTION_DAYS`, 0 keeps them; failed runs too); `Results.close()` / `with trim.run() as results:` delete one at once; `pysrim2 clean runs [--older-than DAYS] [--dry-run]` and `pysrim2 doctor` (size of the run directories) manage them. Open `Results` keep their run directory alive (shared lock) and pruning skips folders younger than a minute; leftovers that cannot be deleted are reported with a warning, and files shared with the SRIM install (hard links) never have their mode changed.
 - Reading outputs from the installed SRIM directory (`Results(srim_dir())`, `TRIM.copy_output_files(srim_dir(), ...)`) after isolated runs gives a one-time `UserWarning` explaining the 0.9.0 change.
-- Copying the install waits for an in-place run that is writing; an in-place run in a read-only SRIM directory fails with a clear message. Relative `work_dir=` is made absolute.
+- Nothing is ever created in the installed SRIM directory: the lock for in-place runs lives in `<data dir>/locks/`, and copying the install waits for an in-place run that is writing; an in-place run in a read-only SRIM directory fails with a clear message. Relative `work_dir=` is made absolute.
 
 ### Added
 

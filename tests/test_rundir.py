@@ -15,9 +15,9 @@ import pytest
 
 import srim.rundir as rundir_module
 from srim import SR, TRIM, Ion, Layer, Target
-from srim._lock import LOCK_NAME, FileLock
+from srim._lock import FileLock
 from srim.installer.wine import XVFB_ARGS
-from srim.rundir import RunDir, clone_wine_prefix, disk_usage
+from srim.rundir import RunDir, clone_wine_prefix, disk_usage, install_lock_path
 from srim.srim import SRIMRunError
 
 TEST_FILES = Path(__file__).parent.parent / "test_files"
@@ -294,7 +294,10 @@ def test_in_place_run_writes_to_the_given_directory(installed, monkeypatch):
     fake_srim_program(monkeypatch)
     quick_trim().run(srim_directory=str(installed))
     assert (installed / "RANGE.txt").read_text() != "stale result"
-    assert (installed / LOCK_NAME).is_file()
+    assert install_lock_path(installed).is_file()
+    assert not list(installed.glob(".pysrim2*")) or [
+        p.name for p in installed.glob(".pysrim2*")
+    ] == [".pysrim2-installed"]
 
 
 def test_work_dir_with_srim_directory_is_an_error(installed, tmp_path):
@@ -303,6 +306,12 @@ def test_work_dir_with_srim_directory_is_an_error(installed, tmp_path):
 
 
 # locks
+
+
+def _lock_file(install):
+    path = install_lock_path(install)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 def _hold(path, seconds, ready):
@@ -348,7 +357,7 @@ def test_lock_is_released_when_the_holder_dies(tmp_path, mp):
 def test_in_place_run_waits_for_the_lock(installed, mp, monkeypatch):
     fake_srim_program(monkeypatch)
     ready = mp.Event()
-    holder = mp.Process(target=_hold, args=(str(installed / LOCK_NAME), 3, ready))
+    holder = mp.Process(target=_hold, args=(str(_lock_file(installed)), 3, ready))
     holder.start()
     try:
         assert ready.wait(30)
@@ -756,7 +765,7 @@ def _hold_exclusive(path, seconds, ready):
 
 def test_copying_the_install_waits_for_an_in_place_run_to_finish_writing(installed, tmp_path, mp):
     ready = mp.Event()
-    holder = mp.Process(target=_hold_exclusive, args=(str(installed / LOCK_NAME), 1.5, ready))
+    holder = mp.Process(target=_hold_exclusive, args=(str(_lock_file(installed)), 1.5, ready))
     holder.start()
     try:
         assert ready.wait(30)
@@ -771,12 +780,13 @@ def test_copying_the_install_waits_for_an_in_place_run_to_finish_writing(install
     sys.platform == "win32" or (hasattr(os, "geteuid") and os.geteuid() == 0),
     reason="needs a read-only directory that root can still write",
 )
-def test_in_place_run_in_read_only_install_gives_a_clear_error(installed):
+def test_read_only_install_works_for_copies_and_in_place_fails_cleanly(installed):
     os.chmod(installed, 0o555)
     try:
-        with pytest.raises(PermissionError, match="not writable"):
+        with pytest.raises(PermissionError):  # SRIM's inputs cannot be written there
             quick_trim().run(srim_directory=str(installed))
         RunDir.create(wine=False).cleanup()  # a copy needs no write access to the install
+        assert not list(installed.glob(".pysrim2.lock"))
     finally:
         os.chmod(installed, 0o755)
 

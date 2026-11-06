@@ -8,7 +8,6 @@ import os
 import sys
 import time
 
-LOCK_NAME = ".pysrim2.lock"
 MESSAGE_AFTER_SECONDS = 5.0
 
 if sys.platform == "win32":
@@ -57,7 +56,7 @@ class FileLock:
         Seconds between attempts.
     shared : bool, optional
         Take a shared lock (POSIX only; on Windows it is exclusive) on an *existing*
-        file without creating or writing it, so a read-only directory works.
+        file, opened read-only (create it first).
     """
 
     def __init__(
