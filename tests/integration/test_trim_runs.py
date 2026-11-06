@@ -75,8 +75,8 @@ def test_sr_table_for_he_in_si():
 
 def test_run_in_directory_with_space(srim_copy):
     ion = Ion("Ni", energy=3.0e6)
-    layer = Layer.from_formula("Ni", density=8.9, width=10000.0)
-    results = TRIM(Target([layer]), ion, number_ions=5, calculation=1).run(
+    layer = Layer.from_formula("Ni", density=8.9, width=30000.0)
+    results = TRIM(Target([layer]), ion, number_ions=5, calculation=1, random_seed=12345).run(
         srim_directory=str(srim_copy)
     )
     assert results.range.ions.sum() > 0

@@ -809,12 +809,17 @@ def test_remove_tree_never_changes_the_mode_of_hard_linked_files(tmp_path):
     (top / "sub").mkdir(parents=True)
     os.link(source, top / "sub" / "linked.exe")
     os.chmod(top / "sub", 0o555)  # read-only folder: the link can only go after it is writable
+    linked = top / "sub" / "linked.exe"
     if sys.platform == "win32":
         # a read-only name cannot be deleted on Windows, and clearing the attribute would
-        # also change the shared file: the link is reported and kept
+        # also change the shared file: the link is reported and kept, and so is any folder
+        # that still contains it (the folders themselves are leftovers, not the source)
         with pytest.warns(RuntimeWarning, match="could not delete"):
-            assert remove_tree(top) == [str(top / "sub" / "linked.exe")]
-        assert top.exists()
+            leftovers = [Path(p) for p in remove_tree(top)]
+        ancestors = {p for p in linked.parents if p == top or top in p.parents}
+        assert linked in leftovers
+        assert all(p == linked or p in ancestors for p in leftovers), leftovers
+        assert top.exists() and linked.exists()
     else:
         assert remove_tree(top) == [] and not top.exists()
     assert source.read_text() == "x" and (os.stat(source).st_mode & 0o777) == 0o444
