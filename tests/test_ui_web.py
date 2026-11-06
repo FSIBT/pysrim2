@@ -149,7 +149,11 @@ def test_the_scan_folder_gets_every_event_as_a_line_and_the_server_starts_once(
     view.on_event(PointQueued(index=0, id="ab"))
     # flushed per event: a reader sees both lines before the view is closed
     lines = (tmp_path / web.EVENTS_FILE).read_text(encoding="utf-8").splitlines()
-    assert [json.loads(line)["kind"] for line in lines] == ["scan_started", "point_queued"]
+    assert [json.loads(line)["kind"] for line in lines] == [
+        "run",
+        "scan_started",
+        "point_queued",
+    ]
     assert len(started.argv) == 1
     argv = started.argv[0]
     assert argv[argv.index("--port") + 1] == "8123"
@@ -321,3 +325,14 @@ def test_the_viewer_command_uses_the_quoting_of_the_platform(tmp_path, monkeypat
     assert web.viewer_command(folder) == subprocess.list2cmdline(
         [sys.executable, "-m", "srim.ui.tui.view", str(folder)]
     )
+
+
+def test_each_run_starts_its_events_file_with_a_run_header(tmp_path, started):
+    view, _, _ = make_view(tmp_path)
+    view.on_event(scan_started(tmp_path))
+    view.close()
+    lines = (tmp_path / web.EVENTS_FILE).read_text(encoding="utf-8").splitlines()
+    header = json.loads(lines[0])
+    assert header == {"kind": "run", "run_id": view.run_id}
+    assert json.loads(lines[1])["kind"] == "scan_started"
+    assert len(view.run_id) == 32

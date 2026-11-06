@@ -18,25 +18,38 @@ import json
 import queue
 import sys
 import threading
+from dataclasses import dataclass
 from pathlib import Path
 
 from srim.scan import Scan
 from srim.scan.events import ScanPaused, event_from_dict
 from srim.spec import SpecError
-from srim.ui.web import EVENTS_FILE, exit_with_parent, send_request
+from srim.ui.web import EVENTS_FILE, RUN_KIND, exit_with_parent, send_request
 
 from .app import ScanApp
 from .plot import check_plot
+from .state import ScanState
 
 #: seconds between two reads of the events file
 POLL_SECONDS = 0.2
+
+
+@dataclass(frozen=True)
+class NewRun:
+    """Not an event: the events file started a new run (``run_id``; None when it was
+    truncated), so the viewer starts its state again."""
+
+    run_id: str | None
 
 
 class EventFollower(threading.Thread):
     """Puts every event of the events file into ``events``, from the start of the file and
     then as lines are appended. A line is taken only when it is complete (ends with a newline);
     a line that does not parse is skipped. A ``scan_paused`` event sets or clears
-    ``pause_event``, so that the viewer's ``p`` key toggles the scan's actual state."""
+    ``pause_event``, so that the viewer's ``p`` key toggles the scan's actual state.
+
+    A run header (``{"kind": "run", "run_id": ...}``) with a new id, and a file that shrank
+    (truncated by a new run), put a :class:`NewRun` in the queue first."""
 
     def __init__(self, path, events: queue.Queue, pause_event, *, poll=POLL_SECONDS):
         super().__init__(name="pysrim2-events", daemon=True)
@@ -47,6 +60,7 @@ class EventFollower(threading.Thread):
         self.stopped = threading.Event()
         self._offset = 0
         self._pending = b""
+        self._run_id = None
 
     def run(self) -> None:
         while not self.stopped.is_set():
@@ -61,6 +75,8 @@ class EventFollower(threading.Thread):
             return 0
         if size < self._offset:  # truncated by a new run: read it again from the start
             self._offset, self._pending = 0, b""
+            self._run_id = None
+            self.events.put(NewRun(None))
         if size == self._offset:
             return 0
         with self.path.open("rb") as file:
@@ -79,7 +95,13 @@ class EventFollower(threading.Thread):
         if not text:
             return False
         try:
-            event = event_from_dict(json.loads(text))
+            data = json.loads(text)
+            if data.get("kind") == RUN_KIND:
+                if data.get("run_id") != self._run_id:
+                    self._run_id = data.get("run_id")
+                    self.events.put(NewRun(self._run_id))
+                return False
+            event = event_from_dict(data)
         except (ValueError, TypeError, AttributeError):  # not an event this version knows
             return False
         if isinstance(event, ScanPaused):
@@ -104,7 +126,16 @@ class WebScanApp(ScanApp):
             view=view,
             plot=plot,
         )
+        self.scan = scan
         self.folder = Path(folder)
+
+    def take(self, event) -> None:
+        if isinstance(event, NewRun):  # a new run: the state and the screens start again
+            self.state = ScanState(self.scan)
+            for name in ("plot", "dashboard"):
+                self.get_screen(name).forget()
+            return
+        super().take(event)
 
     def action_toggle_pause(self) -> None:
         super().action_toggle_pause()

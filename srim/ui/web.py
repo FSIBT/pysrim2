@@ -16,6 +16,7 @@ needs only the standard library; textual-serve is imported in the child alone.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shlex
 import signal
@@ -24,12 +25,15 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from pathlib import Path
 
 #: the events of the scan, one JSON line each (written by the CLI, read by the viewer)
 EVENTS_FILE = "events.jsonl"
 #: the requests of the viewer, one word per line (written by the viewer, read by the CLI)
 CONTROL_FILE = "control.jsonl"
+#: the first line of each run's events file: ``{"kind": "run", "run_id": ...}`` (not an event)
+RUN_KIND = "run"
 #: the requests the CLI acts on; any other line is ignored
 REQUESTS = ("pause", "resume", "stop")
 #: seconds between two reads of the control file
@@ -227,6 +231,8 @@ class WebView:
         self.grace = GRACE_SECONDS if grace is None else grace
         #: True once the scan has emitted ``scan_finished``
         self.finished = False
+        #: the id of this run, written first in the events file (None before the scan starts)
+        self.run_id: str | None = None
         self._log = None
         self._server = None
         self._disabled = False  # the server could not start: the view takes no more events
@@ -304,6 +310,9 @@ class WebView:
         try:
             self._log = (self.folder / EVENTS_FILE).open("w", encoding="utf-8", newline="\n")
             (self.folder / CONTROL_FILE).write_text("", encoding="utf-8")
+            self.run_id = uuid.uuid4().hex
+            self._log.write(json.dumps({"kind": RUN_KIND, "run_id": self.run_id}) + "\n")
+            self._log.flush()
             command = viewer_command(self.folder.resolve(), self.plot)
             self._server = start_server(server_argv(self.host, self.port, command))
         except OSError as exc:

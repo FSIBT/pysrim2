@@ -680,7 +680,7 @@ def test_web_run_prints_the_url_writes_the_events_and_stops_the_server(work, mon
     assert lines[0].startswith("web view: ")  # the URL comes before the status lines
     assert any(line.startswith("done 0/2") for line in lines)
     kinds = [json.loads(line)["kind"] for line in (out / "events.jsonl").read_text().splitlines()]
-    assert kinds[0] == "scan_started" and kinds[-1] == "scan_finished"
+    assert kinds[0] == "run" and kinds[1] == "scan_started" and kinds[-1] == "scan_finished"
     argv = started[0]
     assert argv[argv.index("--port") + 1] == str(port)
     assert argv[argv.index("--host") + 1] == "127.0.0.1"

@@ -114,7 +114,11 @@ class ScanApp(App):
             if event is None:
                 self.ended = True
                 return
-            self.state.apply(event)
+            self.take(event)
+
+    def take(self, event) -> None:
+        """Apply one event of the scan to the state (a subclass may act on other items)."""
+        self.state.apply(event)
 
     # -- keys ----------------------------------------------------------------------------------
 
@@ -173,6 +177,10 @@ class _LiveScreen(Screen):
         super().__init__()
         self._shown: dict[str, str] = {}
 
+    def forget(self) -> None:
+        """Show everything again at the next update (the state was replaced)."""
+        self._shown.clear()
+
     def _show(self, widget_id: str, text: str) -> None:
         if self._shown.get(widget_id) != text:
             self._shown[widget_id] = text
@@ -193,6 +201,10 @@ class PlotScreen(_LiveScreen):
         self.data = None
         self.plot_rebuilds = 0  # how often the plot was drawn (tests watch it)
         self._drawn = None  # (data_version, axes) of the plot on screen
+
+    def forget(self) -> None:
+        super().forget()
+        self._drawn = None
 
     def compose(self):
         yield PlotextPlot(id="plot")
@@ -267,6 +279,13 @@ class DashboardScreen(_LiveScreen):
         self.query_one("#workers", DataTable).add_columns(
             "worker", "point", "ions", "ions/s", "cpu"
         )
+
+    def forget(self) -> None:
+        super().forget()
+        self._seen = None
+        self._order = None  # the table is rebuilt at the next update
+        self._workers_drawn = None
+        self._gauge = None
 
     def on_screen_resume(self) -> None:
         self._seen = None  # the view was hidden: check the table again

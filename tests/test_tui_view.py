@@ -3,6 +3,7 @@ requests in the control file, and the start-up checks. A pilot drives the app on
 events file (no SRIM, no server). Every wait has a timeout."""
 
 import asyncio
+import json
 import queue
 import threading
 
@@ -244,3 +245,62 @@ def test_a_bad_plot_option_exits_2_before_the_view_starts(folder, capsys):
     make_scan_folder(folder)
     assert view.main([str(folder), "--plot", "nope,mean"]) == 2
     assert "not a scanned parameter" in capsys.readouterr().err
+
+
+def write_run_header(folder, run_id):
+    with (folder / web.EVENTS_FILE).open("a", encoding="utf-8") as file:
+        file.write(json.dumps({"kind": web.RUN_KIND, "run_id": run_id}) + "\n")
+
+
+def test_a_run_header_is_not_an_event_and_a_new_run_id_starts_a_new_run(folder):
+    scan = make_scan_folder(folder)
+    path = folder / web.EVENTS_FILE
+    write_run_header(folder, "a")
+    write_events(folder, *start_events(scan, folder))
+    events = queue.Queue()
+    follower = view.EventFollower(path, events, threading.Event(), poll=0.01)
+    assert follower.pump() == 4  # the header is not counted
+    assert events.get_nowait() == view.NewRun("a")
+    events.queue.clear()  # the four events
+    write_run_header(folder, "a")  # the same run again: nothing new
+    assert follower.pump() == 0 and events.empty()
+    write_run_header(folder, "b")
+    assert follower.pump() == 0
+    assert events.get_nowait() == view.NewRun("b")
+
+
+def test_a_truncated_events_file_starts_a_new_run(folder):
+    scan = make_scan_folder(folder)
+    write_events(folder, *start_events(scan, folder))
+    events = queue.Queue()
+    follower = view.EventFollower(folder / web.EVENTS_FILE, events, threading.Event())
+    follower.pump()
+    events.queue.clear()
+    (folder / web.EVENTS_FILE).write_text("", encoding="utf-8")
+    follower.pump()
+    assert events.get_nowait() == view.NewRun(None)
+
+
+def test_a_new_run_resets_what_the_viewer_shows(folder):
+    scan = make_scan_folder(folder)
+    write_run_header(folder, "a")
+    write_events(
+        folder, *start_events(scan, folder), finished(scan, 0, 1.0), finished(scan, 2, 3.0)
+    )
+    app, follower = make_viewer(folder, scan)
+    follower.start()
+
+    async def scenario():
+        async with app.run_test(size=(120, 40)):
+            await until(lambda: "done 2/3" in app.screen.status_text)
+            # a new run in the same folder: the file is started again
+            (folder / web.EVENTS_FILE).write_text("", encoding="utf-8")
+            write_run_header(folder, "b")
+            write_events(folder, *start_events(scan, folder))
+            await until(lambda: "done 0/3" in app.screen.status_text)
+            assert "queued 3" in app.screen.status_text
+
+    try:
+        run(scenario())
+    finally:
+        stop_follower(follower)
