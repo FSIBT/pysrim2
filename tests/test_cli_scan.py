@@ -9,6 +9,7 @@ Every wait has a timeout, and a SIGALRM guard (POSIX) fails a test that hangs.
 import io
 import json
 import os
+import queue
 import signal
 import sys
 import threading
@@ -170,7 +171,7 @@ def test_stopped_scan_exits_130_and_keeps_the_partial_result(work, monkeypatch, 
     rows = json_rows(captured.out)
     assert rows[-1]["kind"] == "scan_finished" and rows[-1]["stopped"] is True
     assert (out / "result" / "scan.csv").is_file()
-    assert "stopped by Ctrl-C" in captured.err
+    assert "stopped: the partial result above is kept" in captured.err
 
 
 class Tty(io.StringIO):
@@ -531,7 +532,7 @@ def test_ctrl_c_during_a_scan_exits_130_with_the_partial_result(work, monkeypatc
     presser.join(timeout=5)
     assert code == 130
     assert (out / "result" / "scan.csv").is_file()
-    assert "stopped by Ctrl-C" in capsys.readouterr().err
+    assert "stopped: the partial result above is kept" in capsys.readouterr().err
 
 
 def test_an_error_before_the_scan_starts_exits_2(work, monkeypatch, capsys):
@@ -569,3 +570,63 @@ def test_reusing_a_folder_warns_only_when_its_scan_differs(work, capsys):
     Scan(BASE, grid={"ion.energy_keV": [10.0]}, seed=7).to_yaml(other)
     assert cli.main(["scan", "run", str(other), "--ui", "plain", "-o", str(out)]) == 0
     assert "describes another scan" in capsys.readouterr().err
+
+
+def test_sigterm_in_a_terminal_view_stops_the_scan_and_restores_the_handler(monkeypatch):
+    if not hasattr(signal, "SIGTERM"):
+        pytest.skip("SIGTERM is POSIX")
+    pytest.importorskip("textual")
+    before = signal.getsignal(signal.SIGTERM)
+    stop, pause, events = threading.Event(), threading.Event(), queue.Queue()
+
+    class TerminatedApp(FakeApp):
+        def run(self):
+            os.kill(os.getpid(), signal.SIGTERM)  # what a service manager sends
+            assert stop.wait(GUARD_SECONDS), "SIGTERM did not set the stop event"
+            super().run()
+
+    monkeypatch.setattr("srim.ui.tui.app.ScanApp", TerminatedApp)
+
+    def call():
+        assert stop.wait(GUARD_SECONDS)  # the scan sees the stop and returns its result
+        return "partial"
+
+    result = cli._run_in_app(call, events, None, view="plot", plot=None, stop=stop, pause=pause)
+    assert result == "partial" and stop.is_set()
+    assert signal.getsignal(signal.SIGTERM) == before  # restored after the app
+
+
+def test_the_terminal_view_does_not_wait_forever_for_a_scan_that_will_not_stop(monkeypatch):
+    pytest.importorskip("textual")
+    monkeypatch.setattr(cli, "TERMINAL_JOIN_SECONDS", 0.3)
+
+    class QuitNow(FakeApp):
+        def run(self):  # the user quit at once (ctrl+c twice); the scan has not stopped
+            return
+
+    monkeypatch.setattr("srim.ui.tui.app.ScanApp", QuitNow)
+    release = threading.Event()
+    events = queue.Queue()
+
+    def call():
+        release.wait(GUARD_SECONDS)  # ignores the stop
+        return "late"
+
+    stop = threading.Event()
+    try:
+        result = cli._run_in_app(call, events, None, view="plot", plot=None, stop=stop,
+                                 pause=threading.Event())  # fmt: skip
+    finally:
+        release.set()
+    assert result is None and stop.is_set()
+
+
+def test_quitting_before_the_scan_stopped_exits_130_with_the_partial_result(
+    work, monkeypatch, capsys
+):
+    monkeypatch.setattr(cli, "_view_for", lambda ui: "plot")
+    monkeypatch.setattr(cli, "_run_in_app", lambda *args, **kwargs: None)
+    out = work / "out"
+    code = cli.main(["scan", "run", str(write_scan(work)), "-o", str(out)])
+    assert code == 130
+    assert "stopped: the partial result above is kept" in capsys.readouterr().err

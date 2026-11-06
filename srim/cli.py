@@ -21,6 +21,7 @@ import os
 import queue
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -473,6 +474,9 @@ SCAN_RUNNER_VAR = "PYSRIM2_SCAN_RUNNER"
 GRAPHICAL_UIS = ("plot", "dashboard", "web")
 #: the views that run the Textual app (in a terminal)
 TERMINAL_VIEWS = ("plot", "dashboard")
+#: seconds the command waits for the scan thread once the app has quit (the executor's own
+#: grace period is 10 s, then its workers are killed)
+TERMINAL_JOIN_SECONDS = 25.0
 _SHARD_NAME = re.compile(r"[0-9a-f]{2}")
 _KEY_NAME = re.compile(r"[0-9a-f]{64}")
 
@@ -598,12 +602,29 @@ def _view_for(ui: str) -> str:
     return "plain"
 
 
+def _stop_on_sigterm(stop):
+    """While the terminal view runs, SIGTERM sets ``stop`` (POSIX, main thread only).
+
+    Returns the function that restores the previous handler.
+    """
+    if not hasattr(signal, "SIGTERM") or threading.current_thread() is not threading.main_thread():
+        return lambda: None
+    previous = signal.getsignal(signal.SIGTERM)
+    signal.signal(signal.SIGTERM, lambda signum, frame: stop.set())
+    return lambda: signal.signal(
+        signal.SIGTERM, previous if previous is not None else signal.SIG_DFL
+    )
+
+
 def _run_in_app(call, events, scan, *, view, plot, stop, pause):
     """Run ``call()`` (the scan) in a thread and the live view in this one.
 
     The scan's events are in ``events``; ``None`` is put when the scan thread has ended, which
     is when the app exits. If the app fails, the scan is stopped (its partial result is kept)
-    and the error is raised here, as if the scan had raised it.
+    and the error is raised here, as if the scan had raised it. SIGTERM stops the scan too.
+    When the app quits before the scan has stopped (ctrl+c twice), the command waits at most
+    :data:`TERMINAL_JOIN_SECONDS` and returns None: the scan thread is a daemon and goes on
+    stopping only until the process exits.
     """
     from srim.ui.tui.app import ScanApp
 
@@ -617,14 +638,21 @@ def _run_in_app(call, events, scan, *, view, plot, stop, pause):
         finally:
             events.put(None)
 
-    thread = threading.Thread(target=work, name="pysrim2-scan")
+    restore = _stop_on_sigterm(stop)
+    thread = threading.Thread(target=work, name="pysrim2-scan", daemon=True)
     thread.start()
     try:
         ScanApp(scan, events, stop_event=stop, pause_event=pause, view=view, plot=plot).run()
     finally:
-        if thread.is_alive():  # the app failed: stop the scan, do not run it unseen
+        if thread.is_alive():  # the app failed or quit early: stop the scan
             stop.set()
-        thread.join()
+        thread.join(TERMINAL_JOIN_SECONDS)
+        restore()
+    if thread.is_alive():
+        print(
+            "the scan did not stop in time; the partial result may be incomplete", file=sys.stderr
+        )
+        return None
     if "error" in outcome:
         raise outcome["error"]
     return outcome["result"]
@@ -635,7 +663,7 @@ def _report_outcome(result, folder: Path, view: str, stopped: bool) -> int:
     say = sys.stderr if view == "json" else sys.stdout
     print(f"result: {folder / 'result' / 'scan.csv'}", file=say)
     if stopped:
-        print("stopped by Ctrl-C: the partial result above is kept", file=sys.stderr)
+        print("stopped: the partial result above is kept", file=sys.stderr)
         return EXIT_INTERRUPTED
     counts = result.table["status"].value_counts()
     if counts.get("max_ions", 0):
@@ -731,6 +759,12 @@ def _scan_run(args) -> int:
             result = _run_in_app(
                 scan_call, events, scan, view=view, plot=args.plot, stop=stop, pause=pause
             )
+            if result is None:  # the app quit first: the scan is not finished
+                csv = folder / "result" / "scan.csv"
+                if csv.is_file():
+                    print(f"result: {csv}", file=sys.stderr)
+                print("stopped: the partial result above is kept", file=sys.stderr)
+                return EXIT_INTERRUPTED
         else:
             result = scan_call()
     except KeyboardInterrupt:
