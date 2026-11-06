@@ -77,7 +77,8 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=0.0,
         metavar="DAYS",
-        help="only those unused for this many days (default 0: all that are not in use)",
+        help="only those unused for this many days (default 0: every one that is not in use; "
+        "folders of running processes and of open Results objects are always skipped)",
     )
     clean.add_argument("--dry-run", action="store_true", help="list what would be deleted")
 

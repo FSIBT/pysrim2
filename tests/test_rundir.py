@@ -620,6 +620,8 @@ def test_prune_deletes_old_unused_run_dirs_only(installed, tmp_path):
     foreign = base / "run-not-ours"
     foreign.mkdir()
     old(foreign, 30)
+    assert prune_runs(base, 0) == []  # younger than a minute: never touched
+    old(kept_new.root / RUN_LOCK_NAME, 0.01)
     assert prune_runs(base, 0) == [kept_new.root] and foreign.exists()
 
 
@@ -769,3 +771,59 @@ def test_in_place_run_in_read_only_install_gives_a_clear_error(installed):
         RunDir.create(wine=False).cleanup()  # a copy needs no write access to the install
     finally:
         os.chmod(installed, 0o755)
+
+
+def test_remove_tree_never_changes_the_mode_of_hard_linked_files(tmp_path):
+    from srim.rundir import remove_tree
+
+    source = tmp_path / "install.exe"
+    source.write_text("x")
+    os.chmod(source, 0o444)
+    top = tmp_path / "t"
+    (top / "sub").mkdir(parents=True)
+    os.link(source, top / "sub" / "linked.exe")
+    os.chmod(top / "sub", 0o555)  # read-only folder: the link can only go after it is writable
+    assert remove_tree(top) == [] and not top.exists()
+    assert source.read_text() == "x" and (os.stat(source).st_mode & 0o777) == 0o444
+
+
+def _prune_in_child(base):
+    from srim.rundir import prune_runs
+
+    return [str(p) for p in prune_runs(base, 0)]
+
+
+def test_open_results_keep_their_run_dir_alive_across_processes(
+    installed, tmp_path, monkeypatch, mp
+):
+    import gc
+
+    fake_srim_program(monkeypatch)
+    base = tmp_path / "work"
+    results = quick_trim().run(work_dir=base)
+    root = Path(results.directory).parent
+    old(root / rundir_module.RUN_LOCK_NAME, 30)
+    with cf.ProcessPoolExecutor(1, mp_context=mp) as pool:
+        assert pool.submit(_prune_in_child, str(base)).result(60) == []  # open: skipped
+        assert root.exists()
+        results.close()  # deletes it anyway, and releases the lock
+        assert not root.exists()
+        again = quick_trim().run(work_dir=base)
+        root2 = Path(again.directory).parent
+        old(root2 / rundir_module.RUN_LOCK_NAME, 30)
+        assert pool.submit(_prune_in_child, str(base)).result(60) == []
+        del again
+        gc.collect()  # garbage collection releases the lock
+        assert pool.submit(_prune_in_child, str(base)).result(60) == [str(root2)]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX errno")
+def test_in_place_run_on_a_read_only_file_system_gives_the_clear_error(installed, monkeypatch):
+    import errno
+
+    def erofs(self):
+        raise OSError(errno.EROFS, "Read-only file system")
+
+    monkeypatch.setattr(FileLock, "acquire", erofs)
+    with pytest.raises(PermissionError, match="not writable"):
+        quick_trim().run(srim_directory=str(installed))

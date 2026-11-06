@@ -1,6 +1,7 @@
 """Module for automating srim calculations"""
 
 import contextlib
+import errno
 import os
 import random
 import re
@@ -362,7 +363,11 @@ def _managed_run(
         lock = FileLock(os.path.join(root, LOCK_NAME), timeout=lock_timeout)
         try:
             lock.acquire()
-        except PermissionError as exc:
+        except OSError as exc:
+            if isinstance(exc, TimeoutError) or not (
+                isinstance(exc, PermissionError) or exc.errno == errno.EROFS
+            ):
+                raise
             raise PermissionError(
                 f"cannot create the lock file {lock.path}: {root} is not writable, so a run "
                 "in place is impossible. Omit srim_directory= to run in an isolated copy "
@@ -411,7 +416,7 @@ def _managed_run(
         rd.release_lock()
         results = finish(value, where)
         if output_dir is None:
-            results._run_root = rd.root  # results.close() deletes the run directory
+            results._own_run_dir(rd.root)  # kept alive until results.close() deletes it
         return results
     return finish(value, where)
 

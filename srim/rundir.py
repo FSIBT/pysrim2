@@ -71,6 +71,7 @@ COPY_ALWAYS_DIRS = frozenset({"sr module", "srim outputs", "srim restore"})
 SMALL_FILE_BYTES = 16 * 1024
 SKIP_NAMES = frozenset({LOCK_NAME})
 RUN_LOCK_NAME = ".pysrim2-run.lock"  # in the run folder: held while a process uses it
+MIN_AGE_SECONDS = 60
 RETENTION_ENV = "PYSRIM2_RUN_RETENTION_DAYS"
 DEFAULT_RETENTION_DAYS = 7.0
 LAST_RUN_MARKER = ".last-isolated-run"  # in data_dir(): when the latest isolated run finished
@@ -131,12 +132,28 @@ def remove_tree(path):
         if isinstance(exc, FileNotFoundError):
             return
         try:
-            os.chmod(failed, stat.S_IRWXU)
-            os.chmod(os.path.dirname(failed), stat.S_IRWXU)
+            info = os.lstat(failed)
+        except OSError:
+            return
+        parent = os.path.dirname(failed)
+        try:
+            # a read-only folder stops us deleting its entries: make folders writable
+            if stat.S_ISDIR(info.st_mode):
+                os.chmod(failed, stat.S_IRWXU)
+            os.chmod(parent, stat.S_IRWXU)
             func(failed)
         except FileNotFoundError:
             pass
         except OSError:
+            # Windows refuses to delete read-only files. Never change the mode of a file
+            # with other hard links: it may be a file of the installed SRIM.
+            if sys.platform == "win32" and not stat.S_ISDIR(info.st_mode) and info.st_nlink == 1:
+                try:
+                    os.chmod(failed, stat.S_IWRITE)
+                    func(failed)
+                    return
+                except OSError:
+                    pass
             leftovers.append(str(failed))
 
     if not os.path.lexists(path):
@@ -196,7 +213,8 @@ def prune_runs(base=None, older_than_days=None, dry_run=False):
     days = retention_days() if older_than_days is None else float(older_than_days)
     if older_than_days is None and days <= 0:
         return []
-    cutoff = time.time() - days * 86400
+    # never touch folders younger than a minute (between their creation and locking)
+    cutoff = min(time.time() - days * 86400, time.time() - MIN_AGE_SECONDS)
     removed = []
     for folder in run_folders(base if base is not None else runs_base()):
         marker = folder / RUN_LOCK_NAME
@@ -270,12 +288,33 @@ class OwnsRunDir:
     a default (isolated) run made, once the results are no longer needed."""
 
     _run_root = None
+    _run_lock = None
+
+    def _own_run_dir(self, root):
+        """Take over ``root``: it stays alive (shared lock; pruning skips it) until
+        :meth:`close`, garbage collection or process exit."""
+        self._run_root = Path(root)
+        lock = FileLock(self._run_root / RUN_LOCK_NAME, timeout=0, shared=True)
+        try:
+            self._run_lock = lock.acquire()
+        except OSError:
+            self._run_lock = None  # cannot be protected; the age limit still applies
+
+    def _release_run_lock(self):
+        lock, self._run_lock = self._run_lock, None
+        if lock is not None:
+            lock.release()
 
     def close(self):
         """Delete the run directory these results were read from (if the run made one)."""
         root, self._run_root = self._run_root, None
+        self._release_run_lock()
         if root is not None:
             remove_tree(root)
+
+    def __del__(self):
+        with contextlib.suppress(Exception):
+            self._release_run_lock()
 
     def __enter__(self):
         return self

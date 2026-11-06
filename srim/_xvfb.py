@@ -31,6 +31,8 @@ def claim_display(start=FIRST_DISPLAY):
     The caller keeps ``lock`` (a held :class:`~srim._lock.FileLock`) until its X server
     has exited, then calls ``lock.release()``.
     """
+    # Our lock files live in the temp directory; the X servers' own lock files and sockets
+    # are always in /tmp (the X11 location), whatever tempfile says.
     directory = tempfile.gettempdir()
     for number in range(start, LAST_DISPLAY):
         if os.path.exists(f"/tmp/.X{number}-lock") or os.path.exists(f"/tmp/.X11-unix/X{number}"):
