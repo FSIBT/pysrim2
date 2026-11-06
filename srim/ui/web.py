@@ -49,7 +49,8 @@ POLL_SECONDS = 0.5
 #: seconds after the start of the server before it is checked (one that has exited by then
 #: did not start: its port is taken, say)
 STARTUP_SECONDS = 1.0
-#: seconds the server stays up after a finished scan, so that its final state can be seen
+#: seconds the server stays up after a finished scan with ``wait=False`` (``--no-wait``), so
+#: that its final state can be seen; by default it stays up until Ctrl-C
 GRACE_SECONDS = 5.0
 #: seconds the server process gets to exit after SIGTERM to its group, before SIGKILL
 STOP_SECONDS = 1.0
@@ -219,10 +220,11 @@ class WebView:
     """The browser view of the scan that runs in this process (see the module docstring).
 
     Use it as the consumer of the scan's events (:meth:`on_event`) and as a context manager:
-    on exit the server stops, after :data:`GRACE_SECONDS` if the scan has finished. The
-    server starts when the scan starts (``scan_started``), once its folder is locked and its
-    files are fresh; before that nothing is written. A server that cannot start is a notice,
-    and the scan goes on without the view.
+    on exit the server stops. After a finished scan the server stays up until Ctrl-C
+    (``wait=True``, the default), or for :data:`GRACE_SECONDS` (``wait=False``); a scan that
+    the user stopped gets the grace period. The server starts when the scan starts
+    (``scan_started``), once its folder is locked and its files are fresh; before that nothing
+    is written. A server that cannot start is a notice, and the scan goes on without the view.
     """
 
     def __init__(
@@ -236,6 +238,7 @@ class WebView:
         pause_event,
         poll: float | None = None,
         grace: float | None = None,
+        wait: bool = True,
     ):
         self.folder = Path(folder)
         self.host = host
@@ -245,8 +248,10 @@ class WebView:
         self.pause_event = pause_event
         self.poll = POLL_SECONDS if poll is None else poll
         self.grace = GRACE_SECONDS if grace is None else grace
-        #: True once the scan has emitted ``scan_finished``
+        self.wait = wait
+        #: True once the scan has emitted ``scan_finished``, and True if the user stopped it
         self.finished = False
+        self.stopped = False
         #: the id of this run, written first in the events file (None before the scan starts)
         self.run_id: str | None = None
         self._log = None
@@ -280,6 +285,7 @@ class WebView:
             return
         if event.kind == "scan_finished":
             self.finished = True
+            self.stopped = event.stopped
 
     def _disable(self, reason: str) -> None:
         """Turn the view off, with one notice: the scan goes on without it."""
@@ -336,7 +342,20 @@ class WebView:
         return self
 
     def __exit__(self, *exc_info) -> None:
+        if self.finished and self.wait and not self.stopped and self._server is not None:
+            _notice(f"scan finished — the view stays at {self.url}; press Ctrl-C to stop it")
+            try:
+                self._hold()
+            except KeyboardInterrupt:  # the stop the notice asks for: not a failure of the scan
+                pass
+            self.close()
+            return
         self.close(grace=self.grace if self.finished else 0.0)
+
+    def _hold(self) -> None:
+        """Block until Ctrl-C (the server keeps serving the final state meanwhile)."""
+        while True:
+            time.sleep(POLL_SECONDS)
 
     # -- the start of the view -------------------------------------------------------------
 

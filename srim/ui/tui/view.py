@@ -115,7 +115,8 @@ class EventFollower(threading.Thread):
 
 class WebScanApp(ScanApp):
     """:class:`~srim.ui.tui.app.ScanApp` whose ``p`` and ``q`` keys are requests to the CLI
-    (``control.jsonl``) instead of changes of the flags of this process."""
+    (``control.jsonl``) instead of changes of the flags of this process. After the scan has
+    ended they do nothing: the tab keeps the final state (the server ends at Ctrl-C)."""
 
     def __init__(self, scan, events, *, folder, stop_event, pause_event, view="plot", plot=None):
         super().__init__(
@@ -125,6 +126,7 @@ class WebScanApp(ScanApp):
             pause_event=pause_event,
             view=view,
             plot=plot,
+            wait=False,  # the tab does not quit: the server ends the viewers
         )
         self.scan = scan
         self.folder = Path(folder)
@@ -138,10 +140,14 @@ class WebScanApp(ScanApp):
         super().take(event)
 
     def action_toggle_pause(self) -> None:
+        if self.scan_over():
+            return
         super().action_toggle_pause()
         self._request("pause" if self.pause_event.is_set() else "resume")
 
     def action_stop(self) -> None:
+        if self.scan_over():  # nothing is left to stop, and the tab does not quit
+            return
         was_stopping = self.stop_event.is_set()
         super().action_stop()
         if not was_stopping:

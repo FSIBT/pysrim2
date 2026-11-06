@@ -162,9 +162,10 @@ def build_parser() -> argparse.ArgumentParser:
     scan_run.add_argument(
         "--no-wait",
         action="store_true",
-        help="the terminal views (plot, dashboard) close as soon as the scan has finished. By "
-        "default they stay open after the end, showing its final state, until q (or ctrl+c) "
-        "quits; the exit code is the scan's either way. plain and json ignore this option",
+        help="the terminal views (plot, dashboard) close as soon as the scan has finished, and "
+        "the web view stops its server after a few seconds. By default they stay open after "
+        "the end, showing its final state: the terminal views until q (or ctrl+c), the web view "
+        "until Ctrl-C. The exit code is the scan's either way. plain and json ignore this option",
     )
     scan_run.add_argument(
         "--host",
@@ -795,6 +796,7 @@ def _scan_run(args) -> int:
             plot=args.plot,
             stop_event=stop,
             pause_event=pause,
+            wait=not args.no_wait,
         )
         plain = PlainProgress(sys.stdout)
 

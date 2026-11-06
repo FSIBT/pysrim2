@@ -250,8 +250,8 @@ def test_a_server_that_cannot_start_is_a_notice_and_the_scan_goes_on(tmp_path, m
     view.close()
 
 
-def test_the_view_stays_up_for_the_grace_only_after_a_finished_scan(tmp_path, started):
-    view, _, _ = make_view(tmp_path, grace=0.01)
+def test_the_view_stays_up_for_the_grace_only_after_a_finished_scan_with_no_wait(tmp_path, started):
+    view, _, _ = make_view(tmp_path, grace=0.01, wait=False)
     view.on_event(scan_started(tmp_path))
     view.on_event(ScanFinished(n_done=2, n_failed=0, seconds=1.0, stopped=False))
     graces = []
@@ -433,3 +433,53 @@ def test_a_server_that_exits_at_once_is_a_notice_and_the_scan_goes_on(
     assert "the web server exited at once (code 0; is port 8123 in use?)" in err
     assert "the scan goes on without the web view" in err
     view.close()
+
+
+def interrupted_hold(holds):
+    """A replacement for the wait after a finished scan: it records the call, then the Ctrl-C."""
+
+    def hold(self):
+        holds.append(self.url)
+        raise KeyboardInterrupt
+
+    return hold
+
+
+def test_by_default_the_view_stays_up_after_a_finished_scan_until_ctrl_c(
+    tmp_path, started, monkeypatch, capsys
+):
+    view, _, _ = make_view(tmp_path, grace=0.01)  # wait is on by default
+    holds = []
+    monkeypatch.setattr(web.WebView, "_hold", interrupted_hold(holds))
+    view.on_event(scan_started(tmp_path))
+    view.on_event(ScanFinished(n_done=2, n_failed=0, seconds=1.0, stopped=False))
+    with view:
+        pass
+    assert holds == [view.url]  # it waited for Ctrl-C, not the grace period
+    assert started.server.terminated  # and the Ctrl-C ended the server
+    err = capsys.readouterr().err
+    assert f"scan finished — the view stays at {view.url}; press Ctrl-C to stop it" in err
+
+
+def test_a_scan_stopped_by_the_user_does_not_wait_for_ctrl_c(tmp_path, started, monkeypatch):
+    view, _, _ = make_view(tmp_path, grace=0.01)
+    holds = []
+    monkeypatch.setattr(web.WebView, "_hold", interrupted_hold(holds))
+    view.on_event(scan_started(tmp_path))
+    view.on_event(ScanFinished(n_done=1, n_failed=0, seconds=1.0, stopped=True))
+    with view:
+        pass
+    assert holds == []  # the user asked for the stop: the grace period, as with --no-wait
+    assert started.server.terminated
+
+
+def test_no_wait_does_not_wait_for_ctrl_c_after_a_finished_scan(tmp_path, started, monkeypatch):
+    view, _, _ = make_view(tmp_path, grace=0.0, wait=False)
+    holds = []
+    monkeypatch.setattr(web.WebView, "_hold", interrupted_hold(holds))
+    view.on_event(scan_started(tmp_path))
+    view.on_event(ScanFinished(n_done=2, n_failed=0, seconds=1.0, stopped=False))
+    with view:
+        pass
+    assert holds == []
+    assert started.server.terminated

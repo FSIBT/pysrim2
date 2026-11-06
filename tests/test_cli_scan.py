@@ -675,7 +675,7 @@ def test_web_run_prints_the_url_writes_the_events_and_stops_the_server(work, mon
     port = free_port()
     out = work / "out"
     code = cli.main(["scan", "run", str(write_scan(work)), "--workers", "2", "--ui", "web",
-                     "--port", str(port), "-o", str(out)])  # fmt: skip
+                     "--port", str(port), "-o", str(out), "--no-wait"])  # fmt: skip
     captured = capsys.readouterr()
     assert code == 0
     assert f"web view: http://127.0.0.1:{port}" in captured.out
@@ -760,7 +760,7 @@ def test_a_web_run_turns_sigterm_into_a_stop_and_restores_the_handler(work, monk
     monkeypatch.setattr(web, "GRACE_SECONDS", 0.0)
     before = signal.getsignal(signal.SIGTERM)
     code = cli.main(["scan", "run", str(write_scan(work)), "--ui", "web", "--port",
-                     str(free_port()), "-o", str(work / "out")])  # fmt: skip
+                     str(free_port()), "-o", str(work / "out"), "--no-wait"])  # fmt: skip
     assert code == 0 and len(calls) == 1
     assert signal.getsignal(signal.SIGTERM) is before  # the previous handler is back
 
@@ -780,3 +780,48 @@ def test_no_wait_is_accepted_and_ignored_by_plain_and_json(work, ui, capsys):
     out = work / "out"
     code = cli.main(["scan", "run", str(write_scan(work)), "--ui", ui, "--no-wait", "-o", str(out)])
     assert code == 0 and (out / "result" / "scan.csv").is_file()
+
+
+def hold_until_ctrl_c(holds):
+    """Replaces the wait of the web view after a finished scan: the Ctrl-C comes at once."""
+
+    def hold(self):
+        holds.append(self.url)
+        raise KeyboardInterrupt
+
+    return hold
+
+
+def test_web_run_waits_for_ctrl_c_after_the_scan_and_keeps_the_scans_exit_code(
+    work, monkeypatch, capsys
+):
+    import srim.ui.web as web
+
+    server, holds = FakeServerProcess(monkeypatch), []
+    monkeypatch.setattr(web, "start_server", lambda argv: server)
+    monkeypatch.setattr(web.WebView, "_hold", hold_until_ctrl_c(holds))
+    port = free_port()
+    code = cli.main(["scan", "run", str(write_scan(work)), "--ui", "web", "--port", str(port),
+                     "-o", str(work / "out")])  # fmt: skip
+    captured = capsys.readouterr()
+    assert code == 0  # Ctrl-C after a finished scan is not a stop: no 130
+    assert holds == [f"http://127.0.0.1:{port}"]
+    assert (
+        f"scan finished — the view stays at http://127.0.0.1:{port}; press Ctrl-C to stop it"
+        in (captured.err)
+    )
+    assert server.terminated
+
+
+def test_web_run_with_no_wait_closes_the_view_after_the_grace_period(work, monkeypatch, capsys):
+    import srim.ui.web as web
+
+    def no_waiting(self):
+        raise AssertionError("--no-wait must not wait for Ctrl-C")
+
+    monkeypatch.setattr(web, "start_server", lambda argv: FakeServerProcess(monkeypatch))
+    monkeypatch.setattr(web.WebView, "_hold", no_waiting)
+    monkeypatch.setattr(web, "GRACE_SECONDS", 0.0)
+    code = cli.main(["scan", "run", str(write_scan(work)), "--ui", "web", "--port",
+                     str(free_port()), "-o", str(work / "out"), "--no-wait"])  # fmt: skip
+    assert code == 0

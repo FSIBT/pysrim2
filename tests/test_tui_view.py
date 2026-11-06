@@ -16,6 +16,7 @@ from srim.scan import Scan  # noqa: E402
 from srim.scan.events import (  # noqa: E402
     PointFinished,
     PointQueued,
+    ScanFinished,
     ScanPaused,
     ScanStarted,
 )
@@ -299,6 +300,37 @@ def test_a_new_run_resets_what_the_viewer_shows(folder):
             write_events(folder, *start_events(scan, folder))
             await until(lambda: "done 0/3" in app.screen.status_text)
             assert "queued 3" in app.screen.status_text
+
+    try:
+        run(scenario())
+    finally:
+        stop_follower(follower)
+
+
+def test_the_browser_view_after_the_end_keeps_its_state_and_p_and_q_do_nothing(folder):
+    scan = make_scan_folder(folder)
+    write_events(
+        folder,
+        *start_events(scan, folder),
+        *(finished(scan, index, 1.0 + index) for index in range(3)),
+        ScanFinished(n_done=3, n_failed=0, seconds=1.0, stopped=False, time=0.0),
+    )
+    app, follower = make_viewer(folder, scan)
+    follower.start()
+    control = folder / web.CONTROL_FILE
+
+    async def scenario():
+        async with app.run_test(size=(120, 40)) as pilot:
+            await until(lambda: "finished 3/3" in app.screen.status_text)
+            assert "press q" not in app.screen.status_text  # the browser tab has no quit key
+            await pilot.press("p")
+            await pilot.press("q")
+            await pilot.pause(0.3)
+            assert app.return_code is None  # the tab's view is still there
+            assert not control.exists() or control.read_text() == ""  # nothing was requested
+            assert not app.stop_event.is_set() and not app.pause_event.is_set()
+            await pilot.press("v")  # the other views still work
+            await until(lambda: app.view_name == "dashboard")
 
     try:
         run(scenario())
