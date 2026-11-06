@@ -467,3 +467,36 @@ def test_a_cached_unit_gives_a_point_cached_event_before_its_finish(tmp_path, st
     done_event = events.of("point_finished")[0]
     assert isinstance(done_event, PointFinished)
     assert done_event.to_dict()["values"]["cache_draw"] == first.table["cache_draw"].iloc[0]
+
+
+def test_a_rerun_without_a_seed_in_the_same_folder_reuses_the_recorded_seed(tmp_path, state_dir):
+    folder = tmp_path / "scan"
+    first = run_scan(fixed_scan(seed=None), workers=2, scan_dir=folder, runner=recording_runner)
+    assert len(calls(state_dir)) == 2
+    assert set(first.table["status"]) == {"done"}
+
+    events = Recorder()
+    second = run_scan(
+        fixed_scan(seed=None),
+        workers=2,
+        scan_dir=folder,
+        runner=recording_runner,
+        on_event=events,
+    )
+    assert len(calls(state_dir)) == 2  # nothing was computed again
+    assert set(second.table["status"]) == {"cached"}
+    assert second.table["seeds"].tolist() == first.table["seeds"].tolist()
+    assert second.scan.seed == first.scan.seed
+
+
+def test_a_rerun_without_a_seed_of_another_scan_draws_a_new_seed(tmp_path, state_dir):
+    folder = tmp_path / "scan"
+    first = run_scan(fixed_scan(seed=None), workers=1, scan_dir=folder, runner=recording_runner)
+    other = run_scan(
+        fixed_scan(energies=(10.0, 30.0), seed=None),
+        workers=1,
+        scan_dir=folder,
+        runner=recording_runner,
+    )
+    assert other.scan.seed != first.scan.seed
+    assert len(calls(state_dir)) == 4  # the other scan computes its runs

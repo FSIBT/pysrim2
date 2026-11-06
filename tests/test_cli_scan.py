@@ -825,3 +825,14 @@ def test_web_run_with_no_wait_closes_the_view_after_the_grace_period(work, monke
     code = cli.main(["scan", "run", str(write_scan(work)), "--ui", "web", "--port",
                      str(free_port()), "-o", str(work / "out"), "--no-wait"])  # fmt: skip
     assert code == 0
+
+
+def test_a_rerun_without_a_seed_reuses_the_seed_quietly(work, capsys):
+    scan = work / "scan.yaml"
+    Scan(BASE, grid={"ion.energy_keV": [10.0, 13.0]}).to_yaml(scan)
+    out = work / "out"
+    assert cli.main(["scan", "run", str(scan), "--ui", "plain", "-o", str(out)]) == 0
+    capsys.readouterr()
+    assert cli.main(["scan", "run", str(scan), "--ui", "plain", "-o", str(out)]) == 0
+    err = capsys.readouterr().err
+    assert "describes another scan" not in err

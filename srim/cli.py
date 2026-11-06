@@ -565,10 +565,17 @@ def _read_scan(value, overrides):
 
 
 def _describes_other_scan(scan_file: Path, scan) -> bool:
-    """True if the scan file in a reused folder describes another scan than ``scan``."""
+    """True if the scan file in a reused folder describes another scan than ``scan``.
+
+    A scan without a seed of its own reuses the seed of the file (see ``run_scan``), so
+    the seed does not count then.
+    """
     from srim.scan import Scan
+    from srim.scan.executor import same_scan_apart_from_seed
     from srim.spec import SpecError
 
+    if scan.seed is None:
+        return not same_scan_apart_from_seed(scan_file, scan)
     try:
         existing = Scan.from_yaml(scan_file)
     except (OSError, ValueError, SpecError):

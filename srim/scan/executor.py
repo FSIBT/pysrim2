@@ -72,6 +72,8 @@ from multiprocessing.queues import Queue
 from numbers import Integral, Real
 from pathlib import Path
 
+import yaml
+
 from .. import __version__
 from .._lock import FileLock
 from ..output import Results
@@ -120,6 +122,8 @@ _RESERVED = frozenset({"index", "id", "status", "error", "path", "n_ions", "seed
 MARKER_NAME = ".pysrim2-scan"
 #: the lock of a scan folder, held while a scan runs (and by ``pysrim2 scan clean``)
 LOCK_NAME = ".scan.lock"
+#: the scan file of a scan folder (the scan with its base seed)
+SCAN_FILE = "scan.yaml"
 
 
 class ScanBusy(RuntimeError):
@@ -149,6 +153,42 @@ def scan_lock(folder) -> FileLock:
     """The lock of a scan folder, not acquired yet. ``acquire()`` takes it without waiting
     and raises TimeoutError when another scan (or ``scan clean``) holds it."""
     return FileLock(Path(folder) / LOCK_NAME, timeout=0)
+
+
+def same_scan_apart_from_seed(scan_file, scan) -> bool:
+    """True when the ``scan.yaml`` at ``scan_file`` describes ``scan`` (base spec and scan
+    section) apart from the base seed. A file that cannot be read is not the same scan."""
+    try:
+        document = yaml.safe_load(Path(scan_file).read_text(encoding="utf-8"))
+        recorded = RunSpec.from_yaml(scan_file).to_dict()
+    except Exception:
+        return False
+    section = document.get("scan") if isinstance(document, dict) else None
+    if not isinstance(section, dict):
+        return False
+    section = {key: value for key, value in section.items() if key != "seed"}
+    wanted = {key: value for key, value in scan.to_dict().items() if key != "seed"}
+    return _plain_data({"spec": recorded, "scan": section}) == _plain_data(
+        {"spec": scan.base.to_dict(), "scan": wanted}
+    )
+
+
+def _plain_data(data):
+    """``data`` as the YAML round trip reads it (so that a file and a scan compare equal)."""
+    return yaml.safe_load(yaml.safe_dump(data, sort_keys=True))
+
+
+def _reusable_seed(scan_file, scan) -> int | None:
+    """The base seed recorded in the ``scan.yaml`` of a reused folder, when the scan
+    describes ``scan`` apart from its seed (and ``scan`` has no seed of its own)."""
+    if scan.seed is not None or not Path(scan_file).is_file():
+        return None
+    if not same_scan_apart_from_seed(scan_file, scan):
+        return None
+    seed = yaml.safe_load(Path(scan_file).read_text(encoding="utf-8"))["scan"].get("seed")
+    if isinstance(seed, bool) or not isinstance(seed, Integral) or seed < 0:
+        return None
+    return int(seed)
 
 
 def run_scan(
@@ -246,19 +286,6 @@ def run_scan(
     elif runner is None:
         _require_srim()
         _prune_old_runs()
-    base_seed = scan.seed if scan.seed is not None else secrets.randbelow(MAX_SEED) + 1
-    recorded = (
-        scan
-        if scan.seed == base_seed
-        else Scan(
-            scan.base,
-            grid=scan.grid,
-            points=scan.rows,
-            extract=scan.extract,
-            ions=scan.ions,
-            seed=base_seed,
-        )
-    )
     folder = _new_folder(scan_dir)
     try:
         lock = scan_lock(folder).acquire()
@@ -266,6 +293,25 @@ def run_scan(
         raise ScanBusy(f"a scan is already running in {folder}") from None
     try:
         mark_scan_folder(folder)
+        # a rerun in the same folder keeps the base seed of the scan it describes, so the
+        # points are the same runs and the cache serves them
+        base_seed = scan.seed
+        if base_seed is None:
+            base_seed = _reusable_seed(folder / SCAN_FILE, scan)
+        if base_seed is None:
+            base_seed = secrets.randbelow(MAX_SEED) + 1
+        recorded = (
+            scan
+            if scan.seed == base_seed
+            else Scan(
+                scan.base,
+                grid=scan.grid,
+                points=scan.rows,
+                extract=scan.extract,
+                ions=scan.ions,
+                seed=base_seed,
+            )
+        )
         store = _open_cache(cache, folder)
         recorded.to_yaml(folder / "scan.yaml", provenance={"pysrim2_version": __version__})
         run = _ScanRun(
