@@ -195,3 +195,35 @@ def test_plot_without_matplotlib_says_how_to_install(scan, monkeypatch):
     monkeypatch.setitem(sys.modules, "matplotlib.pyplot", None)
     with pytest.raises(ImportError, match="pip install matplotlib"):
         result.plot()
+
+
+def test_absolute_paths_are_stored_relative_to_base_dir(scan, tmp_path):
+    base_dir = tmp_path / "scan"
+    rows = rows_for(scan, [1.0, 2.0, 3.0, 4.0])
+    rows[2]["path"] = str(base_dir / "points" / "0002")
+    rows[3]["path"] = "points/0003"
+    result = ScanResult.from_rows(scan, rows, base_dir=base_dir)
+    assert result.table["path"].tolist()[:2] == ["points/0000", "points/0001"]
+    assert result.table["path"].tolist()[2:] == ["points/0002", "points/0003"]
+
+
+def test_absolute_path_without_base_dir_is_rejected(scan, tmp_path):
+    rows = rows_for(scan, [1.0, 2.0, 3.0, 4.0])
+    rows[0]["path"] = str(tmp_path / "points" / "0000")
+    with pytest.raises(ValueError, match="base_dir"):
+        ScanResult.from_rows(scan, rows)
+
+
+def test_absolute_path_outside_base_dir_is_rejected(scan, tmp_path):
+    rows = rows_for(scan, [1.0, 2.0, 3.0, 4.0])
+    rows[1]["path"] = str(tmp_path / "elsewhere" / "0001")
+    with pytest.raises(ValueError, match="not under base_dir"):
+        ScanResult.from_rows(scan, rows, base_dir=tmp_path / "scan")
+
+
+def test_missing_path_stays_missing(scan, tmp_path):
+    rows = rows_for(scan, [1.0, 2.0, 3.0, 4.0])
+    for row in rows:
+        row.pop("path")
+    result = ScanResult.from_rows(scan, rows, base_dir=tmp_path)
+    assert result.table["path"].isna().all()

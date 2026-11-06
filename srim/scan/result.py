@@ -12,7 +12,7 @@ Columns, in order (the table is a :class:`pandas.DataFrame`):
 - ``status``: ``done``, ``failed``, ``max_ions`` (precision not reached within the limit)
   or ``cached``
 - ``error``: the error message of a failed point, else ``NaN``
-- ``path``: where the point's outputs are, relative to the scan folder (``NaN`` if none)
+- ``path``: where the point's outputs are, relative to the scan folder (``base_dir``); ``NaN`` if none
 
 Rows are built with :meth:`ScanResult.from_rows`: each row is a dict with ``index`` (the
 point's index in :meth:`Scan.points`) and the values; the parameters are taken from the
@@ -24,6 +24,7 @@ import os
 from collections.abc import Iterable
 from dataclasses import dataclass
 from numbers import Integral
+from pathlib import Path
 
 import pandas as pd
 import yaml
@@ -47,6 +48,28 @@ def _seeds_text(value):
     return str(int(value))
 
 
+def _relative_path(value, base_dir):
+    """``value`` as a POSIX path relative to ``base_dir`` (exports never hold host paths).
+
+    Relative values are kept (they are relative to the scan folder already). An absolute
+    value needs ``base_dir`` and must lie under it, else ``ValueError``.
+    """
+    if value is None or (isinstance(value, float) and math.isnan(value)):
+        return None
+    text = os.fspath(value)
+    if not os.path.isabs(text):
+        return Path(text).as_posix()
+    if base_dir is None:
+        raise ValueError(
+            f"path {text!r} is absolute; pass base_dir= to store it relative to the scan folder"
+        )
+    base = os.path.abspath(os.fspath(base_dir))
+    rel = os.path.relpath(os.path.abspath(text), base)
+    if rel == os.pardir or rel.startswith(os.pardir + os.sep):
+        raise ValueError(f"path {text!r} is not under base_dir {base!r}")
+    return Path(rel).as_posix()
+
+
 @dataclass(eq=False)
 class ScanResult:
     """The result of a scan: ``scan`` (the definition) and ``table`` (one row per point)."""
@@ -55,11 +78,13 @@ class ScanResult:
     table: pd.DataFrame
 
     @classmethod
-    def from_rows(cls, scan: Scan, rows) -> "ScanResult":
+    def from_rows(cls, scan: Scan, rows, base_dir=None) -> "ScanResult":
         """Build the table from one dict per point (see the module docstring).
 
-        Raises :class:`SpecError` for a row without a valid ``index`` or ``status``, or an
-        ``<x>_err`` column with no ``x``.
+        ``base_dir`` is the scan folder: an absolute ``path`` is stored relative to it (POSIX
+        style), so exports hold no host paths. Raises :class:`SpecError` for a row without
+        a valid ``index`` or ``status``, or an ``<x>_err`` column with no ``x``, and
+        :class:`ValueError` for an absolute path that is not under ``base_dir``.
         """
         points = scan.points()
         names = scan.param_names
@@ -83,6 +108,7 @@ class ScanResult:
             point = points[index]
             rest = {k: v for k, v in row.items() if k not in ("index", "id", *names)}
             rest["seeds"] = _seeds_text(rest.get("seeds"))
+            rest["path"] = _relative_path(rest.get("path"), base_dir)
             records.append({**{n: point.params[n] for n in names}, "id": point.id, **rest})
         reserved = {*names, "id", *_META}
         values = list(
