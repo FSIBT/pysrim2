@@ -123,7 +123,20 @@ class ScanBusy(RuntimeError):
 
 
 def mark_scan_folder(folder) -> None:
-    """Write the marker file of a scan folder (one line, with the pysrim2 version)."""
+    """Write the marker file of a scan folder (one line, with the pysrim2 version).
+
+    Only a new or empty folder, or one that already is a scan folder, becomes one: a
+    folder with other files (a project, say) is refused with :class:`ValueError`, so that
+    ``pysrim2 scan clean --all`` can never remove it.
+    """
+    folder = Path(folder)
+    if not (folder / MARKER_NAME).is_file():
+        others = [p.name for p in folder.iterdir() if p.name != LOCK_NAME]
+        if others:
+            raise ValueError(
+                f"{folder} is not empty and not a scan folder (no {MARKER_NAME}); "
+                "choose a new or empty folder"
+            )
     text = f"pysrim2 scan folder, pysrim2 {__version__}\n"
     Path(folder, MARKER_NAME).write_text(text, encoding="utf-8")
 

@@ -698,3 +698,20 @@ def test_the_run_directory_prune_never_fails_a_scan(monkeypatch):
 
     monkeypatch.setattr(rundir, "prune_runs", broken)
     executor._prune_old_runs()  # must not raise
+
+
+def test_a_folder_with_other_files_never_becomes_a_scan_folder(tmp_path):
+    from srim.scan.executor import MARKER_NAME, mark_scan_folder
+
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "notes.txt").write_text("mine")
+    with pytest.raises(ValueError, match="not a scan folder"):
+        mark_scan_folder(project)
+    assert not (project / MARKER_NAME).exists()
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    mark_scan_folder(empty)
+    (empty / "scan.yaml").write_text("x")
+    mark_scan_folder(empty)  # a scan folder stays one when it is reused
+    assert (empty / MARKER_NAME).is_file()
