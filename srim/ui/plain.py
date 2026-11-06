@@ -13,6 +13,8 @@ terminal, over SSH, in tmux or in a log file.
 import sys
 import time
 
+from .jsonl import silence_stdout
+
 #: seconds between two status lines (a change inside this time is printed at the next event)
 INTERVAL_SECONDS = 2.0
 
@@ -39,6 +41,7 @@ class PlainProgress:
         self.ran: set[int] = set()  # points with a unit that a worker ran
         self._last_key = None
         self._last_printed = None
+        self.closed = False  # set when the reader has closed the pipe
         self._handlers = {
             "scan_started": self._scan_started,
             "point_queued": self._queued,
@@ -107,6 +110,8 @@ class PlainProgress:
         return tuple(self._count(s) for s in states) + (sum(self.ions.values()),)
 
     def _print(self, *, force=False, final=False, stopped=False):
+        if self.closed:  # the reader has gone (a closed pipe): no more lines
+            return
         key = self._key()
         if not force and key == self._last_key:
             return
@@ -142,4 +147,8 @@ class PlainProgress:
                 f"done {done}/{self.n_points}  running {running}  queued {queued}  "
                 f"failed {failed}  ions {ions}  elapsed {_hms(elapsed)}  eta {eta}"
             )
-        print(text, file=self.stream or sys.stdout, flush=True)
+        try:
+            print(text, file=self.stream or sys.stdout, flush=True)
+        except BrokenPipeError:
+            self.closed = True
+            silence_stdout()
