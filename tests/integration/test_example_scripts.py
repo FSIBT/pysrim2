@@ -1,6 +1,8 @@
 """Run the scripts in `examples/scripts` with tiny inputs so they cannot rot (`pytest -m srim`)."""
 
 import importlib.util
+import subprocess
+import sys
 from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parents[2] / "examples" / "scripts"
@@ -26,3 +28,38 @@ def test_multilayer_damage(tmp_path):
     assert {"depth_A", "total", "vacancies_Au_per_A_per_ion"} <= set(profile.columns)
     assert profile["total"].sum() > 0
     assert (tmp_path / "output" / "vacancy_profile.csv").is_file()
+
+
+def test_angle_energy_scan(tmp_path):
+    result = load("angle_energy_scan").run(tmp_path / "scan", workers=2)
+    assert len(result.table) == 4
+    assert set(result.table["status"]) == {"done"}
+    assert (result.table["n_ions_stopped"] > 0).all()
+    assert (result.table["mean_depth_A"] > 0).all()
+    assert (tmp_path / "scan" / "result" / "scan.csv").is_file()
+
+
+def test_scan_yaml_from_the_command_line(tmp_path):
+    folder = tmp_path / "scan"
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "srim",
+            "scan",
+            "run",
+            str(SCRIPTS / "scan.yaml"),
+            "--ui",
+            "plain",
+            "--workers",
+            "2",
+            "--output",
+            str(folder),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=900,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert (folder / "result" / "scan.csv").is_file()
