@@ -132,7 +132,60 @@ Event files, parsed into objects whose `.df` is a DataFrame with `ion`, `depth_A
 - On Linux a run starts wine under xvfb; a failure raises `srim.srim.SRIMProcessError`
   with SRIM's stderr in the message.
 
-## 7. Installing this skill
+## 7. Parameter scans
+
+Use a scan when one calculation must be repeated for many values of a parameter (ion
+energy, angle, a layer thickness) and you want one table back. Use `TRIM(...).run()` (section 3)
+for a single run whose full output you need.
+
+A scan is a base run plus the values to vary. Python:
+
+```python
+from srim import TRIM, Ion, Layer, Target
+from srim.scan import Scan, run_scan
+
+target = Target([Layer.from_formula("Si", density=2.33, width=10000.0)])  # 1000 nm
+base = TRIM(target, Ion("B", energy=20e3), number_ions=100, calculation=1, ranges=1,
+            random_seed=12345).to_spec()
+scan = Scan(base, grid={"ion.energy_keV": [10.0, 20.0, 40.0]},
+            extract=["implant_summary"], ions=100, seed=12345)
+if __name__ == "__main__":  # required: worker processes import this file
+    result = run_scan(scan, workers=2, scan_dir="my-scan")
+    print(result.table[["ion.energy_keV", "mean_depth_A", "status"]])
+```
+
+The same scan as a file (a `scan:` section next to `spec:`, as in `run.yaml`), run from the
+shell with JSON events for a program to read:
+
+```bash
+pysrim2 scan run scan.yaml --ui json --output my-scan > events.jsonl 2> scan.log
+echo $?  # 0 all points done or cached; 1 a point failed or is missing; 2 bad input; 130 stopped
+```
+
+- The result is `my-scan/result/scan.csv`, one row per point: the parameters (`ion.energy_keV`),
+  the extracted values (`mean_depth_A`, ...), `<value>_err` (NaN for a fixed ion count), `n_ions`,
+  `seeds`, `status` (`done`, `cached`, `failed`, `max_ions`, `stopped`, `missing`), `error`, `path`.
+  Read it with `pandas.read_csv`.
+- Extractors name their columns: `implant_summary` (needs `ranges=1`: `mean_depth_A`,
+  `straggle_depth_A`, `lateral_straggle_A`, ... in Angstrom), `sputter_yield` (needs
+  `sputtered=1` and `calculation=2`), `backscattered_fraction` and `transmitted_fraction`
+  (`backscattered=1`, `transmit=1`), `vacancy_at` and `ions_in_layer` (YAML:
+  `{vacancy_at: {depth_nm: 50}}`). The full list with units is in `docs/scans.md`.
+- Precision targets (`precision: {target: ..., rel: 0.05, max_ions: ...}` in `scan:`) run each
+  point until its error is small enough; a point at `max_ions` has status `max_ions`.
+- Results are reused: a rerun in the same folder runs nothing (status `cached`). A new folder
+  reuses nothing unless both scans name one cache (`--cache DIR` or `PYSRIM2_CACHE`).
+- A scan folder is new or empty, or an existing scan folder (its `scan.yaml` is rewritten). Two
+  scans in one folder at once: the second exits 2.
+- `--backend container` runs each point in a container of the pysrim2 image (Podman or Docker).
+- Do not start two scans with the same `--output` at once, and do not use `--ui web` on a shared
+  machine: it has no authentication. Long scans: run them in tmux
+  (`tmux new -s scan`, then `Ctrl-b d` to detach).
+- Cluster: `pysrim2 scan prepare scan.yaml -o DIR`, `sbatch submit.sbatch` in `DIR`, then
+  `pysrim2 scan collect DIR` once the array has finished.
+- Never edit the output files of a point or the cache in place: large files are hard links.
+
+## 8. Installing this skill
 
 `pysrim2 install skill [--agent claude|all] [--scope user|project] [--yes]` copies it to
 `~/.claude/skills/pysrim2/` (user) or `./.claude/skills/pysrim2/` (project); `--agent all` also
