@@ -6,6 +6,7 @@ Needs a container runtime (podman or docker) on this host and the image in ``PYS
 
 import os
 import signal
+import tempfile
 import threading
 
 import pytest
@@ -55,7 +56,11 @@ def hang_guard():
         signal.signal(signal.SIGALRM, previous)
 
 
-def test_two_points_run_in_one_container_each(tmp_path):
+def test_two_points_run_in_one_container_each(tmp_path, monkeypatch):
+    temp = tmp_path / "tmp"  # the job folders are made here: the leak check looks here
+    temp.mkdir()
+    monkeypatch.setenv("TMPDIR", str(temp))
+    monkeypatch.setattr(tempfile, "tempdir", str(temp))
     runtime = container.find_runtime()
     if runtime is None:
         pytest.skip("no container runtime (podman or docker) on this host")
@@ -84,4 +89,4 @@ def test_two_points_run_in_one_container_each(tmp_path):
         assert not (point_dir / "error.log").exists()
     assert events[-1].kind == "scan_finished"
     assert (events[-1].n_done, events[-1].n_failed) == (2, 0)
-    assert not list(tmp_path.glob("**/pysrim2-job-*"))  # job folders are removed
+    assert list(temp.glob("pysrim2-job-*")) == []  # every job folder was removed
