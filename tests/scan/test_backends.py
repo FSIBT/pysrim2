@@ -204,6 +204,10 @@ def hang_guard():
 @pytest.fixture
 def fake_runtime(tmp_path, monkeypatch):
     """podman and docker stand-ins first on PATH; temp files and pysrim2 data in tmp_path."""
+    if sys.platform == "win32":
+        # the stand-in parses "-v host:/data/job" and signals like a POSIX runtime; the
+        # container back end itself is exercised with real Docker in the container workflow
+        pytest.skip("fake container runtime is POSIX-only")
     bindir = tmp_path / "bin"
     bindir.mkdir()
     script = FAKE_RUNTIME.replace("__PYTHON__", sys.executable)
@@ -213,10 +217,6 @@ def fake_runtime(tmp_path, monkeypatch):
         path = bindir / name
         path.write_text(script, encoding="utf-8")
         path.chmod(0o755)
-        if sys.platform == "win32":  # Windows runs no shebang scripts: a .cmd wrapper
-            (bindir / f"{name}.cmd").write_text(
-                f'@"{sys.executable}" "{path}" %*\r\n', encoding="utf-8"
-            )
     runtime = FakeRuntime(tmp_path)
     tmpdir = tmp_path / "tmp"
     tmpdir.mkdir()
