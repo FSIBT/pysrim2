@@ -1,0 +1,334 @@
+"""The result cache of a scan: finished SRIM runs, reused by reruns and other scans.
+
+An entry is the complete output folder of one SRIM run (what ``output_dir=`` receives: the
+SRIM outputs and ``run.yaml``), stored under :func:`cache_key` of its run spec and seed. The
+key covers everything that goes into ``TRIM.IN`` (the spec's ``to_dict()``, ``number_ions``
+included) and the seed, but no provenance, so a rerun or a second scan with the same run
+reuses the outputs. Extractors read an entry like any run's outputs, so an extractor added
+later works on runs that were cached earlier.
+
+Layout of a cache folder (created on first use)::
+
+    CACHEDIR.TAG             the standard cache tag, naming pysrim2
+    <key[:2]>/<key>/         an entry: the run's files, and ``.complete`` written last
+    locks/<key>.lock         held while a run for the key is computed and stored
+    tmp/<key>-<uuid>/        an entry being written; renamed into place once complete
+
+Writes are atomic: an entry is built in ``tmp/`` and renamed to its key when complete, so a
+reader never sees a partial entry. A writer that is killed leaves only a ``tmp/`` folder, which
+the next write of the same key removes. :func:`~srim.scan.run_scan` takes the key's lock before
+it computes a run, so two scans sharing a cache never compute the same key at the same time:
+the second one waits for the first and then reuses its entry.
+
+Entries are hard-linked (a copy where links are not possible), so an entry and the point
+folder that made or reused it share their files. Neither is ever edited in place.
+
+Entries record the SRIM build they were made with (``srim_sha256`` in their ``run.yaml``). An
+entry made with another build than the installed one is not used: the run is computed again
+(with a warning, once per entry), and the old entry is kept until ``clear_cache`` removes it.
+"""
+
+import hashlib
+import logging
+import os
+import shutil
+import uuid
+from collections.abc import Mapping
+from numbers import Integral, Real
+from pathlib import Path
+
+import yaml
+
+from .._lock import FileLock
+from ..spec import RunSpec
+
+log = logging.getLogger(__name__)
+
+#: tag line of the key's canonical text; bump it when the key's meaning changes
+SCHEMA_TAG = "pysrim2-cache-v1"
+#: the file written last into a complete entry
+COMPLETE = ".complete"
+#: the standard cache tag (https://bford.info/cachedir/)
+TAG_NAME = "CACHEDIR.TAG"
+_SIGNATURE = "Signature: 8a477f597d28d172789f06886806bc55"
+_TAG_TEXT = (
+    f"{_SIGNATURE}\n"
+    "# pysrim2 result cache: finished SRIM runs reused by scans (srim.scan.cache).\n"
+    "# 'pysrim2 scan clean' or srim.scan.cache.clear_cache() empties it.\n"
+)
+#: top-level files of a run that are not part of its entry (a failed attempt's log)
+_NOT_CACHED = ("error.log",)
+_warned: set[str] = set()
+
+
+def _canonical(value):
+    """``value`` as plain YAML-safe data: mappings, lists, str, bool, int, float.
+
+    Integral floats become ints (``30.0`` and ``30`` are the same value to ``TRIM.IN``), so
+    the key does not depend on how a number was written.
+    """
+    if isinstance(value, Mapping):
+        return {str(k): _canonical(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_canonical(v) for v in value]
+    if value is None or isinstance(value, (bool, str)):
+        return value
+    if isinstance(value, Integral):
+        return int(value)
+    if isinstance(value, Real):
+        number = float(value)
+        return int(number) if number.is_integer() else number
+    return value
+
+
+def cache_key(spec: RunSpec, seed: int) -> str:
+    """SHA-256 hex digest that identifies one SRIM run: its spec and its seed.
+
+    The digest covers the canonical YAML of ``spec.to_dict()``, ``number_ions`` included, with
+    its ``seed`` set to the given one, after a schema tag line. Provenance (host, times,
+    versions) is not part of it.
+    """
+    data = _canonical(spec.to_dict())
+    data["seed"] = _canonical(seed)
+    text = SCHEMA_TAG + "\n" + yaml.safe_dump(data, sort_keys=True, default_flow_style=False)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def current_srim_sha() -> str | None:
+    """The SRIM build sha256 of the installed SRIM (as :meth:`TRIM.run` records it), or None."""
+    from ..installer.srim_install import MARKER_NAME
+    from ..paths import srim_dir
+
+    try:
+        text = (Path(srim_dir()) / MARKER_NAME).read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return text or None
+
+
+def cache_root(cache, scan_dir) -> Path | None:
+    """The cache folder that ``cache=`` of :func:`~srim.scan.run_scan` names.
+
+    ``False``: no cache (None). ``None``: ``$PYSRIM2_CACHE`` if set, otherwise
+    ``<scan_dir>/cache``. Any other value is a path.
+    """
+    if cache is False:
+        return None
+    if cache is None:
+        override = os.environ.get("PYSRIM2_CACHE")
+        chosen = override if override else os.path.join(os.fspath(scan_dir), "cache")
+    else:
+        chosen = os.fspath(cache)
+    return Path(os.path.abspath(chosen))
+
+
+def is_cache(path) -> bool:
+    """True if ``path`` holds a pysrim2 ``CACHEDIR.TAG`` (what :func:`clear_cache` requires)."""
+    try:
+        text = (Path(path) / TAG_NAME).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return False
+    lines = text.splitlines()
+    return bool(lines) and lines[0] == _SIGNATURE and "pysrim2" in text
+
+
+class RunCache:
+    """A cache folder: look up, lock, store and read the entries of :func:`cache_key`.
+
+    The folder is created on first use. The scan asks for the key's lock with
+    :meth:`try_lock` before it computes a run, and stores the run with :meth:`store` while it
+    holds the lock.
+    """
+
+    def __init__(self, root):
+        self.root = Path(os.path.abspath(os.fspath(root)))
+
+    def entry_dir(self, key: str) -> Path:
+        """Where the entry of ``key`` is (whether or not it exists)."""
+        return self.root / key[:2] / key
+
+    def prepare(self):
+        """Create the folder and its tag. Refuses a non-empty folder that is not a cache."""
+        root = self.root
+        if root.exists() and not is_cache(root):
+            if not root.is_dir() or any(root.iterdir()):
+                raise ValueError(
+                    f"{root} is not a pysrim2 result cache (not empty, and no pysrim2 "
+                    f"{TAG_NAME}); choose another folder"
+                )
+        root.mkdir(parents=True, exist_ok=True)
+        if not is_cache(root):
+            (root / TAG_NAME).write_text(_TAG_TEXT, encoding="utf-8")
+        (root / "locks").mkdir(exist_ok=True)
+        (root / "tmp").mkdir(exist_ok=True)
+
+    def lookup(self, key: str, srim_sha: str | None = None) -> Path | None:
+        """The complete entry of ``key``, or None.
+
+        An entry whose recorded SRIM build differs from ``srim_sha`` is a miss (one warning
+        per entry). An unknown build on either side matches.
+        """
+        entry = self.entry_dir(key)
+        if not (entry / COMPLETE).is_file():
+            return None
+        recorded = _recorded_sha(entry)
+        if srim_sha and recorded and recorded != srim_sha:
+            if key not in _warned:
+                _warned.add(key)
+                log.warning(
+                    "cached run %s was made with another SRIM build (sha256 %s, installed "
+                    "%s); it is not used and the run is computed again. 'pysrim2 scan clean' "
+                    "removes it.",
+                    key[:12],
+                    recorded[:12],
+                    srim_sha[:12],
+                )
+            return None
+        return entry
+
+    def try_lock(self, key: str) -> FileLock | None:
+        """The exclusive lock of ``key``, or None if another process holds it (no waiting)."""
+        self.prepare()
+        lock = FileLock(self.root / "locks" / f"{key}.lock", timeout=0)
+        try:
+            return lock.acquire()
+        except TimeoutError:
+            return None
+
+    def store(self, key: str, source) -> Path:
+        """Make ``source`` (a run's output folder) the entry of ``key``.
+
+        The caller holds the key's lock. Files named in ``_NOT_CACHED`` at the top level
+        are left out. If another writer has completed the entry meanwhile, its entry is kept.
+        """
+        final = self.entry_dir(key)
+        if (final / COMPLETE).is_file():
+            return final
+        self.prepare()
+        _sweep_partial(self.root, key)
+        tmp = self.root / "tmp" / f"{key}-{uuid.uuid4().hex}"
+        try:
+            _link_tree(source, tmp, skip=_NOT_CACHED)
+            (tmp / COMPLETE).write_text(key + "\n", encoding="utf-8")
+            final.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(tmp, final)
+        except OSError:
+            if (final / COMPLETE).is_file():  # another writer finished first
+                return final
+            raise
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+        return final
+
+
+def materialise(entry, out) -> None:
+    """Make the files of ``entry`` appear in folder ``out`` (hard links, or copies)."""
+    _link_tree(entry, out, skip=(COMPLETE,))
+
+
+def clear_cache(path) -> int:
+    """Remove the entries of the cache at ``path``; returns how many were removed.
+
+    Only a folder with a pysrim2 ``CACHEDIR.TAG`` is cleared; anything else raises
+    ValueError and nothing is touched. An entry whose key is locked (a scan is computing or
+    storing it) is kept. The tag stays, so the folder is still recognised as a cache.
+    """
+    root = Path(os.path.abspath(os.fspath(path)))
+    if not is_cache(root):
+        raise ValueError(
+            f"{root} is not a pysrim2 result cache (no pysrim2 {TAG_NAME}); nothing removed"
+        )
+    cache = RunCache(root)
+    removed = 0
+    for shard in sorted(root.iterdir()):
+        if shard.name in ("locks", "tmp") or not shard.is_dir() or shard.is_symlink():
+            continue
+        for entry in sorted(shard.iterdir()):
+            lock = cache.try_lock(entry.name)
+            if lock is None:
+                continue
+            try:
+                shutil.rmtree(entry, ignore_errors=True)
+                removed += 1
+            finally:
+                lock.release()
+        _rmdir_if_empty(shard)
+    locks = root / "locks"
+    for lock_file in sorted(locks.glob("*.lock")) if locks.is_dir() else ():
+        lock = FileLock(lock_file, timeout=0)
+        try:
+            lock.acquire()
+        except TimeoutError:
+            continue
+        try:
+            lock_file.unlink(missing_ok=True)
+        finally:
+            lock.release()
+    if (root / "tmp").is_dir():
+        for leftover in sorted((root / "tmp").iterdir()):
+            lock = cache.try_lock(leftover.name.split("-")[0])
+            if lock is None:
+                continue
+            try:
+                shutil.rmtree(leftover, ignore_errors=True)
+            finally:
+                lock.release()
+    _rmdir_if_empty(root / "locks")
+    _rmdir_if_empty(root / "tmp")
+    return removed
+
+
+def _recorded_sha(entry: Path) -> str | None:
+    """The ``srim_sha256`` an entry's ``run.yaml`` records, or None (missing or unknown)."""
+    try:
+        with open(entry / "run.yaml", encoding="utf-8") as f:
+            document = yaml.safe_load(f)
+    except (OSError, UnicodeDecodeError, yaml.YAMLError):
+        return None
+    provenance = document.get("provenance") if isinstance(document, dict) else None
+    sha = provenance.get("srim_sha256") if isinstance(provenance, dict) else None
+    return str(sha) if sha else None
+
+
+def _sweep_partial(root: Path, key: str):
+    """Remove what an earlier, killed writer of ``key`` left (the caller holds the lock)."""
+    final = root / key[:2] / key
+    if final.is_dir() and not (final / COMPLETE).is_file():
+        shutil.rmtree(final, ignore_errors=True)
+    for leftover in (root / "tmp").glob(f"{key}-*"):
+        shutil.rmtree(leftover, ignore_errors=True)
+
+
+def _link_tree(source, dest, skip=()):
+    """Recreate the folder ``source`` at ``dest`` with hard links (copies if not possible).
+
+    Top-level files named in ``skip`` are not copied.
+    """
+    source, dest = Path(source), Path(dest)
+    if not source.is_dir():
+        raise FileNotFoundError(f"no run folder at {source}")
+    dest.mkdir(parents=True, exist_ok=True)
+    for dirpath, _dirnames, filenames in os.walk(source):
+        here = Path(dirpath)
+        target = dest / here.relative_to(source)
+        target.mkdir(parents=True, exist_ok=True)
+        for name in filenames:
+            if here == source and name in skip:
+                continue
+            _link_file(here / name, target / name)
+
+
+def _link_file(src: Path, dst: Path):
+    if dst.exists() or dst.is_symlink():
+        dst.unlink()
+    try:
+        os.link(src, dst)
+    except OSError:
+        shutil.copy2(src, dst)
+
+
+def _rmdir_if_empty(path: Path):
+    try:
+        path.rmdir()
+    except OSError:
+        pass
