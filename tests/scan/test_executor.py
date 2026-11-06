@@ -28,6 +28,7 @@ from srim.scan.events import (
     PointStarted,
     PointStopped,
     ScanFinished,
+    ScanPaused,
     ScanStarted,
 )
 from srim.scan.extract import register, resolve
@@ -715,3 +716,145 @@ def test_a_folder_with_other_files_never_becomes_a_scan_folder(tmp_path):
     (empty / "scan.yaml").write_text("x")
     mark_scan_folder(empty)  # a scan folder stays one when it is reused
     assert (empty / MARKER_NAME).is_file()
+
+
+# -- pause ---------------------------------------------------------------------------------
+
+
+def resume_after(pause, resumed, delay=0.3):
+    """On ScanPaused(True) of a test: lift the pause after ``delay`` seconds (a timer thread;
+    run_scan itself stays on the calling thread)."""
+
+    def lift():
+        pause.clear()
+        resumed.set()
+
+    return threading.Timer(delay, lift)
+
+
+@pytest.fixture
+def lift_pause_if_stuck():
+    """A pause that nobody lifts holds the scan for ever. ``guard(pause)`` starts a timer
+    that lifts it after 20 s, so a test that misses its event fails instead of hanging."""
+    timers = []
+
+    def guard(pause):
+        timer = threading.Timer(20.0, pause.clear)
+        timer.daemon = True
+        timer.start()
+        timers.append(timer)
+
+    yield guard
+    for timer in timers:
+        timer.cancel()
+
+
+def test_a_pause_before_the_start_starts_nothing_until_resumed(tmp_path, lift_pause_if_stuck):
+    pause = threading.Event()
+    pause.set()
+    lift_pause_if_stuck(pause)
+    recorder = Recorder()
+    resumed = threading.Event()
+    timers = []
+
+    def on_event(event):
+        recorder(event)
+        if isinstance(event, ScanPaused) and event.paused:
+            timers.append(resume_after(pause, resumed).start())
+
+    result = run_scan(
+        energy_scan((20.0, 30.0)),
+        workers=1,
+        runner=fixture_runner,
+        scan_dir=tmp_path / "s",
+        pause_event=pause,
+        on_event=on_event,
+    )
+    assert resumed.is_set() and timers
+    flags = [(i, e.paused) for i, e in enumerate(recorder.events) if isinstance(e, ScanPaused)]
+    assert [paused for _, paused in flags] == [True, False]
+    resumed_at = flags[1][0]
+    assert not any(isinstance(e, PointStarted) for e in recorder.events[:resumed_at]), (
+        "a point started while the scan was paused"
+    )
+    assert result.table["status"].tolist() == ["done", "done"]
+
+
+def test_a_pause_during_the_scan_lets_the_running_point_finish(tmp_path, lift_pause_if_stuck):
+    pause = threading.Event()
+    lift_pause_if_stuck(pause)
+    recorder = Recorder()
+    resumed = threading.Event()
+
+    def on_event(event):
+        recorder(event)
+        if isinstance(event, PointStarted) and event.index == 0:
+            pause.set()  # on the calling thread: the next dispatch sees the flag
+        if isinstance(event, ScanPaused) and event.paused:
+            resume_after(pause, resumed).start()
+
+    result = run_scan(
+        energy_scan((10.0, 20.0, 30.0)),
+        workers=1,
+        runner=fixture_runner,
+        scan_dir=tmp_path / "s",
+        pause_event=pause,
+        on_event=on_event,
+    )
+    events = recorder.events
+    paused_at = next(i for i, e in enumerate(events) if isinstance(e, ScanPaused) and e.paused)
+    resumed_at = next(i for i, e in enumerate(events) if isinstance(e, ScanPaused) and not e.paused)
+    # point 0 was running when the pause came: it finishes while the others wait
+    assert any(isinstance(e, PointFinished) and e.index == 0 for e in events[paused_at:])
+    assert not any(isinstance(e, PointStarted) for e in events[paused_at:resumed_at])
+    assert result.table["status"].tolist() == ["done", "done", "done"]
+
+
+def test_scan_paused_is_sent_only_when_the_flag_changes(tmp_path, lift_pause_if_stuck):
+    pause = threading.Event()
+    lift_pause_if_stuck(pause)
+    recorder = Recorder()
+    resumed = threading.Event()
+
+    def on_event(event):
+        recorder(event)
+        if isinstance(event, PointFinished) and event.index == 0:
+            pause.set()
+        if isinstance(event, ScanPaused) and event.paused:
+            resume_after(pause, resumed).start()
+
+    run_scan(
+        energy_scan((10.0, 20.0)),
+        workers=1,
+        runner=fixture_runner,
+        scan_dir=tmp_path / "s",
+        pause_event=pause,
+        on_event=on_event,
+    )
+    assert [e.paused for e in recorder.events if isinstance(e, ScanPaused)] == [True, False]
+
+
+def test_a_stop_while_paused_ends_the_scan_without_starting_points(tmp_path, lift_pause_if_stuck):
+    pause = threading.Event()
+    pause.set()
+    lift_pause_if_stuck(pause)
+    stop = threading.Event()
+    recorder = Recorder()
+
+    def on_event(event):
+        recorder(event)
+        if isinstance(event, ScanPaused):
+            stop.set()
+
+    result = run_scan(
+        energy_scan((10.0, 20.0)),
+        workers=1,
+        runner=fixture_runner,
+        scan_dir=tmp_path / "s",
+        pause_event=pause,
+        stop_event=stop,
+        on_event=on_event,
+    )
+    assert result.table["status"].tolist() == ["stopped", "stopped"]
+    assert not any(isinstance(e, PointStarted) for e in recorder.events)
+    assert recorder.events[-1].stopped is True

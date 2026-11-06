@@ -26,6 +26,7 @@ def test_every_kind_is_registered_once():
             "point_stopped",
             "batch_finished",
             "worker_stats",
+            "scan_paused",
             "scan_finished",
         ]
     )

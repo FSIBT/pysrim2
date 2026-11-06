@@ -30,6 +30,10 @@ precision target (all batches planned so far are done): the ions of the point so
 A point that does not finish when the scan is stopped gets ``point_stopped`` (after all the
 workers have stopped, before ``scan_finished``); its row has status ``stopped``.
 ``scan_finished.stopped`` says that the scan was stopped.
+
+``scan_paused`` comes each time the pause flag of the scan changes (see ``pause_event`` of
+:func:`srim.scan.run_scan`): while paused no new unit starts, the running ones finish. It
+can come anywhere between the other events, before ``scan_finished``.
 """
 
 import json
@@ -212,6 +216,15 @@ class WorkerStats(_Event):
 
 
 @dataclass(frozen=True)
+class ScanPaused(_Event):
+    """The scan is paused (``paused`` True: no new unit starts) or resumed (False)."""
+
+    kind: ClassVar[str] = "scan_paused"
+    paused: bool
+    time: float = field(default_factory=now)
+
+
+@dataclass(frozen=True)
 class ScanFinished(_Event):
     """The scan ended: ``n_done`` points finished, ``n_failed`` failed for good, after
     ``seconds``; ``stopped`` is True if it was stopped (Ctrl-C or ``stop_event``)."""
@@ -239,6 +252,7 @@ EVENT_TYPES = {
         PointStopped,
         BatchFinished,
         WorkerStats,
+        ScanPaused,
         ScanFinished,
     )
 }
@@ -255,6 +269,7 @@ __all__ = [
     "PointStarted",
     "PointStopped",
     "ScanFinished",
+    "ScanPaused",
     "ScanStarted",
     "WorkerStats",
 ]

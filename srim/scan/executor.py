@@ -27,6 +27,9 @@ of the workers: the target's value and error are compared with the goal, and mor
 are planned or the point is done (``done``), or it reached ``max_ions`` (``max_ions``, with a
 warning). ``batch_finished`` is emitted at each decision.
 
+Pausing: while ``pause_event`` is set, no new unit is started; the running units finish, and
+``scan_paused`` is emitted when the flag changes. A stop is still honoured while paused.
+
 Stopping: a ``stop_event`` being set, or SIGINT or SIGTERM in the main thread, stops
 scheduling. Running points are killed (SIGTERM to each worker's process group, which also
 reaches SRIM; the worker then stops its wine server; SIGKILL after a grace period). Finished
@@ -88,6 +91,7 @@ from .events import (
     PointStarted,
     PointStopped,
     ScanFinished,
+    ScanPaused,
     ScanStarted,
     WorkerStats,
 )
@@ -155,6 +159,7 @@ def run_scan(
     scan_dir=None,
     on_event=None,
     stop_event=None,
+    pause_event=None,
     runner=None,
     cache=None,
     retries=1,
@@ -188,6 +193,9 @@ def run_scan(
         does not stop the scan.
     stop_event : :class:`threading.Event`, optional
         set it to stop the scan (see the module docstring)
+    pause_event : :class:`threading.Event`, optional
+        while it is set, no new unit starts (running ones finish); clear it to go on. Each
+        change is reported as ``scan_paused``.
     runner : callable, optional
         ``runner(spec) -> Results`` (a picklable top-level function, as for
         :func:`srim.scan.run_batches`) in place of SRIM. Its results folder is copied to
@@ -269,6 +277,7 @@ def run_scan(
             retries=retries,
             on_event=on_event,
             stop=stop_event if stop_event is not None else threading.Event(),
+            pause=pause_event,
             cache=store,
         )
         with _stop_on_signals(run.stop):
@@ -444,7 +453,18 @@ class _ScanRun:
     """
 
     def __init__(
-        self, scan, folder, *, workers, base_seed, runner, retries, on_event, stop, cache=None
+        self,
+        scan,
+        folder,
+        *,
+        workers,
+        base_seed,
+        runner,
+        retries,
+        on_event,
+        stop,
+        pause=None,
+        cache=None,
     ):
         self.scan = scan
         self.folder = folder
@@ -455,6 +475,8 @@ class _ScanRun:
         self.retries = retries
         self.on_event = on_event
         self.stop = stop
+        self.pause = pause
+        self.paused = False  # the pause flag as last reported (see _update_pause)
         self.cache = cache
         self.srim_sha = current_srim_sha() if cache is not None else None
         #: (index, batch) -> (key, lock) of the units this run computes (cache in use)
@@ -533,6 +555,7 @@ class _ScanRun:
             if self.stop.is_set():
                 self._halt()
                 return
+            self._update_pause()
             self._restart_dead()
             self._poll_waiting()
             self._dispatch()
@@ -574,7 +597,7 @@ class _ScanRun:
 
     def _dispatch(self):
         """Hand the pending units out: cache hits finish at once, misses go to idle workers."""
-        while self.pending and not self.stop.is_set():
+        while self.pending and not self.stop.is_set() and not self._pause_requested():
             unit = self.pending.popleft()
             verdict = self._admit(unit)
             if verdict == "hit":
@@ -587,6 +610,17 @@ class _ScanRun:
                 self.pending.appendleft(unit)
                 return
             self._send(worker, *unit)
+
+    def _pause_requested(self) -> bool:
+        return self.pause is not None and self.pause.is_set()
+
+    def _update_pause(self):
+        """Report a change of the pause flag (``scan_paused``); the dispatch checks the flag
+        itself, so a pause set by an event handler holds from the next unit on."""
+        paused = self._pause_requested()
+        if paused != self.paused:
+            self.paused = paused
+            self._emit(ScanPaused(paused))
 
     def _idle_worker(self):
         for worker in self.workers.values():
