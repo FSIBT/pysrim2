@@ -1,6 +1,7 @@
 """The live views' state, from scan events (no terminal, no textual)."""
 
 import math
+from pathlib import Path
 
 import pytest
 
@@ -235,7 +236,8 @@ def test_log_path_is_the_points_error_log_in_the_scan_folder():
     assert state.log_path(0) is None  # the folder is known from scan_started only
     started(state, scan, workers=1)
     point = scan.points()[0]
-    assert str(state.log_path(0)) == f"/scan/points/{point.id[:16]}/error.log"
+    # a Path, compared as one: its str uses the separators of the platform
+    assert state.log_path(0) == Path("/scan") / "points" / point.id[:16] / "error.log"
     assert state.log_path(9) is None
 
 
