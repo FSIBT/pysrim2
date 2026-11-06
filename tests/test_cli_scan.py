@@ -582,8 +582,8 @@ def test_reusing_a_folder_warns_only_when_its_scan_differs(work, capsys):
 
 
 def test_sigterm_in_a_terminal_view_stops_the_scan_and_restores_the_handler(monkeypatch):
-    if not hasattr(signal, "SIGTERM"):
-        pytest.skip("SIGTERM is POSIX")
+    if sys.platform == "win32":
+        pytest.skip("os.kill(SIGTERM) ends the whole process on Windows")
     pytest.importorskip("textual")
     before = signal.getsignal(signal.SIGTERM)
     stop, pause, events = threading.Event(), threading.Event(), queue.Queue()
