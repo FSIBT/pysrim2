@@ -2,7 +2,9 @@
 
 import math
 import os
+import re
 import shutil
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -28,15 +30,6 @@ def single():
 def stub(**tables):
     """A results-like object with only the given tables (for folders without IONIZ.txt)"""
     return SimpleNamespace(**{"range3d": None, "spec": None, **tables})
-
-
-def raw_vacancy_total(results):
-    """Knock-ons plus every element column of the raw VACANCY table, per A per ion"""
-    df = results.vacancy.df
-    element_cols = [c for c in df.columns if c.startswith("vacancies_")]
-    return df["depth_A"].to_numpy(float), df["knock_ons_per_A_per_ion"].to_numpy(float) + (
-        df[element_cols].to_numpy(float).sum(axis=1)
-    )
 
 
 # -- registry -----------------------------------------------------------------------------
@@ -85,8 +78,8 @@ def test_register_custom_and_duplicate(monkeypatch):
 def test_resolve_plain_name_and_parameters(single):
     assert resolve("sputter_yield") is extract.sputter_yield
     fn = resolve({"vacancy_at": {"depth_nm": 50}})
-    key = "vacancies_per_A_per_ion_at_50nm"
-    assert fn(single, None).keys() == {key}
+    keys = {"vacancies_per_A_per_ion_at_50nm", "knock_ons_per_A_per_ion_at_50nm"}
+    assert fn(single, None).keys() == keys
 
 
 def test_resolve_errors():
@@ -119,28 +112,54 @@ def test_implant_summary_needs_range3d():
 # -- vacancy_at and peak_vacancy_depth ----------------------------------------------------
 
 
-def test_vacancy_at_interpolates_total_vacancies(single):
-    depth_a, total = raw_vacancy_total(single)
-    # between two bins, at the midpoint of their depths
-    x_nm = 0.5 * (depth_a[10] + depth_a[11]) / 10
-    expected = 0.5 * (total[10] + total[11])
-    row = extract.vacancy_at(x_nm)(single, None)
-    assert list(row) == [f"vacancies_per_A_per_ion_at_{x_nm:g}nm"]
-    assert row[next(iter(row))] == pytest.approx(expected, rel=1e-12)
+def raw_vacancy_profile(results):
+    """``(depth_A, elements, knock_ons)`` from the raw VACANCY table, per A per ion"""
+    df = results.vacancy.df
+    elements = [c for c in df.columns if c.startswith("vacancies_")]
+    return (
+        df["depth_A"].to_numpy(float),
+        df[elements].to_numpy(float).sum(axis=1),
+        df["knock_ons_per_A_per_ion"].to_numpy(float),
+    )
 
 
-def test_vacancy_at_exact_bin_and_key_format(single):
-    depth_a, total = raw_vacancy_total(single)
-    row = extract.vacancy_at(50)(single, None)
-    value = row["vacancies_per_A_per_ion_at_50nm"]
-    assert value == pytest.approx(np.interp(500.0, depth_a, total))
+def header_total_vacancies(directory):
+    """'Total Target Vacancies' [vacancies/ion] written in the VACANCY.txt header"""
+    text = Path(directory, "VACANCY.txt").read_bytes().decode("latin-1")
+    return float(re.search(r"Total Target Vacancies\s*=\s*([\d.]+)", text).group(1))
+
+
+@pytest.mark.parametrize("folder", ["1", "SiC-C"])
+def test_element_vacancies_integrate_to_header_total(folder):
+    # the header total is the element vacancies only; knock-ons are not vacancies
+    directory = os.path.join(D, folder)
+    depth_a, elements, _ = raw_vacancy_profile(Results(directory))
+    # depth_A is the upper edge of each bin, and the first bin starts at the surface
+    lower = np.concatenate([[0.0], depth_a[:-1]])
+    integral = float(np.sum(elements * (depth_a - lower)))
+    assert integral == pytest.approx(header_total_vacancies(directory), rel=0.01)
+
+
+def test_vacancy_at_gives_element_vacancies_and_knock_ons_separately(single):
+    depth_a, elements, knock_ons = raw_vacancy_profile(single)
+    row = extract.vacancy_at(50)(single, None)  # 500 A
+    assert row.keys() == {
+        "vacancies_per_A_per_ion_at_50nm",
+        "knock_ons_per_A_per_ion_at_50nm",
+    }
+    assert row["vacancies_per_A_per_ion_at_50nm"] == pytest.approx(
+        np.interp(500.0, depth_a, elements)
+    )
+    assert row["knock_ons_per_A_per_ion_at_50nm"] == pytest.approx(
+        np.interp(500.0, depth_a, knock_ons)
+    )
 
 
 def test_vacancy_at_outside_table_is_zero(single):
-    depth_a, _ = raw_vacancy_total(single)
+    depth_a, _, _ = raw_vacancy_profile(single)
     beyond_nm = (depth_a[-1] + 1000.0) / 10
     row = extract.vacancy_at(beyond_nm)(single, None)
-    assert list(row.values()) == [0.0]
+    assert list(row.values()) == [0.0, 0.0]
 
 
 def test_vacancy_at_rejects_bad_depth():
@@ -150,10 +169,10 @@ def test_vacancy_at_rejects_bad_depth():
         extract.vacancy_at(math.nan)
 
 
-def test_peak_vacancy_depth(single):
-    depth_a, total = raw_vacancy_total(single)
+def test_peak_vacancy_depth_uses_element_vacancies(single):
+    depth_a, elements, _ = raw_vacancy_profile(single)
     assert extract.peak_vacancy_depth(single) == {
-        "peak_vacancy_depth_A": depth_a[int(np.argmax(total))]
+        "peak_vacancy_depth_A": depth_a[int(np.argmax(elements))]
     }
 
 
@@ -263,6 +282,7 @@ def test_combine_merges_and_runs_in_order(single):
     assert set(row) == {
         "peak_vacancy_depth_A",
         "vacancies_per_A_per_ion_at_50nm",
+        "knock_ons_per_A_per_ion_at_50nm",
         "energy_to_recoils_eV_per_ion",
     }
     assert row["peak_vacancy_depth_A"] == extract.peak_vacancy_depth(single)["peak_vacancy_depth_A"]

@@ -156,18 +156,18 @@ def _incident_ions(results):
     return count
 
 
-def _total_vacancies(results):
-    """``(depth_A, total)``: knock-ons plus the vacancies of every element, per A per ion.
+def _vacancy_profile(results):
+    """``(depth_A, vacancies, knock_ons)``, per A per ion.
 
-    Same definition as :func:`srim.plot.plot_vacancies`. Knock-ons count as vacancies
-    there, so they are included here too.
+    ``vacancies`` is the sum of the element columns, the vacancies of the target. This is
+    the "Total Target Vacancies" of VACANCY.txt. Primary knock-on atoms are not vacancies
+    and are returned separately.
     """
     df = results.vacancy.df
     elements = [c for c in df.columns if c.startswith("vacancies_")]
-    total = df["knock_ons_per_A_per_ion"].to_numpy(dtype=float)
-    if elements:
-        total = total + df[elements].to_numpy(dtype=float).sum(axis=1)
-    return df["depth_A"].to_numpy(dtype=float), total
+    vacancies = df[elements].to_numpy(dtype=float).sum(axis=1)
+    knock_ons = df["knock_ons_per_A_per_ion"].to_numpy(dtype=float)
+    return df["depth_A"].to_numpy(dtype=float), vacancies, knock_ons
 
 
 def _bin_widths(depth):
@@ -205,40 +205,48 @@ def implant_summary(results, point=None) -> dict[str, float]:
 
 
 def vacancy_at(depth_nm: float) -> Extractor:
-    """Factory: the total vacancy density at depth ``depth_nm`` [nm].
+    """Factory: vacancy and knock-on densities at depth ``depth_nm`` [nm].
 
-    The total is knock-ons plus the vacancies of every element (the ``vacancy`` table, see
-    :func:`_total_vacancies`). The value is linearly interpolated between the bins of the
-    table (``depth_A`` is the bin's left edge) and is 0 outside the table's depth range.
+    ``vacancies`` is the vacancies of the target elements (the sum of the element columns
+    of the ``vacancy`` table); ``knock_ons`` the primary knock-on atoms. Each is linearly
+    interpolated between the bins of the table (``depth_A`` is the bin's left edge) and is
+    0 outside the table's depth range.
 
     YAML: ``{"vacancy_at": {"depth_nm": 50}}``.
 
     Returns
     -------
     extractor
-        with the key ``vacancies_per_A_per_ion_at_{depth_nm}nm`` (1/A/ion; ``depth_nm``
-        formatted with ``:g``, e.g. ``..._at_50nm``)
+        with the keys ``vacancies_per_A_per_ion_at_{depth_nm}nm`` and
+        ``knock_ons_per_A_per_ion_at_{depth_nm}nm`` (1/A/ion; ``depth_nm`` formatted with
+        ``:g``, e.g. ``..._at_50nm``)
     """
     depth = float(depth_nm)
     if not math.isfinite(depth) or depth < 0:
         raise ValueError(f"depth_nm must be a finite number >= 0, got {depth_nm!r}")
-    key = f"vacancies_per_A_per_ion_at_{depth:g}nm"
+    suffix = f"at_{depth:g}nm"
 
     def extract(results, point=None):
-        depth_a, total = _total_vacancies(results)
-        if len(depth_a) == 0:
-            value = math.nan
-        elif depth_a[0] <= depth * 10 <= depth_a[-1]:
-            value = float(np.interp(depth * 10, depth_a, total))
-        else:
-            value = 0.0
-        return {key: value}
+        depth_a, vacancies, knock_ons = _vacancy_profile(results)
+        return {
+            f"vacancies_per_A_per_ion_{suffix}": _at_depth(depth_a, vacancies, depth * 10),
+            f"knock_ons_per_A_per_ion_{suffix}": _at_depth(depth_a, knock_ons, depth * 10),
+        }
 
     return extract
 
 
+def _at_depth(depth_a, values, x_a):
+    """``values`` interpolated at depth ``x_a`` [A]; 0 outside the table, nan if empty"""
+    if len(depth_a) == 0:
+        return math.nan
+    if depth_a[0] <= x_a <= depth_a[-1]:
+        return float(np.interp(x_a, depth_a, values))
+    return 0.0
+
+
 def peak_vacancy_depth(results, point=None) -> dict[str, float]:
-    """Depth of the maximum of the total vacancy profile (:func:`vacancy_at` defines the total).
+    """Depth of the maximum of the vacancy profile (element vacancies, see :func:`vacancy_at`).
 
     Returns
     -------
@@ -246,10 +254,10 @@ def peak_vacancy_depth(results, point=None) -> dict[str, float]:
         ``peak_vacancy_depth_A`` [A]: the bin with the most vacancies (the first one on
         a tie); ``nan`` for an empty table.
     """
-    depth_a, total = _total_vacancies(results)
+    depth_a, vacancies, _ = _vacancy_profile(results)
     if len(depth_a) == 0:
         return {"peak_vacancy_depth_A": math.nan}
-    return {"peak_vacancy_depth_A": float(depth_a[int(np.argmax(total))])}
+    return {"peak_vacancy_depth_A": float(depth_a[int(np.argmax(vacancies))])}
 
 
 def sputter_yield(results, point=None) -> dict[str, float]:
