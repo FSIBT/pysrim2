@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 
 from srim.output import Results
-from srim.scan import Precision, Scan, ScanResult, derive_seed, run_scan
+from srim.scan import Scan, ScanResult, derive_seed, run_scan
 from srim.scan.events import (
     PointFailed,
     PointFinished,
@@ -657,16 +657,6 @@ def test_an_extractor_failure_fails_the_point_without_a_srim_retry(tmp_path, sta
 def test_other_backends_are_not_available_yet(tmp_path):
     with pytest.raises(NotImplementedError, match="Task 9"):
         run_scan(energy_scan(), backend="container", runner=fixture_runner)
-
-
-def test_precision_targets_are_not_available_yet(tmp_path):
-    scan = Scan(
-        BASE,
-        grid={"ion.energy_keV": [10.0]},
-        ions=Precision(target="echo_energy", rel=0.05),
-    )
-    with pytest.raises(NotImplementedError, match="precision targets: Task 7"):
-        run_scan(scan, runner=fixture_runner, scan_dir=tmp_path / "s")
 
 
 def plain_extractor(results, point):

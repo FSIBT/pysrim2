@@ -16,10 +16,12 @@ Order of events of one scan::
     point_stopped (for every unfinished point, once the workers are down)
     scan_finished (always last)
 
-``point_progress`` is emitted only at the start (``ions_done=0``) and just before
-``point_finished`` (``ions_done=ions_total``) for now; live progress inside a SRIM run
-comes later. ``batch_finished`` is defined here for precision targets (batches within a
-point); the executor does not emit it yet.
+``point_progress`` is emitted at the start (``ions_done=0``), after each finished batch of a
+precision target (``ions_done`` of the finished batches, ``ions_total`` of the batches
+planned so far) and just before ``point_finished`` (``ions_done=ions_total``); live progress
+inside a SRIM run comes later. ``batch_finished`` is emitted after each decision of a
+precision target (all batches planned so far are done): the ions of the point so far and
+``value_estimates``, ``{column: [value, err]}`` for its numeric columns.
 
 A point that does not finish when the scan is stopped gets ``point_stopped`` (after all the
 workers have stopped, before ``scan_finished``); its row has status ``stopped``.
@@ -169,8 +171,9 @@ class PointRetried(_Event):
 
 @dataclass(frozen=True)
 class BatchFinished(_Event):
-    """A batch of a point (precision targets, Task 7) finished: its ``ions`` and the
-    running ``value_estimates`` of the point."""
+    """A decision of a precision target: ``batch`` is the batch that finished last, ``ions``
+    the ions of the point planned so far and ``value_estimates`` maps each numeric column to
+    ``[value, err]`` (``err`` is NaN with fewer than two batches)."""
 
     kind: ClassVar[str] = "batch_finished"
     index: int

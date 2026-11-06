@@ -3,25 +3,35 @@
 :func:`run_scan` runs the points of a :class:`~srim.scan.Scan` in a pool of worker processes.
 Each worker creates one private run directory (:class:`srim.rundir.RunDir`) at its first
 point and reuses it for all its points; the directory is removed when the worker exits.
-The parent process hands out the points, runs the extractors on each finished point's
-outputs (so extractors need not be picklable) and reports every step as an event
+The parent process hands out the work, runs the extractors on each finished outputs (so
+extractors need not be picklable) and reports every step as an event
 (:mod:`srim.scan.events`), always from the calling thread and in order.
 
 Layout of a scan folder::
 
     scan.yaml                  the scan (base run spec and scan section), with the base seed
     points/<id[:16]>/          one point's outputs and run.yaml; error.log if an attempt failed
+    points/<id[:16]>/batches/<b>/   the batches of a point with a precision target
     result/                    scan.csv and metadata.yaml (ScanResult.to_csv)
 
 Seeds: a point runs with ``derive_seed(base_seed, int(id[:15], 16))``, so a point keeps its
-seed when points are added or reordered. A failed point is retried ``retries`` times with
-the same seed, then gets status ``failed``; the scan goes on.
+seed when points are added or reordered. Batch ``b`` of a point with a precision target
+runs with ``derive_seed(point_seed, b)``. A failed unit (a point, or a batch) is retried
+``retries`` times with the same seed, then the point gets status ``failed``; the scan goes on.
+
+Precision targets (:mod:`srim.scan.precision`): a point runs as batches of
+``batch_ions`` ions, and the unit of work is one batch. A decision is taken only when all
+batches of the point planned so far are done, so the result does not depend on the timing
+of the workers: the target's value and error are compared with the goal, and more batches
+are planned or the point is done (``done``), or it reached ``max_ions`` (``max_ions``, with a
+warning). ``batch_finished`` is emitted at each decision.
 
 Stopping: a ``stop_event`` being set, or SIGINT or SIGTERM in the main thread, stops
 scheduling. Running points are killed (SIGTERM to each worker's process group, which also
 reaches SRIM; the worker then stops its wine server; SIGKILL after a grace period). Finished
-points are kept; the others get status ``stopped``. POSIX only for the process groups; on
-Windows ``taskkill /T`` ends each worker and its children.
+points are kept; the others get status ``stopped`` (a precision point keeps the partial
+estimate of its finished batches). POSIX only for the process groups; on Windows
+``taskkill /T`` ends each worker and its children.
 
 Scripts that use the default ``spawn`` start method of the workers (macOS, Windows) must
 guard their entry point with ``if __name__ == "__main__":``.
@@ -29,6 +39,7 @@ guard their entry point with ``if __name__ == "__main__":``.
 
 import contextlib
 import logging
+import math
 import multiprocessing
 import os
 import queue
@@ -40,21 +51,23 @@ import sys
 import threading
 import time
 import traceback
+import warnings
 from collections import deque
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from multiprocessing.process import BaseProcess
 from multiprocessing.queues import Queue
-from numbers import Integral
+from numbers import Integral, Real
 from pathlib import Path
 
 from .. import __version__
 from ..output import Results
 from ..paths import srim_dir
 from ..rundir import RunDir
-from ..spec import RunSpec
-from .batches import MAX_SEED, derive_seed
+from ..spec import RunSpec, SpecError
+from .batches import MAX_SEED, BatchInfo, MergedResults, derive_seed
 from .events import (
+    BatchFinished,
     PointFailed,
     PointFinished,
     PointProgress,
@@ -67,7 +80,14 @@ from .events import (
     WorkerStats,
 )
 from .extract import combine
-from .precision import Precision
+from .precision import (
+    Precision,
+    batch_error,
+    batches_to_add,
+    goal_of,
+    initial_batches,
+    is_met,
+)
 from .result import ScanResult
 from .spec import Scan
 
@@ -100,9 +120,12 @@ def run_scan(
     ----------
     scan : :class:`~srim.scan.Scan`
         the scan to run. Python extractors run in this process (they need not be picklable)
-        and are written to ``scan.yaml`` as ``python:<module>:<name>`` references.
+        and are written to ``scan.yaml`` as ``python:<module>:<name>`` references. With a
+        :class:`~srim.scan.Precision` ``ions``, each point runs in batches until its target
+        is reached (see the module docstring).
     workers : :obj:`int`, optional
-        worker processes; default ``max(1, os.cpu_count() - 1)``, never more than points.
+        worker processes; default ``max(1, os.cpu_count() - 1)``, never more than the units
+        of work the scan can have (points, or batches for precision targets).
     backend : :obj:`str`
         ``"local"`` (the default) runs on this machine. The container back end is planned
         (Task 9); other names raise :class:`NotImplementedError`.
@@ -119,12 +142,14 @@ def run_scan(
     runner : callable, optional
         ``runner(spec) -> Results`` (a picklable top-level function, as for
         :func:`srim.scan.run_batches`) in place of SRIM. Its results folder is copied to
-        the point's folder and the runner owns its run directory. For tests and custom
-        back ends. Default: ``TRIM.from_spec(spec).run(...)`` in a private run directory.
+        the point's (or batch's) folder and the runner owns its run directory. For tests and
+        custom back ends. Default: ``TRIM.from_spec(spec).run(...)`` in a private run
+        directory.
     cache : optional
         reserved for the result cache (Task 8); accepted and ignored for now.
     retries : :obj:`int`
-        how often a failed point is run again before it is reported as failed (default 1)
+        how often a failed unit (a point, or a batch) is run again before it is reported as
+        failed (default 1)
 
     Returns
     -------
@@ -135,7 +160,7 @@ def run_scan(
     Raises
     ------
     NotImplementedError
-        for ``backend`` other than ``"local"`` and for precision targets (Task 7)
+        for ``backend`` other than ``"local"``
     FileNotFoundError
         when there is no SRIM install and no ``runner`` is given
     """
@@ -144,8 +169,6 @@ def run_scan(
             f"backend {backend!r} is not available: only 'local' is (the 'container' "
             "backend is Task 9)"
         )
-    if isinstance(scan.ions, Precision):
-        raise NotImplementedError("precision targets: Task 7")
     workers = _worker_count(workers)
     retries = _retry_count(retries)
     del cache  # the result cache is Task 8
@@ -188,11 +211,12 @@ _WORKER: dict = {"run_dir": None}
 
 
 def _worker_main(ident, tasks, results, runner, parent_pid):
-    """Worker process: run the points it is handed until it gets ``None``.
+    """Worker process: run the units it is handed until it gets ``None``.
 
-    Reports ``("done", ident, index, attempt, seconds)`` or ``("error", ident, index,
-    attempt, summary, traceback)`` for each point. The worker leads its own process group
-    so that the parent can stop it and everything it started (SRIM) at once.
+    A unit is ``(index, batch, attempt, spec, out)``. Reports ``("done", ident, index,
+    batch, attempt, seconds)`` or ``("error", ident, index, batch, attempt, summary,
+    traceback)`` for each unit. The worker leads its own process group so that the parent
+    can stop it and everything it started (SRIM) at once.
     """
     if hasattr(os, "setpgid"):
         with contextlib.suppress(OSError):
@@ -210,14 +234,24 @@ def _worker_main(ident, tasks, results, runner, parent_pid):
                 continue
             if task is None:
                 return
-            index, attempt, spec, out = task
+            index, batch, attempt, spec, out = task
             began = time.monotonic()
             try:
                 _run_point(RunSpec.from_dict(spec), out, runner)
             except BaseException as exc:  # reported; the parent decides on a retry
-                results.put(("error", ident, index, attempt, _summary(exc), traceback.format_exc()))
+                results.put(
+                    (
+                        "error",
+                        ident,
+                        index,
+                        batch,
+                        attempt,
+                        _summary(exc),
+                        traceback.format_exc(),
+                    )
+                )
             else:
-                results.put(("done", ident, index, attempt, time.monotonic() - began))
+                results.put(("done", ident, index, batch, attempt, time.monotonic() - began))
     finally:
         _release_run_dir()
 
@@ -260,7 +294,7 @@ def _watch_parent(parent_pid):
 
 
 def _run_point(spec, out, runner):
-    """Run one point and leave its outputs in ``out``."""
+    """Run one point (or batch) and leave its outputs in ``out``."""
     if runner is not None:
         results = runner(spec)
         try:
@@ -280,8 +314,8 @@ def _run_point(spec, out, runner):
 
 @dataclass
 class _Worker:
-    """One worker process as the parent sees it. ``current`` is ``(index, attempt,
-    started)`` of the point it runs, or ``None`` when it is idle."""
+    """One worker process as the parent sees it. ``current`` is ``(index, batch, attempt,
+    started)`` of the unit it runs, or ``None`` when it is idle."""
 
     ident: int
     process: BaseProcess
@@ -296,13 +330,19 @@ class _Worker:
 
 
 class _ScanRun:
-    """The state of one :func:`run_scan` call. Used from the calling thread only."""
+    """The state of one :func:`run_scan` call. Used from the calling thread only.
+
+    A unit of work is ``(index, batch, attempt)``: a whole point for a fixed ion count
+    (batch 0 of its folder ``points/<id>``), or one batch of a point with a precision target
+    (folder ``points/<id>/batches/<batch>``). ``plan[index]`` holds the ions of each batch
+    planned so far, ``finished[index]`` maps the finished batches to their wall time.
+    """
 
     def __init__(self, scan, folder, *, workers, base_seed, runner, retries, on_event, stop):
         self.scan = scan
         self.folder = folder
         self.points = scan.points()
-        self.n_workers = min(workers, len(self.points))
+        self.precision = scan.ions if isinstance(scan.ions, Precision) else None
         self.base_seed = base_seed
         self.runner = runner
         self.retries = retries
@@ -316,14 +356,27 @@ class _ScanRun:
             for p, seed in zip(self.points, self.seeds, strict=True)
         ]
         self.dirs = [folder / "points" / p.id[:16] for p in self.points]
-        self.pending = deque((p.index, 1) for p in self.points)
+        self.plan: dict[int, list[int]] = {p.index: [] for p in self.points}
+        self.finished: dict[int, dict[int, float]] = {p.index: {} for p in self.points}
+        self.batch_values: dict[tuple[int, int], dict] = {}
+        self.pending: deque = deque()
         self.rows: dict[int, dict] = {}
         self.workers: dict[int, _Worker] = {}
+        self.started: set[int] = set()
         self.stopping = False
         self.n_done = 0
         self.n_failed = 0
         self.last_error: dict[int, str] = {}
         self.deaths = 0
+        if self.precision is None:
+            self.pending.extend((p.index, 0, 1) for p in self.points)
+            capacity = len(self.points)
+        else:
+            for p in self.points:
+                self._schedule(p.index, initial_batches(self.precision))
+            per_point = math.ceil(self.precision.max_ions / self.precision.batch_ions)
+            capacity = per_point * len(self.points)
+        self.n_workers = min(workers, capacity)
         self.ctx = multiprocessing.get_context("spawn")
         self.results = self.ctx.Queue()
 
@@ -406,19 +459,22 @@ class _ScanRun:
                 return
             if worker.busy or not worker.process.is_alive():
                 continue
-            index, attempt = self.pending.popleft()
-            self._send(worker, index, attempt)
+            index, batch, attempt = self.pending.popleft()
+            self._send(worker, index, batch, attempt)
 
-    def _send(self, worker, index, attempt):
+    def _send(self, worker, index, batch, attempt):
         point = self.points[index]
-        out = self.dirs[index]
+        out = self._unit_dir(index, batch)
         if attempt == 1:  # a new scan may reuse the folder of an old one: start clean
-            shutil.rmtree(out, ignore_errors=True)
+            shutil.rmtree(self.dirs[index] if batch == 0 else out, ignore_errors=True)
         out.mkdir(parents=True, exist_ok=True)
-        worker.current = (index, attempt, time.monotonic())
-        worker.tasks.put((index, attempt, self.specs[index].to_dict(), str(out)))
-        self._emit(PointStarted(index, point.id, worker.ident, attempt))
-        self._emit(PointProgress(index, 0, point.spec.number_ions))
+        worker.current = (index, batch, attempt, time.monotonic())
+        spec = self._unit_spec(index, batch)
+        worker.tasks.put((index, batch, attempt, spec.to_dict(), str(out)))
+        if attempt > 1 or index not in self.started:
+            self.started.add(index)
+            self._emit(PointStarted(index, point.id, worker.ident, attempt))
+        self._emit(PointProgress(index, self._done_ions(index), self._planned_ions(index)))
 
     def _next(self, timeout):
         try:
@@ -434,15 +490,21 @@ class _ScanRun:
     def _handle(self, message):
         if message is None:
             return
-        kind, ident, index, attempt = message[:4]
+        kind, ident, index, batch, attempt = message[:5]
         worker = self.workers.get(ident)
-        if worker is None or worker.current is None or worker.current[:2] != (index, attempt):
+        unit = (index, batch, attempt)
+        if worker is None or worker.current is None or worker.current[:3] != unit:
             return  # stale: the worker was already stopped or replaced
         worker.current = None
+        if index in self.rows:  # the point is settled (failed): its other batches are moot
+            return
         if kind == "done":
-            self._finished(worker, index, attempt, message[4])
+            if self.precision is None:
+                self._finished(worker, index, attempt, message[5])
+            else:
+                self._batch_finished(worker, index, batch, attempt, message[5])
         elif not self.stopping:  # an error while stopping is the stop itself
-            self._failed(index, attempt, message[4], message[5])
+            self._failed(index, batch, attempt, message[5], message[6])
 
     def _reap(self):
         """Attempts whose worker died without a word count as failed.
@@ -455,7 +517,7 @@ class _ScanRun:
                 continue
             self._drain(0.5)
             if worker.busy:
-                index, attempt, _ = worker.current
+                index, batch, attempt, _ = worker.current
                 worker.current = None
                 code = worker.process.exitcode
                 self.deaths += 1
@@ -467,13 +529,14 @@ class _ScanRun:
                     )
                 self._failed(
                     index,
+                    batch,
                     attempt,
                     f"worker process exited unexpectedly (exit code {code})",
                     "",
                 )
 
     def _halt(self):
-        """Stop: kill the running points, keep what finished, drop the rest."""
+        """Stop: kill the running units, keep what finished, drop the rest."""
         self.stopping = True
         busy = self._busy()
         for worker in busy:
@@ -490,7 +553,7 @@ class _ScanRun:
         self.pending.clear()
 
     def _shutdown(self):
-        """Stop every worker process; the ones still running a point are killed."""
+        """Stop every worker process; the ones still running a unit are killed."""
         for worker in self._busy():
             _signal_worker(worker, signal.SIGTERM)
         for worker in self.workers.values():
@@ -508,9 +571,52 @@ class _ScanRun:
             _close_queue(worker.tasks)
         _close_queue(self.results)
 
+    # -- units of work ----------------------------------------------------------------
+
+    def _schedule(self, index, count):
+        """Plan up to ``count`` more batches of a precision point (never beyond
+        ``max_ions``) and queue them. Each batch has the ions the maximum still allows."""
+        precision = self.precision
+        for _ in range(count):
+            planned = sum(self.plan[index])
+            if planned >= precision.max_ions:
+                return
+            batch = len(self.plan[index])
+            self.plan[index].append(min(precision.batch_ions, precision.max_ions - planned))
+            self.pending.append((index, batch, 1))
+
+    def _unit_dir(self, index, batch):
+        if self.precision is None:
+            return self.dirs[index]
+        return self.dirs[index] / "batches" / str(batch)
+
+    def _unit_spec(self, index, batch):
+        if self.precision is None:
+            return self.specs[index]
+        seed = derive_seed(self.seeds[index], batch)
+        ions = self.plan[index][batch]
+        return self.points[index].spec.with_overrides([f"number_ions={ions}", f"seed={seed}"])
+
+    def _planned_ions(self, index):
+        if self.precision is None:
+            return self.points[index].spec.number_ions
+        return sum(self.plan[index])
+
+    def _done_ions(self, index):
+        """Ions of the finished batches of a precision point (0 for a fixed count)."""
+        return sum(self.plan[index][b] for b in self.finished[index])
+
+    def _row_seeds(self, index):
+        """The seeds column: the point's seed, or the seeds of the finished batches."""
+        if self.precision is None:
+            return str(self.seeds[index])
+        done = sorted(self.finished[index])
+        return ",".join(str(derive_seed(self.seeds[index], b)) for b in done) or None
+
     # -- outcomes of one attempt -------------------------------------------------------
 
     def _finished(self, worker, index, attempt, seconds):
+        """A fixed-count point's run is done: extract its values and record the row."""
         point = self.points[index]
         out = self.dirs[index]
         n_ions = point.spec.number_ions
@@ -518,9 +624,7 @@ class _ScanRun:
         try:
             with Results(str(out)) as results:
                 values = dict(self.extract(results, point))
-            clash = sorted(set(values) & self.names)
-            if clash:
-                raise ValueError(f"extractor column(s) {clash} clash with the scan's own columns")
+            self._check_names(values)
         except Exception as exc:
             summary = _summary(exc)
             self._log_error(index, attempt, summary, traceback.format_exc())
@@ -541,25 +645,153 @@ class _ScanRun:
         ions_per_s = n_ions / seconds if seconds > 0 else None
         self._emit(WorkerStats(worker.ident, ions_per_s))
 
-    def _failed(self, index, attempt, summary, tb):
+    def _batch_finished(self, worker, index, batch, attempt, seconds):
+        """One batch of a precision point is done: extract its values, and when all the
+        batches planned so far are done, take the decision for the point."""
+        point = self.points[index]
+        size = self.plan[index][batch]
+        try:
+            with Results(str(self._unit_dir(index, batch))) as results:
+                values = dict(self.extract(results, point))
+            self._check_names(values)
+        except Exception as exc:
+            summary = _summary(exc)
+            self._log_error(index, attempt, summary, traceback.format_exc())
+            self._give_up(index, attempt, summary, n_ions=self._done_ions(index) or None)
+            return
+        self.batch_values[(index, batch)] = values
+        self.finished[index][batch] = seconds
+        self._emit(PointProgress(index, self._done_ions(index), self._planned_ions(index)))
+        self._emit(WorkerStats(worker.ident, size / seconds if seconds > 0 else None))
+        if len(self.finished[index]) == len(self.plan[index]):
+            self._decide(index, batch, attempt)
+
+    def _decide(self, index, batch, attempt):
+        """All batches of a precision point planned so far are done: met, or add batches,
+        or stop at the ion maximum."""
+        precision = self.precision
+        point = self.points[index]
+        ions = sum(self.plan[index])
+        try:
+            values, errs = self._estimate(index, sorted(self.finished[index]))
+            target = precision.target
+            if target not in values:
+                raise SpecError(
+                    f"precision target {target!r} is not an extracted column; the columns "
+                    f"are: {', '.join(values) or 'none'}"
+                )
+            if not _is_number(values[target]):
+                raise SpecError(f"precision target {target!r} is not a number: {values[target]!r}")
+        except Exception as exc:
+            summary = _summary(exc)
+            self._log_error(index, attempt, summary, traceback.format_exc())
+            self._give_up(index, attempt, summary, n_ions=ions)
+            return
+        value, err = values[target], errs[target]
+        goal = goal_of(precision, value)
+        self._emit(
+            BatchFinished(
+                index,
+                batch,
+                ions,
+                {name: [values[name], errs[name]] for name in errs},
+            )
+        )
+        if is_met(err, goal):
+            self._finish_precision(index, "done", values, errs)
+            return
+        if ions >= precision.max_ions:
+            warnings.warn(
+                f"precision target not reached for scan point {index} ({point.params}): "
+                f"{target} = {value:.6g} +/- {err:.3g} after {ions} ions (goal "
+                f"{goal:.3g}); stopped at max_ions={precision.max_ions}",
+                stacklevel=2,
+            )
+            self._finish_precision(index, "max_ions", values, errs)
+            return
+        if self.stopping:  # the point is stopped: its partial estimate is kept
+            return
+        count = batches_to_add(precision, ions, err, goal, len(self.plan[index]))
+        self._schedule(index, count)
+
+    def _finish_precision(self, index, status, values, errs):
+        """A precision point is done (``done``, or ``max_ions``): its row and event."""
+        point = self.points[index]
+        ions = sum(self.plan[index])
+        row_values = {**values, **{f"{name}_err": err for name, err in errs.items()}}
+        self.rows[index] = {
+            "index": index,
+            "status": status,
+            "n_ions": ions,
+            "seeds": self._row_seeds(index),
+            "path": str(self.dirs[index]),
+            "error": None,
+            **row_values,
+        }
+        self.n_done += 1
+        seconds = sum(self.finished[index].values())
+        self._emit(PointFinished(index, point.id, row_values, ions, seconds))
+
+    def _estimate(self, index, batches):
+        """Values and errors of a precision point from the given finished batches.
+
+        The values are the extractors applied to the merged batches; each error is the
+        batch-means error of the batch values (:func:`~srim.scan.precision.batch_error`).
+        """
+        point = self.points[index]
+        batches = list(batches)
+        ions = sum(self.plan[index][b] for b in batches)
+        parts, merged = [], None
+        try:
+            for b in batches:
+                parts.append(Results(str(self._unit_dir(index, b))))
+            infos = [
+                BatchInfo(
+                    b,
+                    derive_seed(self.seeds[index], b),
+                    self.plan[index][b],
+                    directory=str(self._unit_dir(index, b)),
+                )
+                for b in batches
+            ]
+            spec = point.spec.with_overrides([f"number_ions={ions}"]).to_dict()
+            merged = MergedResults(parts, infos, spec=spec, base_seed=self.seeds[index])
+            values = dict(self.extract(merged, point))
+        finally:
+            if merged is not None:  # closes the parts too
+                merged.close()
+            else:
+                for part in parts:
+                    part.close()
+        self._check_names(values)
+        weights = [self.plan[index][b] for b in batches]
+        errs = {}
+        for name, value in values.items():
+            if _is_number(value):
+                samples = [_as_float(self.batch_values[(index, b)].get(name)) for b in batches]
+                errs[name] = batch_error(samples, weights)
+        return values, errs
+
+    def _failed(self, index, batch, attempt, summary, tb):
         self._log_error(index, attempt, summary, tb)
         if attempt > self.retries:
-            self._give_up(index, attempt, summary)
+            self._give_up(index, attempt, summary, n_ions=self._done_ions(index) or None)
             return
         point = self.points[index]
         self.last_error[index] = summary
         self._emit(PointFailed(index, point.id, summary, attempt, final=False))
-        self.pending.append((index, attempt + 1))
+        self.pending.append((index, batch, attempt + 1))
         self._emit(PointRetried(index, point.id, attempt + 1))
 
     def _give_up(self, index, attempt, summary, n_ions=None):
         point = self.points[index]
         self._emit(PointFailed(index, point.id, summary, attempt, final=True))
+        self.pending = deque(unit for unit in self.pending if unit[0] != index)
         self.rows[index] = {
             "index": index,
             "status": "failed",
             "n_ions": n_ions,
-            "seeds": str(self.seeds[index]),
+            "seeds": self._row_seeds(index),
             "path": str(self.dirs[index]),
             "error": summary,
         }
@@ -569,37 +801,75 @@ class _ScanRun:
         """A row and a ``point_stopped`` event for every point that did not finish.
 
         A point that failed earlier keeps its folder (with ``error.log``) and its last error;
-        the outputs of an attempt that was cut short are removed.
+        the outputs of an attempt that was cut short are removed. A precision point with
+        finished batches keeps them, and its row has their partial estimate.
         """
         for point in self.points:
             index = point.index
             if index in self.rows:
                 continue
             error = self.last_error.get(index)
-            self._clear_outputs(index, keep_log=error is not None)
-            self.rows[index] = {
-                "index": index,
-                "status": "stopped",
-                "n_ions": None,
-                "seeds": None,
-                "path": str(self.dirs[index]) if error is not None else None,
-                "error": error,
-            }
+            done = sorted(self.finished[index])
+            if done:
+                self.rows[index] = self._partial_row(index, done, error)
+            else:
+                self._clear_outputs(index, keep_log=error is not None)
+                self.rows[index] = {
+                    "index": index,
+                    "status": "stopped",
+                    "n_ions": None,
+                    "seeds": None,
+                    "path": str(self.dirs[index]) if error is not None else None,
+                    "error": error,
+                }
             self._emit(PointStopped(index, point.id, error))
 
-    def _clear_outputs(self, index, keep_log):
+    def _partial_row(self, index, done, error):
+        """The row of a precision point stopped with some finished batches."""
+        try:
+            values, errs = self._estimate(index, done)
+        except Exception as exc:
+            log.warning("scan point %d: no partial estimate (%s)", index, _summary(exc))
+            values, errs = {}, {}
+        self._clear_outputs(index, keep_log=error is not None, keep_batches=done)
+        ions = sum(self.plan[index][b] for b in done)
+        return {
+            "index": index,
+            "status": "stopped",
+            "n_ions": ions,
+            "seeds": self._row_seeds(index),
+            "path": str(self.dirs[index]),
+            "error": error,
+            **values,
+            **{f"{name}_err": err for name, err in errs.items()},
+        }
+
+    def _clear_outputs(self, index, keep_log, keep_batches=()):
+        """Remove a point's outputs; keep ``error.log`` if ``keep_log`` and the batch folders
+        listed in ``keep_batches`` (the others go)."""
         out = self.dirs[index]
-        if not keep_log:
+        if not keep_log and not keep_batches:
             shutil.rmtree(out, ignore_errors=True)
             return
         for entry in out.iterdir() if out.is_dir() else ():
-            if entry.name != "error.log":
-                if entry.is_dir() and not entry.is_symlink():
-                    shutil.rmtree(entry, ignore_errors=True)
-                else:
-                    entry.unlink(missing_ok=True)
+            if entry.name == "error.log" and keep_log:
+                continue
+            if entry.name == "batches" and keep_batches and entry.is_dir():
+                for batch_dir in entry.iterdir():
+                    if not (batch_dir.name.isdigit() and int(batch_dir.name) in keep_batches):
+                        shutil.rmtree(batch_dir, ignore_errors=True)
+                continue
+            if entry.is_dir() and not entry.is_symlink():
+                shutil.rmtree(entry, ignore_errors=True)
+            else:
+                entry.unlink(missing_ok=True)
 
     # -- output ------------------------------------------------------------------------
+
+    def _check_names(self, values):
+        clash = sorted(set(values) & self.names)
+        if clash:
+            raise ValueError(f"extractor column(s) {clash} clash with the scan's own columns")
 
     def _log_error(self, index, attempt, summary, tb):
         out = self.dirs[index]
@@ -624,6 +894,14 @@ def _summary(exc) -> str:
     text = " ".join(str(exc).split())
     name = type(exc).__name__
     return f"{name}: {text}" if text else name
+
+
+def _is_number(value) -> bool:
+    return isinstance(value, Real) and not isinstance(value, bool)
+
+
+def _as_float(value) -> float:
+    return float(value) if _is_number(value) else math.nan
 
 
 def _signal_worker(worker, sig):
