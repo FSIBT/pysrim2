@@ -46,6 +46,33 @@ def format_value(value, err=None) -> str:
     return f"{value:.4g}"
 
 
+def status_line(state: ScanState, now: float, note: str = "") -> str:
+    """The status strip of the views, written like the plain status line (see
+    :mod:`srim.ui.plain`), with ``[paused]`` and the ``note`` (e.g. ``stopping…``) added."""
+    counts = state.counts()
+    done = counts["done"] + counts["cached"]
+    elapsed = format_hms(state.elapsed(now))
+    ions = state.total_ions()
+    if state.finished:
+        text = (
+            f"finished {done}/{state.n_points}  failed {counts['failed']}  "
+            f"stopped {counts['stopped']}  ions {ions}  elapsed {elapsed}"
+        )
+    else:
+        eta = state.eta_seconds()
+        eta_text = "?" if eta is None else format_hms(eta)
+        text = (
+            f"done {done}/{state.n_points}  running {counts['running']}  "
+            f"queued {counts['queued']}  failed {counts['failed']}  ions {ions}  "
+            f"elapsed {elapsed}  eta {eta_text}"
+        )
+    if state.paused:
+        text += "  [paused]"
+    if note:
+        text += f"  {note}"
+    return text
+
+
 def sparkline(values, width: int = 40) -> str:
     """The last ``width`` numbers as a line of block glyphs (empty when there are none).
 

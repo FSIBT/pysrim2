@@ -21,7 +21,7 @@ from srim.scan.events import (
     WorkerStats,
 )
 from srim.spec import RunSpec
-from srim.ui.tui.state import ScanState, format_hms, format_value, sparkline
+from srim.ui.tui.state import ScanState, format_hms, format_value, sparkline, status_line
 
 BASE = RunSpec.from_dict(
     {
@@ -256,3 +256,27 @@ def test_sparkline_scales_values_and_skips_missing_ones():
     tail = sparkline(range(100), width=10)
     assert tail == sparkline(range(90, 100))  # only the last ten numbers are drawn
     assert tail[0] == "▁" and tail[-1] == "█" and len(tail) == 10
+
+
+def test_the_status_line_counts_the_points_and_says_when_paused_or_stopping():
+    scan = scan_of()
+    state = ScanState(scan)
+    started(state, scan, workers=2, t=100.0)
+    run_point(state, scan, 0, worker=0, seconds=4.0)
+    state.apply(PointStarted(1, scan.points()[1].id, 1, 1))
+    assert status_line(state, now=110.0) == (
+        "done 1/3  running 1  queued 1  failed 0  ions 100  elapsed 0:00:10  eta 0:00:04"
+    )
+    state.apply(ScanPaused(True))
+    assert status_line(state, now=110.0, note="stopping…").endswith("[paused]  stopping…")
+
+
+def test_the_status_line_of_a_finished_scan_gives_the_outcome():
+    scan = scan_of((10.0,))
+    state = ScanState(scan)
+    started(state, scan, workers=1, t=100.0)
+    run_point(state, scan, 0, seconds=2.0)
+    state.apply(ScanFinished(n_done=1, n_failed=0, seconds=3.0, stopped=False, time=103.0))
+    assert status_line(state, now=999.0) == (
+        "finished 1/1  failed 0  stopped 0  ions 100  elapsed 0:00:03"
+    )
