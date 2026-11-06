@@ -18,6 +18,7 @@ def test_every_kind_is_registered_once():
             "scan_started",
             "point_queued",
             "point_started",
+            "point_cached",
             "point_progress",
             "point_finished",
             "point_failed",

@@ -16,6 +16,10 @@ Order of events of one scan::
     point_stopped (for every unfinished point, once the workers are down)
     scan_finished (always last)
 
+A unit of work taken from the result cache (see :mod:`srim.scan.cache`) gets ``point_cached``
+instead of ``point_started`` and no worker runs it: a point whose units all come from the cache
+has ``point_cached`` events, then ``point_finished`` with status ``cached``.
+
 ``point_progress`` is emitted at the start (``ions_done=0``), after each finished batch of a
 precision target (``ions_done`` of the finished batches, ``ions_total`` of the batches
 planned so far) and just before ``point_finished`` (``ions_done=ions_total``); live progress
@@ -104,6 +108,18 @@ class PointStarted(_Event):
     id: str
     worker: int
     attempt: int
+    time: float = field(default_factory=now)
+
+
+@dataclass(frozen=True)
+class PointCached(_Event):
+    """A unit of a point was taken from the result cache, so no worker ran it. ``batch`` is
+    the batch of a precision target (0 for a point with a fixed ion count)."""
+
+    kind: ClassVar[str] = "point_cached"
+    index: int
+    id: str
+    batch: int
     time: float = field(default_factory=now)
 
 
@@ -215,6 +231,7 @@ EVENT_TYPES = {
         ScanStarted,
         PointQueued,
         PointStarted,
+        PointCached,
         PointProgress,
         PointFinished,
         PointFailed,
@@ -229,6 +246,7 @@ EVENT_TYPES = {
 __all__ = [
     "EVENT_TYPES",
     "BatchFinished",
+    "PointCached",
     "PointFailed",
     "PointFinished",
     "PointProgress",
