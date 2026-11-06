@@ -119,8 +119,9 @@ builds the result once the tasks are done, and `clean` removes cache entries or 
 folder. `--ui` picks the live view (`plot`, `dashboard`, `web`, `plain` or `json`; see
 {doc}`scans`). Scan options: `--workers`, `--backend`, `--image` (container), `--output` (the
 scan folder, default `./scan-<UTC time>`), `--cache` or `--no-cache`, `--retries` (default 1),
-`--host` and `--port` (web view, default `127.0.0.1:8000`), `--plot X,Y[,HUE]` (plot view), and
-`--set` (changes the scan's base run). The web view has no authentication: see the note in
+`--host` and `--port` (web view, default `127.0.0.1:8000`), `--plot X,Y[,HUE]` (plot view),
+`--no-wait` (the views close when the scan has finished instead of staying open until q or
+Ctrl-C), and `--set` (changes the scan's base run). The web view has no authentication: see the note in
 {doc}`scans`.
 
 ```shell

@@ -472,9 +472,16 @@ The terminal views (`plot` and `dashboard`):
 | Key | Action |
 |---|---|
 | `p` | pause or resume: no new point starts while paused, running points finish |
-| `q` | stop: running points are killed, finished points are kept (Ctrl-C does the same; a second Ctrl-C quits the view at once) |
+| `q` | stop: running points are killed, finished points are kept (Ctrl-C does the same; a second Ctrl-C quits the view at once); after the end, `q` quits the view |
 | `v` | switch between plot and dashboard |
 | `l` | show the `error.log` of the selected point, or of the last failed one |
+
+After the scan has finished the terminal views stay open, so that the final state can be read:
+the status strip says `finished — press q to quit`, every key still works (`p` does nothing),
+and `q` or Ctrl-C quits. `--no-wait` closes the view as soon as the scan has finished (for
+scripts and terminals that should not wait). A scan stopped with `q`, and a scan that fails,
+close the view at once. The exit code is the scan's in every case (see
+[Exit codes](#exit-codes)).
 
 The plot shows the extracted value `y` against the parameter `x`, with one series per value
 of a second parameter. The defaults are the first scanned parameter for `x`, the second for
@@ -492,11 +499,17 @@ pysrim2 scan run scan.yaml --ui web
 The command prints a URL (`http://127.0.0.1:8000` by default). Open it in a browser on the
 same machine, or reach it over SSH: `ssh -L 8000:127.0.0.1:8000 user@host`, then open the
 URL on your machine. Each browser tab runs its own viewer and replays the scan's events
-file, so several tabs can watch one scan, and a tab opened late catches up. `p` and `q` work in the browser. The server stops a few seconds after the scan ends, so
-the final state stays visible.
+file, so several tabs can watch one scan, and a tab opened late catches up. `p` and `q` work in
+the browser, and do nothing after the scan has ended.
+
+After the scan has finished the server keeps serving the final state until you press Ctrl-C;
+the command says so on stderr. The exit code is still the scan's. A scan stopped with `q`
+stops the server a few seconds after the end, and so does `--no-wait`.
 
 `--port` changes the port (default 8000). `--host` changes the address the server listens
-on (default `127.0.0.1`, this machine only).
+on (default `127.0.0.1`, this machine only). `--no-wait` closes the terminal views and the web
+view as soon as the scan has finished (the web view after a few seconds); `plain` and `json`
+ignore it.
 
 Security. The web view has **no authentication** and **no Origin check**. Any web page that
 a browser on this machine opens can connect to the port and pause or stop the scan, even
@@ -543,6 +556,10 @@ most every `every` seconds (default 1). See the scan notebook in `examples/noteb
 | 1 | some point failed or is missing, or the scan failed after it started |
 | 2 | bad input: the spec, `--set` or the scan folder is invalid, or the scan could not start (no SRIM, no container runtime), or another scan holds the folder |
 | 130 | stopped by Ctrl-C or SIGTERM; the partial result is written |
+
+A live view that waits after the end (see [Live views](#live-views)) does not change the code:
+a Ctrl-C or `q` that closes it after a finished scan leaves the code the scan earned, and only
+a scan that was stopped gives 130.
 
 `pysrim2 scan prepare`: 0 written; 2 bad input (spec, `--set`, `--jobs`, or the folder already
 holds a prepared scan); 1 the files could not be written.
