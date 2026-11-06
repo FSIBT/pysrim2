@@ -280,3 +280,18 @@ def test_the_status_line_of_a_finished_scan_gives_the_outcome():
     assert status_line(state, now=999.0) == (
         "finished 1/1  failed 0  stopped 0  ions 100  elapsed 0:00:03"
     )
+
+
+def test_progress_and_worker_stats_bump_only_the_live_version():
+    scan = scan_of()
+    state = ScanState(scan)
+    started(state, scan, workers=1)
+    data, rows, live = state.data_version, state.rows_version, state.live_version
+    state.apply(PointProgress(0, 10, 100))
+    state.apply(WorkerStats(0, 5.0))
+    assert (state.data_version, state.rows_version) == (data, rows)  # no table or plot work
+    assert state.live_version == live + 2
+    state.apply(PointStarted(0, scan.points()[0].id, 0, 1))
+    assert state.rows_version > rows and state.data_version == data  # its row changed
+    run_point(state, scan, 0)
+    assert state.data_version > data  # a finished point changes the plot's data

@@ -165,44 +165,68 @@ class ScanApp(App):
         self.push_screen(LogScreen(f"point {row.index}: error.log", text))
 
 
-class PlotScreen(Screen):
-    """The plot of one result against the scanned parameters, and the status strip."""
+class _LiveScreen(Screen):
+    """A view that redraws only what changed: a text widget is set only when its text is
+    different from the one it shows."""
+
+    def __init__(self):
+        super().__init__()
+        self._shown: dict[str, str] = {}
+
+    def _show(self, widget_id: str, text: str) -> None:
+        if self._shown.get(widget_id) != text:
+            self._shown[widget_id] = text
+            self.query_one(f"#{widget_id}", Static).update(Text(text))
+
+
+class PlotScreen(_LiveScreen):
+    """The plot of one result against the scanned parameters, and the status strip. The plot
+    is drawn again only when the data changed (``state.data_version``) or the axes did."""
 
     DEFAULT_CSS = """
     PlotScreen PlotextPlot { height: 1fr; }
     PlotScreen #strip { height: 1; padding: 0 1; }
     """
 
+    def __init__(self):
+        super().__init__()
+        self.data = None
+        self.plot_rebuilds = 0  # how often the plot was drawn (tests watch it)
+        self._drawn = None  # (data_version, axes) of the plot on screen
+
     def compose(self):
         yield PlotextPlot(id="plot")
         yield Static(id="strip")
         yield Footer()
 
-    def on_mount(self) -> None:
-        self._drawn = None
-        self.data = None
-        self.status_text = ""
+    @property
+    def status_text(self) -> str:
+        return self._shown.get("strip", "")
 
     def update_from(self, app: ScanApp) -> None:
-        """Redraw the plot when the state or the axes changed, and the status strip."""
         state = app.state
         axes = choose_axes(state, app.plot_spec)
-        if (state.version, axes) != self._drawn:
+        if (state.data_version, axes) != self._drawn:
             self.data = build(state, *axes)
             widget = self.query_one(PlotextPlot)
             draw(widget.plt, self.data)
             widget.refresh()
-            self._drawn = (state.version, axes)
-        self.status_text = status_line(state, app.clock(), app.note)
-        self.query_one("#strip", Static).update(Text(self.status_text))
+            self._drawn = (state.data_version, axes)
+            self.plot_rebuilds += 1
+        self._show("strip", status_line(state, app.clock(), app.note))
 
     def on_screen_resume(self) -> None:
         self.update_from(self.app)
 
 
-class DashboardScreen(Screen):
+class DashboardScreen(_LiveScreen):
     """Overall counts, a gauge, the workers, a throughput sparkline, the points table (sorted
-    by a column when its header is selected) and the latest warnings and errors."""
+    by a column when its header is selected) and the latest warnings and errors.
+
+    The points table is changed in place when only the rows changed (``state.rows_version``):
+    a changed cell is updated, so the scroll position and the cursor stay. It is rebuilt
+    (keeping the cursor and the scroll) only when the order or the columns change.
+    """
 
     DEFAULT_CSS = """
     DashboardScreen #overall { height: auto; padding: 0 1; }
@@ -219,8 +243,12 @@ class DashboardScreen(Screen):
         self.sort_reverse = False
         #: the table's column ids, in order (the table is rebuilt when they change)
         self.column_ids: tuple = ()
-        self._drawn = None  # what the points table shows (see _update_points)
-        self._workers_drawn = None  # what the workers table shows
+        self.table_rebuilds = 0  # how often the points table was rebuilt (tests watch it)
+        self._seen = None  # (rows_version, sort, reverse, columns) last shown
+        self._order: list | None = None  # point indexes in the table's row order
+        self._cells: dict = {}  # point index -> the cells shown in its row
+        self._workers_drawn = None
+        self._gauge = None
 
     def compose(self):
         yield Static(id="overall")
@@ -241,7 +269,7 @@ class DashboardScreen(Screen):
         )
 
     def on_screen_resume(self) -> None:
-        self._drawn = None
+        self._seen = None  # the view was hidden: check the table again
         self.update_from(self.app)
 
     def update_from(self, app: ScanApp) -> None:
@@ -251,27 +279,26 @@ class DashboardScreen(Screen):
         eta = state.eta_seconds()
         eta_text = "?" if eta is None else format_hms(eta)
         flags = " ".join(flag for flag in ("paused" if state.paused else "", app.note) if flag)
-        overall = (
+        self._show(
+            "overall",
             f"points: done {done} (cached {counts['cached']})  running {counts['running']}  "
             f"queued {counts['queued']}  failed {counts['failed']}  "
             f"stopped {counts['stopped']}  of {state.n_points}\n"
             f"ions {state.total_ions()}  elapsed {format_hms(state.elapsed(app.clock()))}  "
-            f"eta {eta_text}  workers {state.n_workers}  {flags}"
+            f"eta {eta_text}  workers {state.n_workers}  {flags}",
         )
-        self.query_one("#overall", Static).update(Text(overall))
-        self.query_one("#gauge", ProgressBar).update(
-            total=max(state.n_points, 1), progress=done + counts["failed"] + counts["stopped"]
-        )
+        gauge = (max(state.n_points, 1), done + counts["failed"] + counts["stopped"])
+        if gauge != self._gauge:
+            self._gauge = gauge
+            self.query_one("#gauge", ProgressBar).update(total=gauge[0], progress=gauge[1])
         self._update_workers(state)
         last = f"{state.throughput[-1]:.4g}" if state.throughput else "—"
-        line = f"ions/s {sparkline(state.throughput) or '—'}  last {last}"
-        self.query_one("#throughput", Static).update(Text(line))
+        self._show("throughput", f"ions/s {sparkline(state.throughput) or '—'}  last {last}")
         self._update_points(state)
         lines = [f"{level}: {text}" for level, text in state.last_warnings(WARNINGS_SHOWN)]
-        self.query_one("#warnings", Static).update(Text("\n".join(lines) or "no warnings"))
+        self._show("warnings", "\n".join(lines) or "no warnings")
 
     def _update_workers(self, state: ScanState) -> None:
-        table = self.query_one("#workers", DataTable)
         rows = [
             (
                 worker.ident,
@@ -285,31 +312,57 @@ class DashboardScreen(Screen):
         if rows == self._workers_drawn:
             return
         self._workers_drawn = rows
+        table = self.query_one("#workers", DataTable)
         table.clear()
         for row in rows:
             table.add_row(*(str(cell) for cell in row), key=str(row[0]))
 
     def _update_points(self, state: ScanState) -> None:
-        columns = state.table_columns()
-        ids = tuple(column for column, _ in columns)
-        table = self.table
-        version = (state.version, self.sort_column, self.sort_reverse, ids)
-        if version == self._drawn:
+        ids = tuple(column for column, _ in state.table_columns())
+        seen = (state.rows_version, self.sort_column, self.sort_reverse, ids)
+        if seen == self._seen:
             return
-        selected = self.selected_index()
+        rows = state.sorted_rows(self.sort_column, self.sort_reverse)
+        order = [row.index for row in rows]
+        if ids != self.column_ids or order != self._order:
+            self._rebuild(state, rows, ids)
+        else:
+            self._update_cells(state, rows, ids)
+        self._seen = seen
+
+    def _rebuild(self, state: ScanState, rows, ids: tuple) -> None:
+        table = self.table
+        selected, scroll = self.selected_index(), table.scroll_y
         if ids != self.column_ids:
             table.clear(columns=True)
-            for column, label in columns:
+            for column, label in state.table_columns():
                 table.add_column(label, key=column)
             self.column_ids = ids
-        table.clear()
-        for row in state.sorted_rows(self.sort_column, self.sort_reverse):
-            cells = [state.cell(row, column) for column in ids]
+        else:
+            table.clear()
+        self._cells = {}
+        for row in rows:
+            cells = tuple(state.cell(row, column) for column in ids)
+            self._cells[row.index] = cells
             table.add_row(*cells, key=str(row.index))
-        self._restore_selection(selected)
-        self._drawn = version
+        self._order = [row.index for row in rows]
+        self._restore_cursor(selected)
+        table.scroll_to(y=scroll, animate=False)
+        self.table_rebuilds += 1
 
-    def _restore_selection(self, index) -> None:
+    def _update_cells(self, state: ScanState, rows, ids: tuple) -> None:
+        table = self.table
+        for row in rows:
+            cells = tuple(state.cell(row, column) for column in ids)
+            previous = self._cells.get(row.index)
+            if cells == previous:
+                continue
+            for column, value, before in zip(ids, cells, previous, strict=True):
+                if value != before:
+                    table.update_cell(str(row.index), column, value)
+            self._cells[row.index] = cells
+
+    def _restore_cursor(self, index) -> None:
         if index is None:
             return
         for position, row in enumerate(self.table.ordered_rows):
@@ -339,7 +392,7 @@ class DashboardScreen(Screen):
         """Sort the points table by ``column`` (an id of the state's table columns)."""
         self.sort_column = column
         self.sort_reverse = reverse
-        self._drawn = None
+        self._seen = None
         self._update_points(self.app.state)
 
     def on_data_table_header_selected(self, event: DataTable.HeaderSelected) -> None:

@@ -20,6 +20,23 @@ from ...scan.precision import Precision, goal_of, initial_batches, is_met
 STATUSES = ("queued", "running", "done", "cached", "failed", "stopped")
 #: the glyphs of :func:`sparkline`, lowest to highest
 _BLOCKS = "▁▂▃▄▅▆▇█"
+#: events that change a point's row in the points table
+_ROW_EVENTS = frozenset(
+    {
+        "point_queued",
+        "point_started",
+        "point_cached",
+        "point_retried",
+        "point_finished",
+        "point_failed",
+        "point_stopped",
+        "batch_finished",
+    }
+)
+#: events that change what the plot shows (values and terminal statuses)
+_DATA_EVENTS = frozenset(
+    {"point_finished", "point_failed", "point_stopped", "point_cached", "batch_finished"}
+)
 #: most recent warnings and errors kept
 WARNINGS_KEPT = 100
 #: most recent throughput samples kept for the sparkline
@@ -160,8 +177,12 @@ class ScanState:
         self.warnings: deque = deque(maxlen=WARNINGS_KEPT)  # (level, text)
         self.throughput: deque = deque(maxlen=THROUGHPUT_KEPT)  # ions/s of finished units
         self.value_names: list[str] = []  # extracted value columns, in the order seen
-        #: changes with every event applied (the views redraw when it changes)
-        self.version = 0
+        #: bumped by every event (the strip and the workers panel follow this one)
+        self.live_version = 0
+        #: bumped by the events that change a point's row (the points table follows this)
+        self.rows_version = 0
+        #: bumped by the events that change the plotted data (the plot follows this one)
+        self.data_version = 0
         self._handlers = {
             "scan_started": self._on_scan_started,
             "point_queued": self._on_queued,
@@ -184,9 +205,14 @@ class ScanState:
         """Take one event (see :mod:`srim.scan.events`) into the state. Unknown kinds are
         ignored; events of unknown points are ignored."""
         handler = self._handlers.get(event.kind)
-        if handler is not None:
-            handler(event)
-            self.version += 1
+        if handler is None:
+            return
+        handler(event)
+        self.live_version += 1
+        if event.kind in _ROW_EVENTS:
+            self.rows_version += 1
+        if event.kind in _DATA_EVENTS:
+            self.data_version += 1
 
     def _row(self, index):
         return self.points.get(index)

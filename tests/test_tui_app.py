@@ -14,11 +14,13 @@ from srim.scan import Scan  # noqa: E402
 from srim.scan.events import (  # noqa: E402
     PointFailed,
     PointFinished,
+    PointProgress,
     PointQueued,
     PointStarted,
     ScanFinished,
     ScanPaused,
     ScanStarted,
+    WorkerStats,
 )
 from srim.spec import RunSpec  # noqa: E402
 from srim.ui.tui.app import DashboardScreen, LogScreen, PlotScreen, ScanApp  # noqa: E402
@@ -296,5 +298,52 @@ def test_ctrl_c_while_running_stops_the_scan_the_first_time(tmp_path):
             assert stop.is_set() and app.return_code is None
             events.put(None)
             await until(lambda: app.return_code is not None)
+
+    run(scenario())
+
+
+def test_a_burst_of_progress_and_worker_stats_does_not_rebuild_the_plot(tmp_path):
+    scan = scan_of()
+    app, events, _, _ = make_app(scan, tmp_path)
+    feed_start(events, scan, tmp_path)
+    feed_result(events, scan, 0, 1.0)
+    points = scan.points()
+
+    async def scenario():
+        async with app.run_test() as pilot:
+            await until(lambda: app.screen.plot_rebuilds >= 1)
+            before = app.screen.plot_rebuilds
+            for n in range(300):  # progress and throughput: the strip moves, the plot does not
+                events.put(PointProgress(2, n, 300))
+                events.put(WorkerStats(0, 10.0 + n))
+            events.put(PointFinished(2, points[2].id, {"mean": 3.0}, 100, 1.0))  # a marker
+            await until(lambda: "mean" in app.state.points[2].values)
+            await until(lambda: app.screen.plot_rebuilds == before + 1)
+            await pilot.pause(0.6)  # a few more ticks: no further rebuilds
+            assert app.screen.plot_rebuilds == before + 1  # the one data change, drawn once
+            events.put(None)
+            await pilot.pause()
+
+    run(scenario())
+
+
+def test_a_finished_point_updates_its_table_cells_in_place(tmp_path):
+    scan = scan_of()
+    app, events, _, _ = make_app(scan, tmp_path, view="dashboard")
+    feed_start(events, scan, tmp_path)
+    feed_result(events, scan, 0, 1.0)
+
+    async def scenario():
+        async with app.run_test() as pilot:
+            await until(
+                lambda: app.screen.table.row_count == 3 and "value:mean" in app.screen.column_ids
+            )
+            rebuilt = app.screen.table_rebuilds
+            feed_result(events, scan, 2, 3.0)
+            await until(lambda: app.state.points[2].status == "done")
+            await until(lambda: app.screen.table.get_cell("2", "value:mean") == "3")
+            assert app.screen.table_rebuilds == rebuilt  # updated in place, order unchanged
+            events.put(None)
+            await pilot.pause()
 
     run(scenario())
