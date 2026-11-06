@@ -29,7 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `pysrim2 run` no longer leaves an empty output folder behind when the run fails.
 - The agent skill names the event-file DataFrames correctly (`results.exyz.df`, not `results.exyz`).
 - `srim.plot.plot_vacancies` no longer adds the primary knock-on atoms to the vacancy total: knock-ons are not vacancies, and the plotted curve is the sum of the element columns (matching "Total Target Vacancies" in VACANCY.txt).
-- `num_ions` of the output tables is SRIM's ion count rounded to the nearest integer. It was truncated, so a run of 60 ions ("Total Ions calculated = 59.93") read as 59. The raw value is kept as `metadata["ions_calculated"]`.
+- `num_ions` of the output tables is SRIM's ion count rounded to the nearest integer. It was truncated, so a run of 60 ions ("Total Ions calculated = 59.93") read as 59. The raw value is kept as `metadata["ions_calculated"]`. Values normalised by it (e.g. `plot_phonons`) change slightly.
 
 ## [0.8.0] - 2026-11-05
 
