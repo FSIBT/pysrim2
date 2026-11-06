@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `srim.rundir.RunDir` (private working copy of SRIM, `reset()`, disk usage) and `Results.directory`.
 - `srim.scan.extract`: extractors turn a run's outputs into scan columns (`register`, `get`, `available`, `resolve`, `combine`) with predefined `implant_summary`, `vacancy_at(depth_nm)`, `peak_vacancy_depth`, `sputter_yield`, `backscattered_fraction`, `transmitted_fraction`, `ions_in_layer(layer_index)` and `energy_to_recoils`.
 - `srim.scan.Scan(base, grid=, points=, extract=, ions=, seed=)` defines a parameter scan: a cartesian `grid` and/or zipped `points` over dotted keys (`ion.energy_keV`, `target[0].thickness_nm`), `points()` with a stable id per point (`spec_hash`), and a `scan:` section in `run.yaml` read by `Scan.from_yaml` / written by `Scan.to_yaml`. `srim.scan.Precision` describes a precision goal for `ions=`. Errors name the dotted key; `number_ions` and `seed` are not scan parameters.
+- `srim.scan.ScanResult`: one row per scan point (parameters, `id`, values with `<value>_err`, `n_ions`, `seeds`, `status`, `error`, `path`) with `to_parquet`, `to_csv` (a folder with `scan.csv` and `metadata.yaml`), `to_hdf5` and `plot(x, y, hue)` (matplotlib, error bars from `<value>_err`).
 
 ### Fixed
 
