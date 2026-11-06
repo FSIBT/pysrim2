@@ -107,6 +107,8 @@ class ScanApp(App):
         if self.ended and not self.holding:
             self.exit()
             return
+        if not self.screen_stack:  # starting up or shutting down: nothing to draw yet
+            return
         if isinstance(self.screen, PlotScreen | DashboardScreen):
             self.screen.update_from(self)
 
