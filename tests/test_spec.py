@@ -533,3 +533,18 @@ def test_unnamed_layer_name_agrees_between_run_yaml_and_layer(tmp_path):
     spec = RunSpec.from_dict(data)
     assert spec.target[0].name == "Si+C"
     assert trim_in_bytes(TRIM.from_spec(spec), tmp_path, "a") == trim_in_bytes(trim, tmp_path, "b")
+
+
+def test_run_yaml_accepts_a_scan_section_and_ignores_it(tmp_path):
+    spec = good()
+    text = yaml.safe_dump(
+        {"version": 1, "spec": spec, "scan": {"grid": {"ion.energy_keV": [10.0, 20.0]}}}
+    )
+    (tmp_path / "run.yaml").write_text(text)
+    loaded = RunSpec.from_yaml(tmp_path / "run.yaml")
+    assert loaded.ion.energy_keV == spec["ion"]["energy_keV"]
+    with pytest.raises(SpecError, match="unknown key 'colour'"):
+        (tmp_path / "bad.yaml").write_text(
+            yaml.safe_dump({"version": 1, "spec": spec, "colour": 1})
+        )
+        RunSpec.from_yaml(tmp_path / "bad.yaml")

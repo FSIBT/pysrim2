@@ -29,6 +29,8 @@ give a ``TRIM.IN`` that is byte-identical to the one written for the equivalent
 their defaults, plus ``description`` and ``ranges`` which are always written. The angle
 of incidence is ``ion.angle_deg`` and the random seed is ``seed`` (not in ``settings``).
 If a spec has no ``seed``, one is picked when it is loaded, and ``TRIM.run`` records it.
+A ``scan:`` section (see :class:`srim.scan.Scan`) may sit next to ``spec:``; a plain
+run ignores it.
 """
 
 import math
@@ -255,7 +257,8 @@ class RunSpec:
             raise SpecError(f"{path}: not valid YAML: {exc}") from exc
         if not isinstance(document, dict):
             raise SpecError("run file must be a mapping with the keys 'version' and 'spec'")
-        _check_keys(document, ("version", "spec", "provenance"), "")
+        # "scan" belongs to srim.scan.Scan; a plain run ignores it
+        _check_keys(document, ("version", "spec", "provenance", "scan"), "")
         if "spec" not in document:
             raise SpecError("missing required key 'spec'")
         spec = document["spec"]
