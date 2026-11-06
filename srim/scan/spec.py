@@ -27,7 +27,7 @@ import hashlib
 import itertools
 import re
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from numbers import Integral
 from pathlib import Path
 from typing import Any
@@ -72,9 +72,10 @@ class ScanPoint:
     """One point of a scan.
 
     ``index`` is its position in the scan (grid order), ``params`` maps the normalised keys
-    to the values of this point, ``spec`` is the run spec with those values applied (its
-    ``number_ions`` is the base value; the ion count of the scan is :attr:`Scan.ions`), and
-    ``id`` is :func:`spec_hash` of ``spec``.
+    to the values of this point, ``spec`` is the run spec with those values applied and
+    with ``number_ions`` set to the ion count of the point (:attr:`Scan.ions`, or the batch
+    size for a :class:`Precision`), and ``id`` is :func:`spec_hash` of ``spec`` (which does
+    not depend on the ion count).
     """
 
     index: int
@@ -251,8 +252,14 @@ class Scan:
         return names + list(self.grid or {})
 
     def points(self) -> list[ScanPoint]:
-        """All points, in order. Raises :class:`SpecError` if two points give the same run."""
+        """All points, in order. Duplicate points are rejected when the scan is built
+        (in ``__init__``), not here."""
         return list(self._points)
+
+    def _ions_per_point(self) -> int:
+        if isinstance(self.ions, Precision):
+            return self.ions.batch_ions
+        return self.ions
 
     def _expand(self) -> list[ScanPoint]:
         rows = self.rows if self.rows is not None else [{}]
@@ -270,6 +277,7 @@ class Scan:
                 params = {**row, **combo}
                 index = len(points)
                 spec = _apply(self.base, params, f"scan point {index}")
+                spec = replace(spec, number_ions=self._ions_per_point())
                 digest = spec_hash(spec)
                 if digest in first_index:
                     earlier = points[first_index[digest]].params

@@ -257,3 +257,22 @@ def test_python_callables_cannot_be_written_to_yaml(base, tmp_path):
     scan = Scan(base, extract=[mine])
     with pytest.raises(SpecError, match="cannot store"):
         scan.to_yaml(tmp_path / "run.yaml")
+
+
+def test_point_spec_carries_the_ion_count(base):
+    scan = Scan(base, grid={"ion.energy_keV": [10.0, 20.0]}, ions=500)
+    assert [p.spec.number_ions for p in scan.points()] == [500, 500]
+    assert all(p.spec.number_ions == 500 for p in Scan(base, ions=500).points())
+
+
+def test_point_spec_with_precision_uses_the_batch_size(base):
+    prec = Precision("sputter_yield", rel=0.05, batch_ions=250)
+    (point,) = Scan(base, ions=prec).points()
+    assert point.spec.number_ions == 250
+
+
+def test_ion_count_does_not_change_the_point_id(base):
+    small = Scan(base, ions=100).points()[0]
+    large = Scan(base, ions=5000).points()[0]
+    assert small.spec.number_ions != large.spec.number_ions
+    assert small.id == large.id
