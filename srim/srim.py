@@ -641,6 +641,7 @@ class TRIM:
         lightweight copy of the installed SRIM (see :class:`srim.rundir.RunDir`), so
         any number of runs can happen at the same time and the installed SRIM
         directory is never written. This method:
+
          - writes the input file to ``<run directory>/TRIM.IN``
          - launches ``<run directory>/TRIM.exe``. Uses ``wine`` if available (needed for linux and osx),
            in a private clone of the wine prefix
@@ -852,6 +853,7 @@ class SR:
         Like :meth:`TRIM.run`, this runs in a private run directory by default (the
         installed SRIM is never written); ``srim_directory=`` runs in place under a
         file lock. This method:
+
          - writes the input file to ``<run directory>/SR Module/TRIM.IN``
          - launches ``<run directory>/SR Module/SRModule.exe``. Uses ``wine`` if available (needed for linux and osx)
 
