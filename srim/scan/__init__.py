@@ -2,5 +2,15 @@
 
 from .batches import BatchInfo, MergedResults, derive_seed, run_batches
 from .precision import Precision
+from .spec import Scan, ScanPoint, spec_hash
 
-__all__ = ["BatchInfo", "MergedResults", "Precision", "derive_seed", "run_batches"]
+__all__ = [
+    "BatchInfo",
+    "MergedResults",
+    "Precision",
+    "Scan",
+    "ScanPoint",
+    "derive_seed",
+    "run_batches",
+    "spec_hash",
+]
