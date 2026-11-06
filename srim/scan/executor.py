@@ -13,6 +13,7 @@ Layout of a scan folder::
     points/<id[:16]>/          one point's outputs and run.yaml; error.log if an attempt failed
     points/<id[:16]>/batches/<b>/   the batches of a point with a precision target
     result/                    scan.csv and metadata.yaml (ScanResult.to_csv)
+    cache/                     the result cache (unless cache=False or another folder is named)
 
 Seeds: a point runs with ``derive_seed(base_seed, int(id[:15], 16))``, so a point keeps its
 seed when points are added or reordered. Batch ``b`` of a point with a precision target
@@ -32,6 +33,12 @@ reaches SRIM; the worker then stops its wine server; SIGKILL after a grace perio
 points are kept; the others get status ``stopped`` (a precision point keeps the partial
 estimate of its finished batches). POSIX only for the process groups; on Windows
 ``taskkill /T`` ends each worker and its children.
+
+Result cache (:mod:`srim.scan.cache`): before a unit runs, its key (the run spec and seed) is
+looked up in the cache; a hit is linked into the unit's folder and no worker runs it
+(``point_cached``). Otherwise the unit's key is locked (without waiting: a unit whose key
+another process is computing waits, and is reused once that run is stored) and the run is
+stored when it succeeds. Failed runs are never stored.
 
 Scripts that use the default ``spawn`` start method of the workers (macOS, Windows) must
 guard their entry point with ``if __name__ == "__main__":``.
@@ -66,8 +73,10 @@ from ..paths import srim_dir
 from ..rundir import RunDir
 from ..spec import RunSpec, SpecError
 from .batches import MAX_SEED, BatchInfo, MergedResults, derive_seed
+from .cache import RunCache, cache_key, cache_root, current_srim_sha, materialise
 from .events import (
     BatchFinished,
+    PointCached,
     PointFailed,
     PointFinished,
     PointProgress,
@@ -146,7 +155,10 @@ def run_scan(
         custom back ends. Default: ``TRIM.from_spec(spec).run(...)`` in a private run
         directory.
     cache : optional
-        reserved for the result cache (Task 8); accepted and ignored for now.
+        the result cache (see :mod:`srim.scan.cache`). ``None`` (the default): the folder
+        named by ``$PYSRIM2_CACHE``, else ``<scan_dir>/cache``. ``False``: no cache. A path:
+        that folder (it must be empty or a pysrim2 cache). Runs found in the cache are not
+        computed again; a rerun of a finished scan therefore computes nothing.
     retries : :obj:`int`
         how often a failed unit (a point, or a batch) is run again before it is reported as
         failed (default 1)
@@ -171,7 +183,6 @@ def run_scan(
         )
     workers = _worker_count(workers)
     retries = _retry_count(retries)
-    del cache  # the result cache is Task 8
     if runner is None:
         _require_srim()
         _prune_old_runs()
@@ -189,6 +200,7 @@ def run_scan(
         )
     )
     folder = _new_folder(scan_dir)
+    store = _open_cache(cache, folder)
     recorded.to_yaml(folder / "scan.yaml", provenance={"pysrim2_version": __version__})
     run = _ScanRun(
         recorded,
@@ -199,6 +211,7 @@ def run_scan(
         retries=retries,
         on_event=on_event,
         stop=stop_event if stop_event is not None else threading.Event(),
+        cache=store,
     )
     with _stop_on_signals(run.stop):
         return run.execute()
@@ -338,7 +351,9 @@ class _ScanRun:
     planned so far, ``finished[index]`` maps the finished batches to their wall time.
     """
 
-    def __init__(self, scan, folder, *, workers, base_seed, runner, retries, on_event, stop):
+    def __init__(
+        self, scan, folder, *, workers, base_seed, runner, retries, on_event, stop, cache=None
+    ):
         self.scan = scan
         self.folder = folder
         self.points = scan.points()
@@ -348,6 +363,14 @@ class _ScanRun:
         self.retries = retries
         self.on_event = on_event
         self.stop = stop
+        self.cache = cache
+        self.srim_sha = current_srim_sha() if cache is not None else None
+        #: (index, batch) -> (key, lock) of the units this run computes (cache in use)
+        self.locks: dict[tuple[int, int], tuple[str, object]] = {}
+        #: units whose key another process is computing (they wait, without a worker)
+        self.waiting: list[tuple] = []
+        #: points with at least one unit computed by a worker (the others may be cached)
+        self.ran: set[int] = set()
         self.extract = combine(scan.extract)
         self.names = set(scan.param_names) | _RESERVED
         self.seeds = [derive_seed(base_seed, int(p.id[:15], 16)) for p in self.points]
@@ -387,6 +410,8 @@ class _ScanRun:
         self._emit(ScanStarted(len(self.points), self.n_workers, self.base_seed, str(self.folder)))
         for point in self.points:
             self._emit(PointQueued(point.index, point.id))
+        for folder in self.dirs:  # a point's folder is replaced by its new run
+            shutil.rmtree(folder, ignore_errors=True)
         try:
             if self.stop.is_set():  # stopped before the start: no worker is started
                 self._halt()
@@ -396,6 +421,7 @@ class _ScanRun:
                 self._loop()
         finally:
             self._shutdown()
+            self._release_all()
         self._settle_unfinished()
         rows = [self.rows[point.index] for point in self.points]
         result = ScanResult.from_rows(self.scan, rows, base_dir=self.folder)
@@ -416,8 +442,9 @@ class _ScanRun:
                 self._halt()
                 return
             self._restart_dead()
+            self._poll_waiting()
             self._dispatch()
-            if not self._busy() and not self.pending:
+            if not self._busy() and not self.pending and not self.waiting:
                 return
             self._handle(self._next(_POLL_SECONDS))
             self._reap()
@@ -454,19 +481,33 @@ class _ScanRun:
                 self.workers[ident] = self._spawn(ident)
 
     def _dispatch(self):
-        for worker in self.workers.values():
-            if not self.pending or self.stop.is_set():
-                return
-            if worker.busy or not worker.process.is_alive():
+        """Hand the pending units out: cache hits finish at once, misses go to idle workers."""
+        while self.pending and not self.stop.is_set():
+            unit = self.pending.popleft()
+            verdict = self._admit(unit)
+            if verdict == "hit":
                 continue
-            index, batch, attempt = self.pending.popleft()
-            self._send(worker, index, batch, attempt)
+            if verdict == "wait":
+                self.waiting.append(unit)
+                continue
+            worker = self._idle_worker()
+            if worker is None:
+                self.pending.appendleft(unit)
+                return
+            self._send(worker, *unit)
+
+    def _idle_worker(self):
+        for worker in self.workers.values():
+            if not worker.busy and worker.process.is_alive():
+                return worker
+        return None
 
     def _send(self, worker, index, batch, attempt):
         point = self.points[index]
         out = self._unit_dir(index, batch)
-        if attempt == 1:  # a new scan may reuse the folder of an old one: start clean
-            shutil.rmtree(self.dirs[index] if batch == 0 else out, ignore_errors=True)
+        self.ran.add(index)
+        if attempt == 1:  # the unit's folder starts clean (a point's folder was cleared)
+            shutil.rmtree(out, ignore_errors=True)
         out.mkdir(parents=True, exist_ok=True)
         worker.current = (index, batch, attempt, time.monotonic())
         spec = self._unit_spec(index, batch)
@@ -496,15 +537,22 @@ class _ScanRun:
         if worker is None or worker.current is None or worker.current[:3] != unit:
             return  # stale: the worker was already stopped or replaced
         worker.current = None
-        if index in self.rows:  # the point is settled (failed): its other batches are moot
-            return
         if kind == "done":
-            if self.precision is None:
-                self._finished(worker, index, attempt, message[5])
-            else:
-                self._batch_finished(worker, index, batch, attempt, message[5])
-        elif not self.stopping:  # an error while stopping is the stop itself
+            self._store(index, batch)  # a finished run is kept, even if its point settled
+            if index in self.rows:  # the point is settled (failed): its other batches are moot
+                return
+            self._complete(worker, index, batch, attempt, message[5])
+        elif index in self.rows or self.stopping:  # no retry: the unit is over
+            self._retire(index, batch)
+        else:
             self._failed(index, batch, attempt, message[5], message[6])
+
+    def _complete(self, worker, index, batch, attempt, seconds):
+        """A unit's outputs are in its folder (run by ``worker``, or taken from the cache)."""
+        if self.precision is None:
+            self._finished(worker, index, attempt, seconds)
+        else:
+            self._batch_finished(worker, index, batch, attempt, seconds)
 
     def _reap(self):
         """Attempts whose worker died without a word count as failed.
@@ -551,6 +599,8 @@ class _ScanRun:
                 _signal_worker(worker, _SIGKILL)
                 worker.current = None
         self.pending.clear()
+        self.waiting = []
+        self._release_idle()
 
     def _shutdown(self):
         """Stop every worker process; the ones still running a unit are killed."""
@@ -613,10 +663,105 @@ class _ScanRun:
         done = sorted(self.finished[index])
         return ",".join(str(derive_seed(self.seeds[index], b)) for b in done) or None
 
+    # -- the result cache --------------------------------------------------------------
+
+    def _key(self, index, batch):
+        spec = self._unit_spec(index, batch)
+        return cache_key(spec, spec.seed)
+
+    def _status(self, index, status):
+        """``cached`` for a point none of whose units a worker ran, else ``status``."""
+        return status if index in self.ran else "cached"
+
+    def _admit(self, unit):
+        """Decide how a unit runs: ``"hit"`` (taken from the cache and completed now),
+        ``"run"`` (a worker runs it; its key is locked by this run) or ``"wait"`` (another
+        process holds the key: the unit is tried again later, without a worker)."""
+        index, batch, _attempt = unit
+        if self.cache is None or (index, batch) in self.locks:
+            return "run"
+        key = self._key(index, batch)
+        if self._hit(index, batch, key):
+            return "hit"
+        lock = self.cache.try_lock(key)
+        if lock is None:
+            return "wait"
+        # the other process may have stored the run while we were getting the lock
+        if self._hit(index, batch, key):
+            lock.release()
+            return "hit"
+        self.locks[(index, batch)] = (key, lock)
+        return "run"
+
+    def _hit(self, index, batch, key) -> bool:
+        """Use the cached run of ``key`` for the unit, if there is one (and it can be linked)."""
+        entry = self.cache.lookup(key, self.srim_sha)
+        if entry is None:
+            return False
+        try:
+            shutil.rmtree(self._unit_dir(index, batch), ignore_errors=True)
+            materialise(entry, self._unit_dir(index, batch))
+        except OSError as exc:
+            log.warning(
+                "scan point %d: cached run %s cannot be used (%s); it is computed again",
+                index,
+                key[:12],
+                exc,
+            )
+            return False
+        self._emit(PointCached(index, self.points[index].id, batch))
+        self._complete(None, index, batch, 1, 0.0)
+        return True
+
+    def _poll_waiting(self):
+        """Units that waited for another process's key: taken when it is stored or free."""
+        waiting, self.waiting = self.waiting, []
+        for unit in waiting:
+            if unit[0] in self.rows:
+                continue
+            verdict = self._admit(unit)
+            if verdict == "wait":
+                self.waiting.append(unit)
+            elif verdict == "run":
+                self.pending.append(unit)
+
+    def _store(self, index, batch):
+        """A unit's run succeeded: store it under its key and release the key."""
+        held = self.locks.pop((index, batch), None)
+        if held is None:
+            return
+        key, lock = held
+        try:
+            self.cache.store(key, self._unit_dir(index, batch))
+        except OSError as exc:
+            log.warning("scan point %d: the run could not be cached (%s)", index, exc)
+        finally:
+            lock.release()
+
+    def _retire(self, index, batch):
+        """A unit will not run again: release its key."""
+        held = self.locks.pop((index, batch), None)
+        if held is not None:
+            held[1].release()
+
+    def _release_idle(self, index=None):
+        """Release the keys of the units (of ``index``, or all) that no worker is running."""
+        running = {w.current[:2] for w in self.workers.values() if w.current is not None}
+        for unit in list(self.locks):
+            if (index is None or unit[0] == index) and unit not in running:
+                self._retire(*unit)
+
+    def _release_all(self):
+        """Release every key (the workers are down)."""
+        for unit in list(self.locks):
+            self._retire(*unit)
+
     # -- outcomes of one attempt -------------------------------------------------------
 
     def _finished(self, worker, index, attempt, seconds):
-        """A fixed-count point's run is done: extract its values and record the row."""
+        """A fixed-count point's run is done: extract its values and record the row.
+
+        ``worker`` is None for a run taken from the cache."""
         point = self.points[index]
         out = self.dirs[index]
         n_ions = point.spec.number_ions
@@ -633,7 +778,7 @@ class _ScanRun:
             return
         self.rows[index] = {
             "index": index,
-            "status": "done",
+            "status": self._status(index, "done"),
             "n_ions": n_ions,
             "seeds": str(self.seeds[index]),
             "path": str(out),
@@ -642,8 +787,9 @@ class _ScanRun:
         }
         self.n_done += 1
         self._emit(PointFinished(index, point.id, values, n_ions, seconds))
-        ions_per_s = n_ions / seconds if seconds > 0 else None
-        self._emit(WorkerStats(worker.ident, ions_per_s))
+        if worker is not None:
+            ions_per_s = n_ions / seconds if seconds > 0 else None
+            self._emit(WorkerStats(worker.ident, ions_per_s))
 
     def _batch_finished(self, worker, index, batch, attempt, seconds):
         """One batch of a precision point is done: extract its values, and when all the
@@ -662,7 +808,8 @@ class _ScanRun:
         self.batch_values[(index, batch)] = values
         self.finished[index][batch] = seconds
         self._emit(PointProgress(index, self._done_ions(index), self._planned_ions(index)))
-        self._emit(WorkerStats(worker.ident, size / seconds if seconds > 0 else None))
+        if worker is not None:
+            self._emit(WorkerStats(worker.ident, size / seconds if seconds > 0 else None))
         if len(self.finished[index]) == len(self.plan[index]):
             self._decide(index, batch, attempt)
 
@@ -721,7 +868,7 @@ class _ScanRun:
         row_values = {**values, **{f"{name}_err": err for name, err in errs.items()}}
         self.rows[index] = {
             "index": index,
-            "status": status,
+            "status": self._status(index, status),
             "n_ions": ions,
             "seeds": self._row_seeds(index),
             "path": str(self.dirs[index]),
@@ -787,6 +934,8 @@ class _ScanRun:
         point = self.points[index]
         self._emit(PointFailed(index, point.id, summary, attempt, final=True))
         self.pending = deque(unit for unit in self.pending if unit[0] != index)
+        self.waiting = [unit for unit in self.waiting if unit[0] != index]
+        self._release_idle(index)
         self.rows[index] = {
             "index": index,
             "status": "failed",
@@ -887,6 +1036,16 @@ class _ScanRun:
 
 
 # -- helpers -------------------------------------------------------------------------------
+
+
+def _open_cache(cache, folder):
+    """The :class:`~srim.scan.cache.RunCache` that ``cache=`` names, prepared, or None."""
+    root = cache_root(cache, folder)
+    if root is None:
+        return None
+    store = RunCache(root)
+    store.prepare()
+    return store
 
 
 def _summary(exc) -> str:
