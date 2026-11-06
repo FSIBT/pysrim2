@@ -378,3 +378,43 @@ def test_clear_cache_refuses_a_folder_that_is_not_a_cache(tmp_path):
     with pytest.raises(ValueError, match="not a pysrim2 result cache"):
         clear_cache(folder)
     assert (folder / "thesis.txt").read_text() == "keep me"
+
+
+def test_scans_creating_the_same_cache_at_once_all_succeed(tmp_path):
+    import threading
+
+    root = tmp_path / "cache"
+    barrier = threading.Barrier(8)
+    errors = []
+
+    def create():
+        barrier.wait(timeout=10)
+        try:
+            RunCache(root).prepare()
+        except Exception as exc:  # noqa: BLE001 - collected for the assertion
+            errors.append(exc)
+
+    for _ in range(20):
+        threads = [threading.Thread(target=create) for _ in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=10)
+        assert errors == []
+        clear_cache(root)
+        for p in sorted(root.rglob("*"), reverse=True):
+            p.rmdir() if p.is_dir() else p.unlink()
+        root.rmdir()
+
+
+def test_a_cache_being_created_is_not_mistaken_for_a_foreign_folder(tmp_path):
+    root = tmp_path / "cache"
+    (root / "locks").mkdir(parents=True)
+    (root / ".CACHEDIR.TAG.0123abcd").write_text("half")
+    RunCache(root).prepare()
+    assert (root / "CACHEDIR.TAG").is_file()
+    foreign = tmp_path / "data"
+    foreign.mkdir()
+    (foreign / "notes.txt").write_text("mine")
+    with pytest.raises(ValueError):
+        RunCache(foreign).prepare()

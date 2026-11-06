@@ -158,14 +158,22 @@ class RunCache:
         """Create the folder and its tag. Refuses a non-empty folder that is not a cache."""
         root = self.root
         if root.exists() and not is_cache(root):
-            if not root.is_dir() or any(root.iterdir()):
+            # another process may be creating the cache right now: only its own layout
+            # (tag being written, locks, tmp) is tolerated in an untagged folder
+            if not root.is_dir() or any(
+                not (p.name in (TAG_NAME, "locks", "tmp") or p.name.startswith(f".{TAG_NAME}."))
+                for p in root.iterdir()
+            ):
                 raise ValueError(
                     f"{root} is not a pysrim2 result cache (not empty, and no pysrim2 "
                     f"{TAG_NAME}); choose another folder"
                 )
         root.mkdir(parents=True, exist_ok=True)
         if not is_cache(root):
-            (root / TAG_NAME).write_text(_TAG_TEXT, encoding="utf-8")
+            # atomic, so a concurrent scan never reads a half-written tag
+            part = root / f".{TAG_NAME}.{uuid.uuid4().hex}"
+            part.write_text(_TAG_TEXT, encoding="utf-8")
+            os.replace(part, root / TAG_NAME)
         (root / "locks").mkdir(exist_ok=True)
         (root / "tmp").mkdir(exist_ok=True)
 
