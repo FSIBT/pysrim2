@@ -210,7 +210,7 @@ def build_parser() -> argparse.ArgumentParser:
         "prepare",
         help="write the job folders and submit.sbatch of a scan for a Slurm cluster",
         description="Write a scan folder that a cluster runs with a job array (see "
-        "srim.scan.prepare). Fixed ion counts only.",
+        "srim.scan.prepare_slurm). Fixed ion counts only.",
         epilog="exit codes: 0 written; 2 bad input (spec, --set, jobs, or not a scan folder)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -233,7 +233,7 @@ def build_parser() -> argparse.ArgumentParser:
         "collect",
         help="build the result of a prepared scan once its tasks are done",
         description="Collect the outputs of a prepared scan's job folders into its result "
-        "(see srim.scan.collect).",
+        "(see srim.scan.collect_slurm).",
         epilog=SCAN_EXIT_CODES,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -883,7 +883,7 @@ def _scan_run(args) -> int:
 
 
 def _scan_prepare(args) -> int:
-    from srim.scan import prepare
+    from srim.scan import prepare_slurm
     from srim.scan.slurm import JOBS_DIR, SUBMIT_FILE
     from srim.spec import SpecError
 
@@ -899,7 +899,7 @@ def _scan_prepare(args) -> int:
         print(problem, file=sys.stderr)
         return EXIT_BAD_INPUT
     try:
-        prepare(scan, folder, jobs=args.jobs)
+        prepare_slurm(scan, folder, jobs=args.jobs)
     except (SpecError, ValueError, FileExistsError) as exc:
         print(f"{folder}: {exc}", file=sys.stderr)
         return EXIT_BAD_INPUT
@@ -913,13 +913,13 @@ def _scan_prepare(args) -> int:
 
 
 def _scan_collect(args) -> int:
-    from srim.scan import collect
+    from srim.scan import collect_slurm
     from srim.scan.result import STATUSES
     from srim.spec import SpecError
 
     folder = Path(os.path.abspath(args.dir))
     try:
-        result = collect(folder, cache=_cache_arg(args))
+        result = collect_slurm(folder, cache=_cache_arg(args))
     except (FileNotFoundError, SpecError, ValueError) as exc:
         print(f"{folder}: {exc}", file=sys.stderr)
         return EXIT_BAD_INPUT

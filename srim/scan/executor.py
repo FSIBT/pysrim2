@@ -225,7 +225,7 @@ def run_scan(
         ``"local"`` (the default) runs on this machine. ``"container"`` runs each unit in its
         own container of the pysrim2 image (``pysrim2 run-job``, see
         :mod:`srim.scan.backends`); the events and the result are the same. Slurm is not a
-        back end of this function: see :func:`srim.scan.prepare`.
+        back end of this function: see :func:`srim.scan.prepare_slurm`.
     scan_dir : path-like, optional
         the scan folder (made if missing). Default: a new ``./scan-<UTC time>`` folder. An
         existing folder is reused: ``scan.yaml`` is overwritten and each point's folder

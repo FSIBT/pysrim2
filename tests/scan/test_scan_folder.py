@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from srim.output import Results
-from srim.scan import Scan, prepare, run_scan
+from srim.scan import Scan, prepare_slurm, run_scan
 from srim.scan.executor import LOCK_NAME, MARKER_NAME, ScanBusy, scan_lock
 from srim.spec import RunSpec
 
@@ -48,7 +48,7 @@ def test_a_run_marks_its_folder_and_releases_the_lock(tmp_path):
 
 
 def test_prepare_marks_the_folder(tmp_path):
-    folder = prepare(one_point_scan(), tmp_path / "slurm")
+    folder = prepare_slurm(one_point_scan(), tmp_path / "slurm")
     assert (folder / MARKER_NAME).is_file()
 
 

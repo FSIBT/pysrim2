@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 
 from srim.output import Results
-from srim.scan import Precision, Scan, ScanResult, collect, prepare, run_scan
+from srim.scan import Precision, Scan, ScanResult, collect_slurm, prepare_slurm, run_scan
 from srim.scan.backends import read_job, run_job
 from srim.scan.extract import register
 from srim.scan.batches import MergedResults
@@ -96,7 +96,7 @@ def run_all_jobs(folder, runner=fixture_runner):
 
 def test_prepare_writes_the_scan_one_job_per_point_and_the_array_script(tmp_path):
     scan = scan_of()
-    folder = prepare(scan, tmp_path / "s")
+    folder = prepare_slurm(scan, tmp_path / "s")
     recorded = Scan.from_yaml(folder / "scan.yaml")
     assert recorded.seed == 7
     assert [p.id for p in recorded.points()] == [p.id for p in scan.points()]
@@ -120,7 +120,7 @@ def test_prepare_writes_the_scan_one_job_per_point_and_the_array_script(tmp_path
 
 def test_jobs_deal_the_points_round_robin(tmp_path):
     scan = scan_of()
-    folder = prepare(scan, tmp_path / "s", jobs=2)
+    folder = prepare_slurm(scan, tmp_path / "s", jobs=2)
     names = [[name for name, _ in read_job(j)] for j in sorted((folder / "jobs").iterdir())]
     ids = [p.id[:16] for p in scan.points()]
     assert names == [[ids[0], ids[2]], [ids[1], ids[3]]]
@@ -129,7 +129,7 @@ def test_jobs_deal_the_points_round_robin(tmp_path):
 
 def test_without_a_base_seed_prepare_records_one(tmp_path):
     scan = Scan(BASE, grid={"ion.energy_keV": [10.0, 20.0]})
-    folder = prepare(scan, tmp_path / "s")
+    folder = prepare_slurm(scan, tmp_path / "s")
     seed = Scan.from_yaml(folder / "scan.yaml").seed
     assert isinstance(seed, int) and seed >= 1
 
@@ -139,26 +139,26 @@ def test_precision_targets_are_refused(tmp_path):
         ions=Precision(target="mean_depth_A", rel=0.05, min_ions=10, max_ions=20, batch_ions=10)
     )
     with pytest.raises(SpecError, match="use ions= for Slurm"):
-        prepare(scan, tmp_path / "s")
+        prepare_slurm(scan, tmp_path / "s")
 
 
 @pytest.mark.parametrize("jobs", [0, -1, 2.5, True, 5])
 def test_a_bad_job_count_is_refused(tmp_path, jobs):
     with pytest.raises(SpecError, match="jobs"):
-        prepare(scan_of(), tmp_path / "s", jobs=jobs)
+        prepare_slurm(scan_of(), tmp_path / "s", jobs=jobs)
 
 
 def test_a_prepared_folder_is_not_prepared_again(tmp_path):
-    prepare(scan_of(), tmp_path / "s")
+    prepare_slurm(scan_of(), tmp_path / "s")
     with pytest.raises(FileExistsError, match="already holds a prepared scan"):
-        prepare(scan_of(), tmp_path / "s")
+        prepare_slurm(scan_of(), tmp_path / "s")
 
 
 # -- running the job folders and collecting -----------------------------------------------------
 
 
 def test_run_job_skips_the_units_that_are_done(tmp_path):
-    folder = prepare(scan_of(), tmp_path / "s", jobs=2)
+    folder = prepare_slurm(scan_of(), tmp_path / "s", jobs=2)
     assert run_all_jobs(folder) == [0, 0]
     calls = []
 
@@ -172,9 +172,9 @@ def test_run_job_skips_the_units_that_are_done(tmp_path):
 
 def test_collect_after_all_jobs_equals_a_local_run(tmp_path):
     scan = scan_of()
-    folder = prepare(scan, tmp_path / "s", jobs=2)
+    folder = prepare_slurm(scan, tmp_path / "s", jobs=2)
     run_all_jobs(folder)
-    collected = collect(folder, cache=False)
+    collected = collect_slurm(folder, cache=False)
     local = run_scan(scan, workers=2, runner=fixture_runner, scan_dir=tmp_path / "l", cache=False)
     assert isinstance(collected, ScanResult)
     assert collected.table["status"].tolist() == ["done"] * 4
@@ -190,12 +190,12 @@ def test_collect_after_all_jobs_equals_a_local_run(tmp_path):
 
 def test_collect_reports_failed_and_not_run_points(tmp_path):
     scan = scan_of(energies=(10.0, 20.0, 30.0))
-    folder = prepare(scan, tmp_path / "s")
+    folder = prepare_slurm(scan, tmp_path / "s")
     jobs = sorted((folder / "jobs").iterdir())
     run_job(jobs[0], runner=failing_at_20)  # 10 keV: done
     run_job(jobs[1], runner=failing_at_20)  # 20 keV: failed
     # 30 keV: its job is never run
-    result = collect(folder, cache=False)
+    result = collect_slurm(folder, cache=False)
     assert result.table["status"].tolist() == ["done", "failed", "missing"]
     assert result.table["error"].iloc[1] == "ValueError: SRIM said no second line"
     assert (folder / "points" / scan.points()[1].id[:16] / "error.log").is_file()
@@ -206,9 +206,9 @@ def test_collect_reports_failed_and_not_run_points(tmp_path):
 
 def test_collected_finished_runs_are_cached_for_a_local_run(tmp_path):
     scan = scan_of()
-    folder = prepare(scan, tmp_path / "s", jobs=2)
+    folder = prepare_slurm(scan, tmp_path / "s", jobs=2)
     run_all_jobs(folder)
-    collected = collect(folder)  # default cache: <scan folder>/cache
+    collected = collect_slurm(folder)  # default cache: <scan folder>/cache
     assert (folder / "cache" / "CACHEDIR.TAG").is_file()
     local = run_scan(
         scan,
@@ -223,25 +223,25 @@ def test_collected_finished_runs_are_cached_for_a_local_run(tmp_path):
 
 
 def test_collect_reads_a_python_extractor_that_cannot_be_imported(tmp_path):
-    folder = prepare(scan_of(energies=(10.0,)), tmp_path / "s")
+    folder = prepare_slurm(scan_of(energies=(10.0,)), tmp_path / "s")
     text = (folder / "scan.yaml").read_text(encoding="utf-8")
     text = text.replace("implant_summary", "python:no_such_module_for_pysrim2:f")
     (folder / "scan.yaml").write_text(text, encoding="utf-8")
     with pytest.raises(SpecError, match="cannot import"):
-        collect(folder, cache=False)
+        collect_slurm(folder, cache=False)
 
 
 def test_collect_needs_a_prepared_scan(tmp_path):
     with pytest.raises(FileNotFoundError, match="prepare the scan first"):
-        collect(tmp_path / "nothing", cache=False)
+        collect_slurm(tmp_path / "nothing", cache=False)
 
 
 def test_collect_runs_extractors_that_need_the_run_spec(tmp_path):
     """ions_in_layer reads the layer edges from the run spec the collected results carry."""
     scan = scan_of(energies=(10.0, 20.0), extract=[{"ions_in_layer": {"layer_index": 0}}])
-    folder = prepare(scan, tmp_path / "s")
+    folder = prepare_slurm(scan, tmp_path / "s")
     run_all_jobs(folder)
-    collected = collect(folder, cache=False)
+    collected = collect_slurm(folder, cache=False)
     assert collected.table["status"].tolist() == ["done", "done"]
     values = collected.table["fraction_of_stopped_ions_in_layer_0"].tolist()
     assert all(0.0 <= float(v) <= 1.0 for v in values)
@@ -307,7 +307,7 @@ def batch_state(tmp_path, monkeypatch):
 
 
 def test_prepare_puts_each_batch_of_a_point_in_its_own_unit(tmp_path):
-    folder = prepare(batched_scan(), tmp_path / "s")
+    folder = prepare_slurm(batched_scan(), tmp_path / "s")
     units = [name for job in sorted((folder / "jobs").iterdir()) for name, _ in read_job(job)]
     assert len(units) == 6  # two points of ceil(25 / 10) = 3 batches
     assert len(set(units)) == 6
@@ -318,9 +318,9 @@ def test_prepare_puts_each_batch_of_a_point_in_its_own_unit(tmp_path):
 
 def test_collect_of_batches_equals_a_local_run(tmp_path, batch_state):
     scan = batched_scan()
-    folder = prepare(scan, tmp_path / "s", jobs=4)
+    folder = prepare_slurm(scan, tmp_path / "s", jobs=4)
     run_all_jobs(folder, seeded_runner)
-    collected = collect(folder, cache=False)
+    collected = collect_slurm(folder, cache=False)
     local = run_scan(scan, workers=3, runner=seeded_runner, scan_dir=tmp_path / "l", cache=False)
     assert collected.table["status"].tolist() == ["done", "done"]
     for column in ("seeds", "n_ions", "seeded_value", "seeded_value_err"):
@@ -330,18 +330,18 @@ def test_collect_of_batches_equals_a_local_run(tmp_path, batch_state):
 
 
 def test_collect_reports_a_point_with_a_failed_batch(tmp_path, batch_state):
-    folder = prepare(batched_scan(), tmp_path / "s")
+    folder = prepare_slurm(batched_scan(), tmp_path / "s")
     run_all_jobs(folder, failing_small_batches)
-    collected = collect(folder, cache=False)
+    collected = collect_slurm(folder, cache=False)
     assert collected.table["status"].tolist() == ["failed", "failed"]
     assert all("the last batch is broken" in e for e in collected.table["error"])
 
 
 def test_collected_batches_are_cached_for_a_local_run(tmp_path, batch_state):
     scan = batched_scan()
-    folder = prepare(scan, tmp_path / "s")
+    folder = prepare_slurm(scan, tmp_path / "s")
     run_all_jobs(folder, seeded_runner)
-    collect(folder)  # default cache: <scan folder>/cache
+    collect_slurm(folder)  # default cache: <scan folder>/cache
     again = run_scan(
         scan,
         workers=2,

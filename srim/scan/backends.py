@@ -10,7 +10,7 @@ Job folders are the unit of work for a container and for a cluster::
 :func:`run_job` (``pysrim2 run-job DIR``) runs every unit of a job folder that has no
 ``.done`` marker, one after the other, and returns the number of failed units. It is
 idempotent: a second run only runs what is left, so a job that was killed resumes. Extractors
-never run inside a job; the parent process (or :func:`srim.scan.collect`) runs them.
+never run inside a job; the parent process (or :func:`srim.scan.collect_slurm`) runs them.
 
 :class:`ContainerRunner` is the runner of ``run_scan(..., backend="container")``. For each
 unit it makes a job folder with one unit in a private temporary folder (mode 0o700),

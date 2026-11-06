@@ -5,7 +5,7 @@ from .cache import cache_key, clear_cache
 from .executor import run_scan
 from .precision import Precision
 from .result import ScanResult
-from .slurm import collect, prepare
+from .slurm import collect_slurm, prepare_slurm
 from .spec import Scan, ScanPoint, spec_hash
 
 __all__ = [
@@ -17,9 +17,9 @@ __all__ = [
     "ScanResult",
     "cache_key",
     "clear_cache",
-    "collect",
+    "collect_slurm",
     "derive_seed",
-    "prepare",
+    "prepare_slurm",
     "run_batches",
     "run_scan",
     "spec_hash",
