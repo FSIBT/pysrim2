@@ -119,6 +119,21 @@ def _warn_full_copy(what):
         )
 
 
+def _is_lone_regular_file(path, info):
+    """True for a regular file with no other hard link (used on Windows only).
+
+    ``os.lstat`` may report ``st_nlink == 1`` for every file on Windows, which would let a
+    hard link to the installed SRIM be chmod'ed; the real count is read with ``os.stat``
+    instead. Anything unclear counts as shared, so its mode is left alone.
+    """
+    if stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode):
+        return False
+    try:
+        return os.stat(path).st_nlink == 1
+    except OSError:
+        return False
+
+
 def remove_tree(path):
     """Delete the folder ``path`` robustly; return the list of paths that could not go.
 
@@ -146,7 +161,7 @@ def remove_tree(path):
         except OSError:
             # Windows refuses to delete read-only files. Never change the mode of a file
             # with other hard links: it may be a file of the installed SRIM.
-            if sys.platform == "win32" and not stat.S_ISDIR(info.st_mode) and info.st_nlink == 1:
+            if sys.platform == "win32" and _is_lone_regular_file(failed, info):
                 try:
                     os.chmod(failed, stat.S_IWRITE)
                     func(failed)
@@ -463,7 +478,7 @@ class RunDir:
             Keep the directory when leaving the ``with`` block.
         wine : bool, optional
             Clone the wine prefix; default: when ``wine`` is installed and pysrim2's
-            private prefix has been set up.
+            private prefix has been set up. Never on Windows, whatever the value.
         """
         source = Path(source) if source is not None else srim_dir()
         base = Path(os.path.abspath(base)) if base is not None else runs_base()
@@ -479,7 +494,7 @@ class RunDir:
             prefix = None
             if wine is None:
                 wine = _wine_available()
-            if wine:
+            if wine and sys.platform != "win32":  # wine prefixes are Linux-only
                 prefix = clone_wine_prefix(wine_prefix(), root / "wine")
         except BaseException:
             lock.release()

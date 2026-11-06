@@ -4,6 +4,7 @@ import concurrent.futures as cf
 import multiprocessing
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -393,6 +394,10 @@ def make_prefix(root):
     return root
 
 
+WINE_SKIP = pytest.mark.skipif(sys.platform == "win32", reason="wine prefixes are Linux-only")
+
+
+@WINE_SKIP
 def test_clone_wine_prefix_links_binaries_and_copies_state(tmp_path):
     src = make_prefix(tmp_path / "wine")
     clone = clone_wine_prefix(src, tmp_path / "clone")
@@ -416,6 +421,7 @@ def test_clone_wine_prefix_links_binaries_and_copies_state(tmp_path):
     assert (src / "user.reg").read_text().startswith("REGEDIT")
 
 
+@WINE_SKIP
 def test_clone_without_links_copies(tmp_path, monkeypatch):
     src = make_prefix(tmp_path / "wine")
     monkeypatch.setattr(rundir_module, "_warned_full_copy", False)
@@ -425,6 +431,7 @@ def test_clone_without_links_copies(tmp_path, monkeypatch):
     assert (clone / "drive_c/windows/system32/kernel32.dll").read_bytes() == b"k" * 5000
 
 
+@WINE_SKIP
 def test_run_dir_gets_a_prefix_and_stops_only_its_wineserver(installed, tmp_path, monkeypatch):
     from srim.installer import wine as wine_module
 
@@ -440,6 +447,7 @@ def test_run_dir_gets_a_prefix_and_stops_only_its_wineserver(installed, tmp_path
     assert not rd.root.exists()
 
 
+@WINE_SKIP
 def test_launch_env_and_failure_cleanup_use_the_run_prefix(tmp_path, monkeypatch):
     from srim import srim as srim_module
 
@@ -801,8 +809,57 @@ def test_remove_tree_never_changes_the_mode_of_hard_linked_files(tmp_path):
     (top / "sub").mkdir(parents=True)
     os.link(source, top / "sub" / "linked.exe")
     os.chmod(top / "sub", 0o555)  # read-only folder: the link can only go after it is writable
-    assert remove_tree(top) == [] and not top.exists()
+    if sys.platform == "win32":
+        # a read-only name cannot be deleted on Windows, and clearing the attribute would
+        # also change the shared file: the link is reported and kept
+        with pytest.warns(RuntimeWarning, match="could not delete"):
+            assert remove_tree(top) == [str(top / "sub" / "linked.exe")]
+        assert top.exists()
+    else:
+        assert remove_tree(top) == [] and not top.exists()
     assert source.read_text() == "x" and (os.stat(source).st_mode & 0o777) == 0o444
+
+
+def test_remove_tree_clears_read_only_on_windows_for_lone_files(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    # Windows branch on any OS: unlink refuses a read-only file until its attribute is
+    # cleared (simulated here), and a lone file must be cleared and removed
+    top = tmp_path / "t"
+    top.mkdir()
+    lone = top / "lone.txt"
+    lone.write_text("x")
+    os.chmod(lone, 0o444)
+    real_unlink = os.unlink
+
+    def unlink(path, *, dir_fd=None):  # rmtree may pass a name relative to dir_fd
+        if not os.stat(path, dir_fd=dir_fd).st_mode & stat.S_IWRITE:
+            raise PermissionError(13, "read-only", path)
+        return real_unlink(path, dir_fd=dir_fd)
+
+    monkeypatch.setattr(
+        rundir_module, "sys", SimpleNamespace(platform="win32", version_info=sys.version_info)
+    )
+    monkeypatch.setattr(os, "unlink", unlink)
+    assert rundir_module.remove_tree(top) == [] and not top.exists()
+
+
+def test_wine_prefix_is_never_cloned_on_windows(installed, tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    # only rundir's own view of sys is changed; wine is "installed" and asked for
+    monkeypatch.setattr(
+        rundir_module, "sys", SimpleNamespace(platform="win32", version_info=sys.version_info)
+    )
+    monkeypatch.setattr(shutil, "which", lambda name: "C:\\wine.exe")
+
+    def no_clone(*args, **kwargs):
+        raise AssertionError("a wine prefix was cloned on Windows")
+
+    monkeypatch.setattr(rundir_module, "clone_wine_prefix", no_clone)
+    assert rundir_module._wine_available() is False
+    with RunDir.create(tmp_path / "work", wine=True) as rd:
+        assert rd.wine_prefix is None
 
 
 def _prune_in_child(base):
