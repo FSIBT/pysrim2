@@ -20,6 +20,7 @@ Register your own with :func:`register`.
 
 import math
 from collections.abc import Callable, Iterable, Mapping
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -147,12 +148,41 @@ def _output_df(results, attribute, who, setting):
     return table.df
 
 
+def _trim_in_ions(directory):
+    """Number of ions requested in the ``TRIM.IN`` of ``directory``; ``None`` if unreadable.
+
+    The ion line follows the ``Ion:`` header line; its fifth field is the number of ions.
+    """
+    try:
+        lines = Path(directory, "TRIM.IN").read_bytes().decode("latin-1").splitlines()
+    except OSError:
+        return None
+    for i, line in enumerate(lines):
+        if line.startswith("Ion:") and i + 1 < len(lines):
+            fields = lines[i + 1].split()
+            try:
+                return int(float(fields[4]))
+            except (IndexError, ValueError):
+                return None
+    return None
+
+
 def _incident_ions(results):
-    """Number of incident ions: ``num_ions`` of the range table (RANGE.txt), which is
-    the requested total for merged results"""
-    count = float(results.range.metadata["num_ions"])
+    """Number of ions the calculation was asked for, the denominator of the fractions.
+
+    From the run spec (``number_ions``, set by ``TRIM.run`` and by merged results), else
+    from the ``TRIM.IN`` in the results folder, else the ion count of RANGE.txt rounded to
+    the nearest integer (``num_ions``).
+    """
+    spec = _spec_dict(getattr(results, "spec", None)) or {}
+    count = spec.get("number_ions")
+    if count is None and getattr(results, "directory", None) is not None:
+        count = _trim_in_ions(results.directory)
+    if count is None:
+        count = results.range.metadata["num_ions"]
+    count = float(count)
     if not count > 0:
-        raise ValueError(f"no incident ions recorded in the results (num_ions={count:g})")
+        raise ValueError(f"no incident ions recorded in the results (number_ions={count:g})")
     return count
 
 

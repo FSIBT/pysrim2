@@ -196,7 +196,7 @@ def test_peak_vacancy_depth_uses_element_vacancies(single):
 
 
 def test_sputter_yield_counts_atoms_per_ion():
-    results = stub(sputter=Sputter(SPUTTER), range=Range(SPUTTER))
+    results = stub(directory=SPUTTER, sputter=Sputter(SPUTTER), range=Range(SPUTTER))
     raw = results.sputter.df  # one row per sputtered atom
     expected = len(raw) / 20  # SPUTTER fixture: 20 Ar ions
     assert extract.sputter_yield(results) == {"sputter_yield_atoms_per_ion": expected}
@@ -216,17 +216,39 @@ def test_sputter_yield_requires_file():
         extract.sputter_yield(stub(sputter=None, range=Range(SPUTTER)))
 
 
-def test_backscattered_and_transmitted_fractions():
-    # thin fixture was run with 60 ions; RANGE.txt says 59.93, so the count is given here
+def test_fractions_use_requested_ions_from_trim_in():
+    # the thin folder's TRIM.IN asks for 60 ions; RANGE.txt reports 59.93
     results = stub(
+        directory=THIN,
         backscat=Backscat(THIN),
         transmit=Transmit(THIN),
-        range=SimpleNamespace(metadata={"num_ions": 60}),
+        range=Range(THIN),
     )
     back = len(results.backscat.df) / 60
     trans = len(results.transmit.df) / 60
     assert extract.backscattered_fraction(results) == {"backscattered_fraction": back}
     assert extract.transmitted_fraction(results) == {"transmitted_fraction": trans}
+
+
+def test_fractions_prefer_run_spec_number_ions():
+    results = stub(
+        directory=THIN,
+        spec={"number_ions": 100},
+        backscat=Backscat(THIN),
+        transmit=Transmit(THIN),
+        range=Range(THIN),
+    )
+    assert extract.transmitted_fraction(results) == {
+        "transmitted_fraction": len(results.transmit.df) / 100
+    }
+
+
+def test_fractions_fall_back_to_rounded_ions_calculated():
+    # no run spec and no folder: the ion count of RANGE.txt, rounded (59.93 -> 60)
+    results = stub(backscat=Backscat(THIN), range=Range(THIN))
+    assert extract.backscattered_fraction(results) == {
+        "backscattered_fraction": len(results.backscat.df) / 60
+    }
 
 
 def test_fraction_requires_file():
