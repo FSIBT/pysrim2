@@ -699,6 +699,35 @@ def test_web_run_on_a_busy_port_goes_on_as_plain(work, monkeypatch, capsys):
     assert started == [] and not (out / "events.jsonl").exists()
 
 
+def test_a_stop_request_in_the_control_file_stops_a_web_run(work, monkeypatch, capsys):
+    import srim.ui.web as web
+
+    started = work / "started"
+    monkeypatch.setenv("PYSRIM2_TEST_SLEEP", "60")  # the units run until they are stopped
+    monkeypatch.setenv("PYSRIM2_TEST_STARTED", str(started))
+    monkeypatch.setattr(web, "GRACE_SECONDS", 0.0)
+    out = work / "out"
+
+    def viewer_sends_stop_once_a_unit_runs(argv):
+        def send():
+            deadline = time.monotonic() + 60
+            while not started.exists() and time.monotonic() < deadline:
+                time.sleep(0.05)
+            with (out / web.CONTROL_FILE).open("a", encoding="utf-8") as file:
+                file.write("stop\n")
+
+        threading.Thread(target=send, daemon=True).start()
+        return FakeServerProcess()
+
+    monkeypatch.setattr(web, "start_server", viewer_sends_stop_once_a_unit_runs)
+    code = cli.main(["scan", "run", str(write_scan(work)), "--workers", "2", "--ui", "web",
+                     "--port", str(free_port()), "-o", str(out)])  # fmt: skip
+    assert code == 130
+    assert "stopped: the partial result above is kept" in capsys.readouterr().err
+    events = [json.loads(line) for line in (out / "events.jsonl").read_text().splitlines()]
+    assert events[-1]["kind"] == "scan_finished" and events[-1]["stopped"] is True
+
+
 def free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
         probe.bind(("127.0.0.1", 0))
