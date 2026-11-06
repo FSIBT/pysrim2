@@ -2588,7 +2588,7 @@ requires-dist = [
     { name = "pysrim2", extras = ["parquet", "hdf5", "plot", "tui"], marker = "extra == 'all'" },
     { name = "pyyaml" },
     { name = "tables", marker = "extra == 'hdf5'" },
-    { name = "textual", marker = "extra == 'tui'", specifier = ">=8.2.8" },
+    { name = "textual", marker = "extra == 'tui'", specifier = ">=0.86.2" },
     { name = "textual-plotext", marker = "extra == 'tui'", specifier = ">=1.0.1" },
 ]
 provides-extras = ["parquet", "hdf5", "plot", "tui", "all"]
