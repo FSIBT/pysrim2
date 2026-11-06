@@ -179,8 +179,9 @@ echo $?  # 0 all points done or cached; 1 a point failed or is missing; 2 bad in
   `{vacancy_at: {depth_nm: 50}}`). The full list with units is in `docs/scans.md`.
 - Precision targets (`precision: {target: ..., rel: 0.05, max_ions: ...}` in `scan:`) run each
   point until its error is small enough; a point at `max_ions` has status `max_ions`.
-- Results are reused: a rerun in the same folder runs nothing (status `cached`). A new folder
-  reuses nothing unless both scans name one cache (`--cache DIR` or `PYSRIM2_CACHE`).
+- Results are reused: a rerun in the same folder runs nothing (status `cached`), with or without
+  `seed`. A new folder reuses nothing unless both scans name one cache (`--cache DIR` or
+  `PYSRIM2_CACHE`) and give the same `seed`.
 - A scan folder is new or empty, or an existing scan folder (its `scan.yaml` is rewritten). Two
   scans in one folder at once: the second exits 2.
 - `--backend container` runs each point in a container of the pysrim2 image (Podman or Docker).

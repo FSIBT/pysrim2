@@ -30,7 +30,8 @@ for a plot or a report.
 - **Seeds.** The base seed (`seed`) is recorded in `scan.yaml`. Each point gets a seed
   derived from the base seed and its id, so a point keeps its seed when other points
   are added or reordered. Without `seed`, each `run_scan` draws a base seed and records
-  it. The same scan with the same seed gives the same numbers on the same platform.
+  it, unless the folder already holds the same scan (then its recorded seed is kept). The
+  same scan with the same seed gives the same numbers on the same platform.
 - **Extractors.** An extractor turns the outputs of one run into columns of the result
   (for example `mean_depth_A`). See [Extractors](#extractors).
 
@@ -342,9 +343,13 @@ Where the cache is:
 
 Consequences:
 
-- A rerun in the same scan folder computes nothing: its points have status `cached`.
+- A rerun in the same scan folder computes nothing: its points have status `cached`. This
+  holds without a `seed` too: a rerun of the same scan in the same folder reuses the base
+  seed recorded in that folder's `scan.yaml`.
 - A scan in a new folder reuses nothing, unless it shares a cache (`--cache`, or
-  `PYSRIM2_CACHE`). Set the variable once to share a cache between all your scans.
+  `PYSRIM2_CACHE`), and it needs the same base seed: give `seed` explicitly for runs to
+  be shared between folders. Set the variable once to share a cache between all your
+  scans.
 - A precision rerun with a tighter goal runs only its new batches.
 - Two scans that need the same run compute it once: the second one waits for the first
   and then uses its result.
