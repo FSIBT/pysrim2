@@ -159,9 +159,8 @@ def test_stopped_scan_exits_130_and_keeps_the_partial_result(work, monkeypatch, 
     real = srim.scan.run_scan
 
     def stop_before_start(scan, **kwargs):
-        stop = threading.Event()
-        stop.set()  # what Ctrl-C does, at once
-        return real(scan, stop_event=stop, **kwargs)
+        kwargs["stop_event"].set()  # what Ctrl-C does, at once
+        return real(scan, **kwargs)
 
     monkeypatch.setattr(srim.scan, "run_scan", stop_before_start)
     out = work / "out"
@@ -174,25 +173,104 @@ def test_stopped_scan_exits_130_and_keeps_the_partial_result(work, monkeypatch, 
     assert "stopped by Ctrl-C" in captured.err
 
 
-def test_graphical_ui_falls_back_to_plain_with_the_reason(monkeypatch, capsys):
-    class Tty(io.StringIO):
-        def isatty(self):
-            return True
+class Tty(io.StringIO):
+    def isatty(self):
+        return True
 
+
+def test_graphical_ui_falls_back_to_plain_with_the_reason(monkeypatch, capsys):
     monkeypatch.setattr(cli.importlib.util, "find_spec", lambda name: None)
     assert cli._view_for("plot") == "plain"
     assert "--ui plot: the optional textual package is not installed; using --ui plain" in (
         capsys.readouterr().err
     )
     monkeypatch.setattr(cli.importlib.util, "find_spec", lambda name: object())
-    assert cli._view_for("web") == "plain"  # capsys is not a terminal
-    assert "stdout is not a terminal" in capsys.readouterr().err
-    monkeypatch.setattr(sys, "stdout", Tty())
-    assert cli._view_for("dashboard") == "plain"
-    assert "--ui dashboard: not available yet; using --ui plain" in capsys.readouterr().err
+    assert cli._view_for("plot") == "plain"  # not a terminal (capsys is not one)
+    assert "stdin and stdout are not both terminals" in capsys.readouterr().err
+    assert cli._view_for("web") == "plain"
+    assert "--ui web: not available yet; using --ui plain" in capsys.readouterr().err
     assert cli._view_for("json") == "json"
     assert cli._view_for("plain") == "plain"
     assert capsys.readouterr().err == ""
+
+
+def test_the_terminal_views_need_textual_for_the_dashboard_and_plotext_for_the_plot(
+    monkeypatch, capsys
+):
+    monkeypatch.setattr(sys, "stdout", Tty())
+    monkeypatch.setattr(sys, "stdin", Tty())
+    available = {"textual", "textual_plotext"}
+    monkeypatch.setattr(
+        cli.importlib.util, "find_spec", lambda name: object() if name in available else None
+    )
+    assert cli._view_for("plot") == "plot"
+    assert cli._view_for("dashboard") == "dashboard"
+    available.discard("textual_plotext")
+    assert cli._view_for("plot") == "plain"
+    assert "--ui plot: the optional textual-plotext package is not installed" in (
+        capsys.readouterr().err
+    )
+    assert cli._view_for("dashboard") == "dashboard"  # it needs no plotting package
+
+
+def test_scan_run_has_a_plot_option_checked_against_the_scan(work, capsys):
+    scan = write_scan(work)
+    code = cli.main(["scan", "run", str(scan), "--ui", "plain", "--plot", "ion.nope,mean"])
+    assert code == 2
+    assert "--plot: x 'ion.nope' is not a scanned parameter" in capsys.readouterr().err
+    assert not (work / "scan-").exists()
+
+
+class FakeApp:
+    """Stands in for the Textual app: it takes the event queue and drains it, as the real
+    app does, until the scan thread's ``None``. It records what it was given."""
+
+    last = None
+
+    def __init__(self, scan, events, **kwargs):
+        self.events = events
+        self.kwargs = kwargs
+        self.kinds = []
+        FakeApp.last = self
+
+    def run(self):
+        while True:
+            event = self.events.get(timeout=GUARD_SECONDS)
+            if event is None:
+                return
+            self.kinds.append(event.kind)
+
+
+def test_a_terminal_view_runs_the_scan_in_a_thread_and_feeds_the_app(work, monkeypatch, capsys):
+    pytest.importorskip("textual")
+    monkeypatch.setattr(cli, "_view_for", lambda ui: "dashboard")
+    monkeypatch.setattr("srim.ui.tui.app.ScanApp", FakeApp)
+    out = work / "out"
+    code = cli.main(
+        ["scan", "run", str(write_scan(work)), "-o", str(out), "--plot", "ion.energy_keV,mean"]
+    )
+    assert code == 0
+    app = FakeApp.last
+    assert app.kinds[0] == "scan_started" and app.kinds[-1] == "scan_finished"
+    assert app.kwargs["view"] == "dashboard" and app.kwargs["plot"] == "ion.energy_keV,mean"
+    assert f"result: {out / 'result' / 'scan.csv'}" in capsys.readouterr().out
+    assert (out / "result" / "scan.csv").is_file()
+
+
+def test_an_app_that_fails_stops_the_scan_and_the_error_is_reported(work, monkeypatch, capsys):
+    pytest.importorskip("textual")
+
+    class Broken(FakeApp):
+        def run(self):
+            raise RuntimeError("the screen broke")
+
+    monkeypatch.setattr(cli, "_view_for", lambda ui: "plot")
+    monkeypatch.setattr("srim.ui.tui.app.ScanApp", Broken)
+    out = work / "out"
+    code = cli.main(["scan", "run", str(write_scan(work)), "-o", str(out)])
+    assert code == 1
+    assert "scan failed: the screen broke" in capsys.readouterr().err
+    assert (out / "result" / "scan.csv").is_file()  # stopped, with its partial result
 
 
 def test_output_that_is_not_a_scan_folder_exits_2_before_running(work, capsys):

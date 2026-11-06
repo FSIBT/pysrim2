@@ -18,10 +18,12 @@ import importlib
 import importlib.util
 import json
 import os
+import queue
 import re
 import shutil
 import subprocess
 import sys
+import threading
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -148,8 +150,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--ui",
         choices=("plot", "dashboard", "web", "plain", "json"),
         default="plot",
-        help="plain: a status line when it changes; json: one JSON event per line on stdout. "
-        "plot, dashboard and web need the [tui] extra and a terminal, else plain is used",
+        help="plot (default): the live plot; dashboard: the full-screen dashboard (keys: p "
+        "pause/resume, q stop, v switch view, l error log); plain: a status line when it "
+        "changes; json: one JSON event per line on stdout. plot and dashboard need the [tui] "
+        "extra and a terminal on stdin and stdout, else plain is used; web is not available yet",
+    )
+    scan_run.add_argument(
+        "--plot",
+        metavar="X,Y[,HUE]",
+        help="the plot: scanned parameter X on the x axis, extracted value Y, one series per "
+        "value of the scanned parameter HUE (default: the first and the second parameter, and "
+        "the first extracted value; 'X,Y,' gives no series). Used by --ui plot",
     )
     scan_run.add_argument(
         "--output",
@@ -460,6 +471,8 @@ SCAN_EXIT_CODES = """exit codes:
 #: the environment variable that replaces SRIM by a runner (``module:function``), tests only
 SCAN_RUNNER_VAR = "PYSRIM2_SCAN_RUNNER"
 GRAPHICAL_UIS = ("plot", "dashboard", "web")
+#: the views that run the Textual app (in a terminal)
+TERMINAL_VIEWS = ("plot", "dashboard")
 _SHARD_NAME = re.compile(r"[0-9a-f]{2}")
 _KEY_NAME = re.compile(r"[0-9a-f]{64}")
 
@@ -566,18 +579,55 @@ def _runner_from_env():
 
 
 def _view_for(ui: str) -> str:
-    """The view that runs for ``--ui``: ``plain`` or ``json``. A graphical view is not
-    available yet, so ``plain`` runs instead, with a notice on stderr."""
+    """The view that runs for ``--ui``: ``plot`` or ``dashboard`` (the Textual app, when its
+    package is installed and stdin and stdout are terminals), else ``plain`` with a notice on
+    stderr. ``json`` and ``plain`` are themselves. ``web`` is not available yet."""
     if ui not in GRAPHICAL_UIS:
         return ui
-    if importlib.util.find_spec("textual") is None:
-        reason = "the optional textual package is not installed"
-    elif not sys.stdout.isatty():
-        reason = "stdout is not a terminal"
-    else:
+    if ui == "web":
         reason = "not available yet"
+    elif importlib.util.find_spec("textual") is None:
+        reason = "the optional textual package is not installed"
+    elif ui == "plot" and importlib.util.find_spec("textual_plotext") is None:
+        reason = "the optional textual-plotext package is not installed"
+    elif not (sys.stdout.isatty() and sys.stdin.isatty()):
+        reason = "stdin and stdout are not both terminals"
+    else:
+        return ui
     print(f"--ui {ui}: {reason}; using --ui plain", file=sys.stderr)
     return "plain"
+
+
+def _run_in_app(call, events, scan, *, view, plot, stop, pause):
+    """Run ``call()`` (the scan) in a thread and the live view in this one.
+
+    The scan's events are in ``events``; ``None`` is put when the scan thread has ended, which
+    is when the app exits. If the app fails, the scan is stopped (its partial result is kept)
+    and the error is raised here, as if the scan had raised it.
+    """
+    from srim.ui.tui.app import ScanApp
+
+    outcome = {}
+
+    def work():
+        try:
+            outcome["result"] = call()
+        except BaseException as exc:  # re-raised in the calling thread below
+            outcome["error"] = exc
+        finally:
+            events.put(None)
+
+    thread = threading.Thread(target=work, name="pysrim2-scan")
+    thread.start()
+    try:
+        ScanApp(scan, events, stop_event=stop, pause_event=pause, view=view, plot=plot).run()
+    finally:
+        if thread.is_alive():  # the app failed: stop the scan, do not run it unseen
+            stop.set()
+        thread.join()
+    if "error" in outcome:
+        raise outcome["error"]
+    return outcome["result"]
 
 
 def _report_outcome(result, folder: Path, view: str, stopped: bool) -> int:
@@ -615,12 +665,18 @@ def _scan_run(args) -> int:
     from srim.scan import run_scan
     from srim.scan.executor import ScanBusy
     from srim.spec import SpecError
+    from srim.ui.tui.plot import check_plot
 
     label = args.spec or "scan.yaml"
     try:
         scan = _read_scan(args.spec, args.overrides)
     except (SpecError, OSError) as exc:
         print(f"{label}: {exc}", file=sys.stderr)
+        return EXIT_BAD_INPUT
+    try:
+        check_plot(scan.param_names, args.plot)
+    except ValueError as exc:
+        print(f"--plot: {exc}", file=sys.stderr)
         return EXIT_BAD_INPUT
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     folder = Path(args.output or f"scan-{stamp}")
@@ -637,8 +693,16 @@ def _scan_run(args) -> int:
                 file=sys.stderr,
             )
     view = _view_for(args.ui)
-    consumer = JsonLines(sys.stdout) if view == "json" else PlainProgress(sys.stdout)
+    terminal = view in TERMINAL_VIEWS
+    events = queue.Queue() if terminal else None  # the app drains it (see _run_in_app)
+    if view == "json":
+        consumer = JsonLines(sys.stdout)
+    elif terminal:
+        consumer = events.put
+    else:
+        consumer = PlainProgress(sys.stdout)
     state = {}  # "started" once the scan has begun, "stopped" from its last event
+    stop, pause = threading.Event(), threading.Event()
 
     def on_event(event):
         if event.kind == "scan_started":
@@ -647,18 +711,28 @@ def _scan_run(args) -> int:
             state["stopped"] = event.stopped
         consumer(event)
 
-    try:
-        result = run_scan(
+    def scan_call():
+        return run_scan(
             scan,
             workers=args.workers,
             backend=args.backend,
             scan_dir=folder,
             on_event=on_event,
+            stop_event=stop,
+            pause_event=pause,
             cache=_cache_arg(args),
             retries=args.retries,
             image=args.image,
             runner=_runner_from_env(),
         )
+
+    try:
+        if terminal:
+            result = _run_in_app(
+                scan_call, events, scan, view=view, plot=args.plot, stop=stop, pause=pause
+            )
+        else:
+            result = scan_call()
     except KeyboardInterrupt:
         print("cancelled", file=sys.stderr)
         return EXIT_INTERRUPTED
@@ -672,7 +746,9 @@ def _scan_run(args) -> int:
             return EXIT_BAD_INPUT
         print(f"scan failed: {exc}", file=sys.stderr)  # after scan_started: the run failed
         return EXIT_FAILED
-    return _report_outcome(result, folder, view, state.get("stopped", False))
+    # the terminal view has ended: its result is printed as plain text
+    say_view = "plain" if terminal else view
+    return _report_outcome(result, folder, say_view, state.get("stopped", False))
 
 
 def _scan_prepare(args) -> int:
