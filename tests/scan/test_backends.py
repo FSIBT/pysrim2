@@ -213,6 +213,10 @@ def fake_runtime(tmp_path, monkeypatch):
         path = bindir / name
         path.write_text(script, encoding="utf-8")
         path.chmod(0o755)
+        if sys.platform == "win32":  # Windows runs no shebang scripts: a .cmd wrapper
+            (bindir / f"{name}.cmd").write_text(
+                f'@"{sys.executable}" "{path}" %*\r\n', encoding="utf-8"
+            )
     runtime = FakeRuntime(tmp_path)
     tmpdir = tmp_path / "tmp"
     tmpdir.mkdir()

@@ -61,7 +61,8 @@ def test_two_points_run_in_one_container_each(tmp_path, monkeypatch):
     temp.mkdir()
     monkeypatch.setenv("TMPDIR", str(temp))
     monkeypatch.setattr(tempfile, "tempdir", str(temp))
-    runtime = container.find_runtime()
+    # CI builds the image with docker; podman (also on the runner) would not see it
+    runtime = os.environ.get("PYSRIM2_TEST_RUNTIME") or container.find_runtime()
     if runtime is None:
         pytest.skip("no container runtime (podman or docker) on this host")
     image = os.environ.get("PYSRIM2_IMAGE")

@@ -263,10 +263,14 @@ class ContainerRunner:
     def _is_docker(self) -> bool:
         return Path(self.runtime).name.lower().startswith("docker")
 
+    def _executable(self) -> str:
+        """The runtime's full path (on Windows a ``.cmd``/``.exe`` found via PATHEXT)."""
+        return shutil.which(self.runtime) or self.runtime
+
     def command(self, name: str, job: Path) -> list[str]:
         """The runtime's command line for one unit (``name`` names the container)."""
         mount = f"{job}:{CONTAINER_JOB}"
-        run = [self.runtime, "run", "--rm", "--name", name]
+        run = [self._executable(), "run", "--rm", "--name", name]
         if self._is_docker():
             run += ["--security-opt", f"seccomp={self.seccomp}", "-v", mount]
         else:
@@ -306,7 +310,7 @@ class ContainerRunner:
         with tempfile.TemporaryFile() as output:
             try:
                 subprocess.run(
-                    [self.runtime, "rm", "-f", name],
+                    [self._executable(), "rm", "-f", name],
                     stdin=subprocess.DEVNULL,
                     stdout=output,
                     stderr=subprocess.STDOUT,

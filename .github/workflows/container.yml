@@ -50,6 +50,7 @@ jobs:
       - name: Scan container back end (host runner)
         env:
           PYSRIM2_IMAGE: pysrim2:ci
+          PYSRIM2_TEST_RUNTIME: docker
         run: uv run pytest -m container -v tests/integration/test_scan_container.py
 
       # Docker 29's built-in seccomp profile blocks the 32-bit socket calls wine
