@@ -49,7 +49,7 @@ from pathlib import Path
 
 import yaml
 
-from ..installer.container import seccomp_profile_path
+from ..installer.container import PLATFORM, seccomp_profile_path
 from ..output import Results
 from ..rundir import remove_tree
 from ..spec import RunSpec, SpecError
@@ -270,7 +270,17 @@ class ContainerRunner:
     def command(self, name: str, job: Path) -> list[str]:
         """The runtime's command line for one unit (``name`` names the container)."""
         mount = f"{job}:{CONTAINER_JOB}"
-        run = [self._executable(), "run", "--rm", "--name", name]
+        # the image is amd64 (run it under emulation on other hosts); SRIM needs no network
+        run = [
+            self._executable(),
+            "run",
+            "--rm",
+            "--name",
+            name,
+            "--platform",
+            PLATFORM,
+            "--network=none",
+        ]
         if self._is_docker():
             run += ["--security-opt", f"seccomp={self.seccomp}", "-v", mount]
         else:

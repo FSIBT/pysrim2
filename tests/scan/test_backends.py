@@ -105,6 +105,8 @@ name = rest[rest.index("--name") + 1]
 mounts = [rest[i + 1] for i, a in enumerate(rest) if a == "-v"]
 security = [rest[i + 1] for i, a in enumerate(rest) if a == "--security-opt"]
 userns = [a for a in rest if a.startswith("--userns=")]
+platform = [rest[i + 1] for i, a in enumerate(rest) if a == "--platform"]
+network = [a for a in rest if a.startswith("--network")]
 image = rest[-4]
 tail = rest[-3:]
 job = mounts[0].split(":/data/job")[0]
@@ -112,6 +114,8 @@ kind = "docker" if Path(sys.argv[0]).name == "docker" else "podman"
 problems = []
 if tail != ["pysrim2", "run-job", "/data/job"]:
     problems.append(f"command {tail}")
+if platform != ["linux/amd64"] or network != ["--network=none"]:
+    problems.append(f"platform {platform} network {network}")
 if len(mounts) != 1 or not mounts[0].endswith(":/data/job:Z" if kind == "podman" else ":/data/job"):
     problems.append(f"mount {mounts}")
 if kind == "podman":
