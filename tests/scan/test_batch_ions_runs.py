@@ -70,8 +70,11 @@ def seeded_runner(spec):
     data = spec.to_dict()
     seed = data["seed"]
     state = Path(os.environ[STATE_VAR])
-    with open(state / "calls.jsonl", "a", encoding="utf-8") as f:
-        f.write(json.dumps({"ions": data["number_ions"], "seed": seed}) + "\n")
+    # one file per call: appends from several processes can lose lines on Windows
+    folder = state / "calls"
+    folder.mkdir(exist_ok=True)
+    name = f"{time.time_ns():020d}-{os.getpid()}-{random.getrandbits(64):016x}.json"
+    (folder / name).write_text(json.dumps({"ions": data["number_ions"], "seed": seed}))
     directory = state / f"run-{seed}-{time.monotonic_ns()}"
     shutil.copytree(FIXTURE, directory)
     (directory / "seed.txt").write_text(str(seed), encoding="utf-8")
@@ -109,10 +112,10 @@ def state_dir(tmp_path, monkeypatch):
 
 
 def calls(state):
-    path = state / "calls.jsonl"
-    if not path.exists():
+    folder = state / "calls"
+    if not folder.exists():
         return []
-    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    return [json.loads(p.read_text()) for p in sorted(folder.iterdir())]
 
 
 def batched_scan(ions=25, batch_ions=10, energies=(20.0,), seed=7, **kwargs):
