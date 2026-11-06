@@ -45,12 +45,20 @@ IS_WINDOWS = os.name == "nt"
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 
 
+def command_line(words, windows: bool | None = None) -> str:
+    """``words`` as one command line for the shell that textual-serve runs it in: cmd.exe on
+    Windows (quoted as :func:`subprocess.list2cmdline` does), sh elsewhere (:func:`shlex.join`)."""
+    if windows is None:
+        windows = IS_WINDOWS
+    return subprocess.list2cmdline(words) if windows else shlex.join(words)
+
+
 def viewer_command(folder, plot=None) -> str:
     """The shell command that textual-serve runs for each browser tab: the viewer of ``folder``."""
     words = [sys.executable, "-m", "srim.ui.tui.view", str(folder)]
     if plot:
         words += ["--plot", plot]
-    return shlex.join(words)
+    return command_line(words)
 
 
 def server_argv(host: str, port: int, command: str) -> list[str]:

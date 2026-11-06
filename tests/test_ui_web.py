@@ -305,3 +305,19 @@ def test_the_parent_watch_calls_its_action_once_the_parent_changes(monkeypatch):
 def test_the_parent_watch_is_not_started_on_windows(monkeypatch):
     monkeypatch.setattr(web, "IS_WINDOWS", True)
     assert web.exit_with_parent(on_orphaned=lambda: None) is None
+
+
+def test_the_served_command_is_quoted_for_the_shell_that_runs_it():
+    words = ["C:\\Program Files\\Python\\python.exe", "-m", "srim.ui.tui.view", "my scans"]
+    assert web.command_line(words, windows=True) == subprocess.list2cmdline(words)
+    assert web.command_line(words, windows=False) == shlex.join(words)
+    posix = ["/opt/py thon/bin/python", "-m", "srim.ui.tui.view", "a b"]
+    assert shlex.split(web.command_line(posix, windows=False)) == posix
+
+
+def test_the_viewer_command_uses_the_quoting_of_the_platform(tmp_path, monkeypatch):
+    monkeypatch.setattr(web, "IS_WINDOWS", True)
+    folder = tmp_path / "my scans"
+    assert web.viewer_command(folder) == subprocess.list2cmdline(
+        [sys.executable, "-m", "srim.ui.tui.view", str(folder)]
+    )
