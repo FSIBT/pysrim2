@@ -227,7 +227,9 @@ scan = Scan(
     base,
     grid={"ion.energy_keV": [20.0, 40.0]},
     extract=["sputter_yield"],
-    ions=Precision(target="sputter_yield", rel=0.05, min_ions=1000, max_ions=20000, batch_ions=1000),
+    ions=Precision(
+        target="sputter_yield", rel=0.05, min_ions=1000, max_ions=20000, batch_ions=1000
+    ),
     seed=12345,
 )
 ```

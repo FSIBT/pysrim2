@@ -145,10 +145,16 @@ from srim import TRIM, Ion, Layer, Target
 from srim.scan import Scan, run_scan
 
 target = Target([Layer.from_formula("Si", density=2.33, width=10000.0)])  # 1000 nm
-base = TRIM(target, Ion("B", energy=20e3), number_ions=100, calculation=1, ranges=1,
-            random_seed=12345).to_spec()
-scan = Scan(base, grid={"ion.energy_keV": [10.0, 20.0, 40.0]},
-            extract=["implant_summary"], ions=100, seed=12345)
+base = TRIM(
+    target, Ion("B", energy=20e3), number_ions=100, calculation=1, ranges=1, random_seed=12345
+).to_spec()
+scan = Scan(
+    base,
+    grid={"ion.energy_keV": [10.0, 20.0, 40.0]},
+    extract=["implant_summary"],
+    ions=100,
+    seed=12345,
+)
 if __name__ == "__main__":  # required: worker processes import this file
     result = run_scan(scan, workers=2, scan_dir="my-scan")
     print(result.table[["ion.energy_keV", "mean_depth_A", "status"]])
