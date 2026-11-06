@@ -107,7 +107,8 @@ def test_prepare_writes_the_scan_one_job_per_point_and_the_array_script(tmp_path
     assert "##SBATCH --time=" in script and "##SBATCH --mem=" in script
     assert 'pysrim2 run-job "$JOB_DIR"' in script
     assert 'printf %04d "$SLURM_ARRAY_TASK_ID"' in script
-    assert f"cd {folder}" in script
+    assert 'cd "${SLURM_SUBMIT_DIR:-$PWD}"' in script
+    assert str(folder) not in script  # no host path: submit from the scan folder
     if os.name == "posix":
         assert os.stat(folder / "submit.sbatch").st_mode & stat.S_IXUSR
 
@@ -190,10 +191,11 @@ def test_collect_reports_failed_and_not_run_points(tmp_path):
     run_job(jobs[1], runner=failing_at_20)  # 20 keV: failed
     # 30 keV: its job is never run
     result = collect(folder, cache=False)
-    assert result.table["status"].tolist() == ["done", "failed", "stopped"]
+    assert result.table["status"].tolist() == ["done", "failed", "missing"]
     assert result.table["error"].iloc[1] == "ValueError: SRIM said no second line"
     assert (folder / "points" / scan.points()[1].id[:16] / "error.log").is_file()
     assert result.table["error"].iloc[2] == "not run yet"
+    assert result.table["path"].isna().tolist() == [False, False, True]
     assert result.table["n_ions"].isna().tolist() == [False, True, True]
 
 
