@@ -822,7 +822,8 @@ def test_remove_tree_never_changes_the_mode_of_hard_linked_files(tmp_path):
         assert top.exists() and linked.exists()
     else:
         assert remove_tree(top) == [] and not top.exists()
-    assert source.read_text() == "x" and (os.stat(source).st_mode & 0o777) == 0o444
+    # still read-only (Windows reports .exe files as 0o555, so check the write bits only)
+    assert source.read_text() == "x" and (os.stat(source).st_mode & 0o222) == 0
 
 
 def test_remove_tree_clears_read_only_on_windows_for_lone_files(tmp_path, monkeypatch):
