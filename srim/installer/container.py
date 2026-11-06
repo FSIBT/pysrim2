@@ -4,11 +4,14 @@ Podman is preferred; Docker is used when it is already there. pysrim2 never
 installs Docker Desktop. The image is ``linux/amd64`` only.
 """
 
+import contextlib
 import functools
 import importlib.resources
+import os
 import re
 import shutil
 import subprocess
+import uuid
 from pathlib import Path
 
 import srim
@@ -183,9 +186,15 @@ def seccomp_profile_path() -> Path:
     current default profile) allows them. Podman does not need it.
     """
     target = data_dir() / SECCOMP_PROFILE
-    source = importlib.resources.files("srim") / "data" / SECCOMP_PROFILE
+    data = (importlib.resources.files("srim") / "data" / SECCOMP_PROFILE).read_bytes()
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_bytes(source.read_bytes())
+    with contextlib.suppress(OSError):
+        if target.read_bytes() == data:
+            return target  # identical: not written again (concurrent runs may call this)
+    # written under a temporary name, then renamed: a reader never sees a partial file
+    part = target.with_name(f".{SECCOMP_PROFILE}.{uuid.uuid4().hex}.tmp")
+    part.write_bytes(data)
+    os.replace(part, target)
     return target
 
 

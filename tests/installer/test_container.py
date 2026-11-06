@@ -316,3 +316,21 @@ def test_windows_hint_skipped_when_machine_exists(monkeypatch, capsys):
 def test_pull_text_does_not_name_podman_without_runtime(monkeypatch):
     monkeypatch.setattr(container, "find_runtime", lambda: None)
     assert container._pull_command_text()[0].startswith("<podman or docker> pull")
+
+
+def test_seccomp_profile_is_written_once_and_rewritten_only_when_different(tmp_path, monkeypatch):
+    """The profile is copied atomically, and an identical copy is left alone (its mtime)."""
+    import os
+
+    from srim.installer import container
+
+    monkeypatch.setenv("PYSRIM2_HOME", str(tmp_path / "home"))
+    target = container.seccomp_profile_path()
+    old = 1_000_000_000
+    os.utime(target, ns=(old * 10**9, old * 10**9))
+    assert container.seccomp_profile_path() == target
+    assert os.stat(target).st_mtime_ns == old * 10**9  # identical: not written again
+    target.write_bytes(b"different")
+    container.seccomp_profile_path()
+    assert target.read_bytes() != b"different"
+    assert not list(target.parent.glob(".*.tmp"))  # no temporary files left behind
