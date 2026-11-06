@@ -3,6 +3,7 @@
 import os
 import re
 
+from ..rundir import OwnsRunDir, warn_if_stale_install
 from ._common import (
     SRIM_Output,
     _element_names,
@@ -33,7 +34,7 @@ _LAZY_OUTPUTS = (
 )
 
 
-class Results:
+class Results(OwnsRunDir):
     """Gathers all results from folder
 
     Parameters
@@ -71,6 +72,7 @@ class Results:
         """Retrives all the calculation files in a given directory"""
         #: folder the results were read from (for :meth:`srim.srim.TRIM.run`, its run directory)
         self.directory = os.fspath(directory)
+        warn_if_stale_install(directory)
         self.ioniz = Ioniz(directory)
         self.vacancy = Vacancy(directory)
 

@@ -1,10 +1,13 @@
 """Isolated run directories, file locks and per-run wine prefixes (SRIM itself is mocked)."""
 
+import concurrent.futures as cf
 import multiprocessing
 import os
 import shutil
 import subprocess
 import sys
+import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -13,6 +16,7 @@ import pytest
 import srim.rundir as rundir_module
 from srim import SR, TRIM, Ion, Layer, Target
 from srim._lock import LOCK_NAME, FileLock
+from srim.installer.wine import XVFB_ARGS
 from srim.rundir import RunDir, clone_wine_prefix, disk_usage
 from srim.srim import SRIMRunError
 
@@ -196,11 +200,12 @@ def quick_trim():
 
 
 def fake_srim_program(monkeypatch, seen=None):
-    """check_call replacement: 'runs' TRIM/SR in the current directory."""
+    """check_call replacement: 'runs' TRIM/SR in the directory given as cwd."""
 
     def fake(cmd, **kw):
+        cwd = Path(kw["cwd"])
         if seen is not None:
-            seen.append((os.getcwd(), kw.get("env")))
+            seen.append((str(cwd), kw.get("env")))
         if "TRIM.exe" in cmd[-1]:
             for name in (
                 "RANGE.txt",
@@ -210,11 +215,11 @@ def fake_srim_program(monkeypatch, seen=None):
                 "E2RECOIL.txt",
                 "PHONON.txt",
             ):
-                shutil.copy(TEST_FILES / "1" / name, name)
-            os.makedirs("SRIM Outputs", exist_ok=True)
-            Path("SRIM Outputs", "LATERAL.txt").write_text("v")
+                shutil.copy(TEST_FILES / "1" / name, cwd / name)
+            (cwd / "SRIM Outputs").mkdir(exist_ok=True)
+            (cwd / "SRIM Outputs" / "LATERAL.txt").write_text("v")
         else:
-            shutil.copy(TEST_FILES / "SRIM" / "SR_OUTPUT.txt", "SR_OUTPUT.txt")
+            shutil.copy(TEST_FILES / "SRIM" / "SR_OUTPUT.txt", cwd / "SR_OUTPUT.txt")
 
     monkeypatch.setattr(subprocess, "check_call", fake)
 
@@ -346,7 +351,7 @@ def test_in_place_run_waits_for_the_lock(installed, mp, monkeypatch):
         assert ready.wait(30)
         with pytest.raises(TimeoutError):
             quick_trim().run(srim_directory=str(installed), lock_timeout=0.3)
-        # default-mode runs do not need the lock
+        # a default-mode run waits only while the copy is made (no torn copy)
         quick_trim().run()
     finally:
         holder.kill()
@@ -453,3 +458,312 @@ def test_copied_files_are_writable_even_if_the_install_is_read_only(installed, t
     os.chmod(installed / "TRIM.IN", 0o444)
     with RunDir.create(tmp_path / "work", wine=False) as rd:
         (rd.path / "TRIM.IN").write_text("new")
+
+
+# fix round 1: no chdir, xvfb displays, run-dir lifecycle, stale reads, relative paths, locks
+
+
+def test_threads_run_concurrently_without_changing_the_working_directory(
+    installed, tmp_path, monkeypatch
+):
+    barrier = threading.Barrier(2, timeout=20)
+    seen = []
+
+    def fake(cmd, **kw):
+        cwd = Path(kw["cwd"])
+        barrier.wait()  # both runs are inside "SRIM" at the same time
+        seen.append((os.getcwd(), cwd, (cwd / "TRIM.IN").read_bytes()))
+        for name in ("RANGE.txt", "IONIZ.txt", "VACANCY.txt", "NOVAC.txt", "E2RECOIL.txt"):
+            shutil.copy(TEST_FILES / "1" / name, cwd / name)
+        shutil.copy(TEST_FILES / "1" / "PHONON.txt", cwd / "PHONON.txt")
+
+    monkeypatch.setattr(subprocess, "check_call", fake)
+    monkeypatch.chdir(tmp_path)
+    start = os.getcwd()
+    layer = Layer.from_formula("Ni", 8.9, 1000.0)
+    runs = [TRIM(Target([layer]), Ion("Ni", energy=e), number_ions=1) for e in (1.0e6, 2.5e6)]
+    with cf.ThreadPoolExecutor(2) as pool:
+        results = list(pool.map(lambda t: t.run(work_dir=tmp_path / "work"), runs))
+    assert os.getcwd() == start
+    assert all(cwd == start for cwd, _, _ in seen)
+    assert len({d for _, d, _ in seen}) == 2
+    inputs = {data for _, _, data in seen}
+    assert len(inputs) == 2
+    for run, result in zip(runs, results, strict=True):
+        assert (Path(result.directory) / "TRIM.IN").read_bytes() in inputs
+        assert str(run.ion.energy / 1000) in (Path(result.directory) / "TRIM.IN").read_text()
+
+
+FAKE_XVFB = """#!{python}
+import os, sys, time
+args = sys.argv[1:]
+n = args[args.index("-n") + 1]
+d = os.environ["FAKE_X_DIR"]
+if os.environ.get("FAKE_X_FAIL") and not os.path.exists(os.path.join(d, "failed-once")):
+    open(os.path.join(d, "failed-once"), "w").close()
+    sys.stderr.write("xvfb-run: error: Xvfb failed to start\\n")
+    sys.exit(1)
+try:
+    fd = os.open(os.path.join(d, "X" + n), os.O_CREAT | os.O_EXCL)
+except FileExistsError:
+    open(os.path.join(d, "collision"), "a").write(n + "\\n")
+    sys.stderr.write("xvfb-run: error: Xvfb failed to start\\n")
+    sys.exit(1)
+time.sleep(0.3)
+os.remove(os.path.join(d, "X" + n))
+open(os.path.join(d, "ok"), "a").write(n + "\\n")
+if os.environ.get("FAKE_X_EXIT"):
+    sys.stderr.write("wine: something else broke\\n")
+    sys.exit(int(os.environ["FAKE_X_EXIT"]))
+"""
+
+
+@pytest.fixture
+def fake_xvfb(tmp_path, monkeypatch):
+    import srim.srim as srim_module
+    from srim import _xvfb
+
+    script = tmp_path / "xvfb-run"
+    script.write_text(FAKE_XVFB.format(python=sys.executable))
+    script.chmod(0o755)
+    shared = tmp_path / "x"
+    shared.mkdir()
+    locks = tmp_path / "locks"
+    locks.mkdir()
+    monkeypatch.setenv("FAKE_X_DIR", str(shared))
+    monkeypatch.setattr(tempfile, "tempdir", str(locks))
+    monkeypatch.setattr(_xvfb, "_sleep", lambda s: None)
+    monkeypatch.setattr(srim_module, "_launch_command", lambda exe: ["xvfb-run", "-a", "wine", exe])
+    real_run = subprocess.run
+
+    def run(cmd, **kw):  # "xvfb-run" is our script
+        return real_run([str(script), *cmd[1:]], **kw)
+
+    monkeypatch.setattr(subprocess, "run", run)
+    return shared
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="xvfb is Linux only")
+def test_32_simultaneous_xvfb_starts_get_distinct_displays(fake_xvfb, tmp_path):
+    from srim.srim import _run_srim
+
+    with cf.ThreadPoolExecutor(32) as pool:
+        list(pool.map(lambda _: _run_srim("TRIM.exe", None, str(tmp_path)), range(32)))
+    assert not (fake_xvfb / "collision").exists()
+    displays = (fake_xvfb / "ok").read_text().split()
+    assert len(displays) == 32 and all(int(d) >= 100 for d in displays)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="xvfb is Linux only")
+def test_xvfb_startup_failure_is_retried_other_failures_are_not(fake_xvfb, tmp_path, monkeypatch):
+    from srim.srim import SRIMProcessError, _run_srim
+
+    monkeypatch.setenv("FAKE_X_FAIL", "1")
+    _run_srim("TRIM.exe", None, str(tmp_path))  # first start fails, the retry works
+    assert (fake_xvfb / "failed-once").exists() and len((fake_xvfb / "ok").read_text().split()) == 1
+    monkeypatch.delenv("FAKE_X_FAIL")
+    monkeypatch.setenv("FAKE_X_EXIT", "3")
+    with pytest.raises(SRIMProcessError, match="something else broke"):
+        _run_srim("TRIM.exe", None, str(tmp_path))
+    assert len((fake_xvfb / "ok").read_text().split()) == 2  # ran once, not three times
+
+
+def test_xvfb_gives_up_after_three_startup_failures(tmp_path, monkeypatch):
+    import srim.srim as srim_module
+    from srim import _xvfb
+    from srim.srim import SRIMProcessError
+
+    calls = []
+
+    def always_fails(cmd, **kw):
+        calls.append(cmd)
+        kw["stderr"].write(b"xvfb-run: error: Xvfb failed to start\n")
+        return subprocess.CompletedProcess(cmd, 1)
+
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    monkeypatch.setattr(_xvfb, "_sleep", lambda s: None)
+    monkeypatch.setattr(
+        srim_module, "_launch_command", lambda exe: ["xvfb-run", *XVFB_ARGS, "wine", exe]
+    )
+    monkeypatch.setattr(subprocess, "run", always_fails)
+    with pytest.raises(SRIMProcessError):
+        srim_module._run_srim("TRIM.exe")
+    assert len(calls) == 3
+    assert len({c[c.index("-n") + 1] for c in calls}) == 3 and "-a" not in calls[0]
+    assert "-screen 0 1024x768x24" in calls[0]
+
+
+def old(path, days):
+    t = time.time() - days * 86400
+    os.utime(path, (t, t))
+
+
+def test_prune_deletes_old_unused_run_dirs_only(installed, tmp_path):
+    from srim.rundir import RUN_LOCK_NAME, prune_runs
+
+    base = tmp_path / "work"
+    kept_new = RunDir.create(base, wine=False, keep=True)
+    kept_new.release_lock()
+    stale = RunDir.create(base, wine=False, keep=True)
+    stale.release_lock()
+    busy = RunDir.create(base, wine=False, keep=True)  # still locked: in use
+    for rd in (stale, busy):
+        old(rd.root / RUN_LOCK_NAME, 30)
+    assert prune_runs(base, 7, dry_run=True) == [stale.root]
+    assert stale.root.exists()
+    assert prune_runs(base, 7) == [stale.root]
+    assert not stale.root.exists() and kept_new.root.exists() and busy.root.exists()
+    busy.release_lock()
+    assert prune_runs(base, 7) == [busy.root]
+    foreign = base / "run-not-ours"
+    foreign.mkdir()
+    old(foreign, 30)
+    assert prune_runs(base, 0) == [kept_new.root] and foreign.exists()
+
+
+def test_new_runs_prune_old_ones_including_failed_runs(installed, tmp_path, monkeypatch):
+    from srim.rundir import RUN_LOCK_NAME
+
+    base = tmp_path / "work"
+    monkeypatch.setattr(subprocess, "check_call", lambda cmd, **kw: None)  # run fails
+    with pytest.raises(SRIMRunError):
+        quick_trim().run(work_dir=base)
+    (failed,) = base.iterdir()
+    old(failed / RUN_LOCK_NAME, 8)
+    fake_srim_program(monkeypatch)
+    monkeypatch.setenv("PYSRIM2_RUN_RETENTION_DAYS", "0")  # retention off
+    quick_trim().run(work_dir=base)
+    assert failed.exists()
+    monkeypatch.setenv("PYSRIM2_RUN_RETENTION_DAYS", "7")
+    quick_trim().run(work_dir=base)
+    assert not failed.exists() and len(list(base.iterdir())) == 2
+
+
+def test_results_close_and_context_manager_delete_the_run_dir(installed, tmp_path, monkeypatch):
+    fake_srim_program(monkeypatch)
+    results = quick_trim().run(work_dir=tmp_path / "work")
+    root = Path(results.directory).parent
+    assert root.is_dir()
+    results.close()
+    assert not root.exists()
+    results.close()  # idempotent
+    with quick_trim().run(work_dir=tmp_path / "work") as again:
+        where = Path(again.directory)
+        assert where.is_dir()
+    assert not where.exists()
+    out = quick_trim().run(work_dir=tmp_path / "work", output_dir=tmp_path / "out")
+    out.close()
+    assert (tmp_path / "out" / "RANGE.txt").is_file()  # output_dir is the caller's
+
+
+def test_remove_tree_handles_read_only_items(tmp_path):
+    from srim.rundir import remove_tree
+
+    top = tmp_path / "t"
+    (top / "sub").mkdir(parents=True)
+    (top / "sub" / "f").write_text("x")
+    os.chmod(top / "sub" / "f", 0o444)
+    os.chmod(top / "sub", 0o555)
+    assert remove_tree(top) == [] and not top.exists()
+
+
+def test_clean_runs_cli_and_doctor_report(installed, tmp_path, capsys):
+    from srim import cli
+    from srim.rundir import RUN_LOCK_NAME
+
+    rd = RunDir.create(wine=False, keep=True)
+    rd.release_lock()
+    old(rd.root / RUN_LOCK_NAME, 10)
+    assert cli.main(["clean", "runs", "--dry-run", "--older-than", "7"]) == 0
+    assert rd.root.exists() and "would delete" in capsys.readouterr().out
+    check = next(c for c in cli.collect_checks() if c["name"] == "run-directories")
+    assert check["ok"] and "1 in" in check["detail"]
+    assert cli.main(["clean", "runs", "--older-than", "20"]) == 0
+    assert rd.root.exists()
+    assert cli.main(["clean", "runs", "--older-than", "7"]) == 0
+    assert not rd.root.exists()
+
+
+@pytest.fixture
+def stale_setup(installed, tmp_path, monkeypatch):
+    monkeypatch.setattr(rundir_module, "_warned_stale", False)
+    for name in ("RANGE.txt", "TRIM.IN"):
+        (installed / name).write_text("old result")
+        old(installed / name, 1)
+    rundir_module.note_isolated_run()
+    return installed
+
+
+def test_reading_outputs_of_the_installed_dir_after_isolated_runs_warns_once(stale_setup, tmp_path):
+    with pytest.warns(UserWarning, match=r"results\.directory.*output_dir"):
+        TRIM.copy_output_files(str(stale_setup), str(tmp_path))
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")  # one time only
+        TRIM.copy_output_files(str(stale_setup), str(tmp_path))
+
+
+def test_results_of_the_installed_dir_warn_too(stale_setup):
+    from srim.output import Results
+
+    for p in (TEST_FILES / "1").iterdir():
+        shutil.copy(p, stale_setup / p.name)
+        old(stale_setup / p.name, 1)
+    with pytest.warns(UserWarning, match="0.9.0"):
+        Results(stale_setup)
+
+
+def test_no_stale_warning_for_other_dirs_or_fresh_in_place_outputs(stale_setup, tmp_path):
+    import warnings
+
+    other = tmp_path / "other"
+    other.mkdir()
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        TRIM.copy_output_files(str(other), str(tmp_path))
+        (stale_setup / "RANGE.txt").write_text("fresh in-place run")  # newer than the marker
+        TRIM.copy_output_files(str(stale_setup), str(tmp_path))
+
+
+def test_relative_work_dir_is_made_absolute(installed, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    with RunDir.create("rel", wine=False) as rd:
+        assert rd.root.is_absolute() and rd.path.is_absolute()
+        assert rd.root.parent == tmp_path / "rel"
+    fake_srim_program(monkeypatch)
+    results = quick_trim().run(work_dir="rel2")
+    assert os.path.isabs(results.directory)
+
+
+def _hold_exclusive(path, seconds, ready):
+    with FileLock(path):
+        ready.set()
+        time.sleep(seconds)
+
+
+def test_copying_the_install_waits_for_an_in_place_run_to_finish_writing(installed, tmp_path, mp):
+    ready = mp.Event()
+    holder = mp.Process(target=_hold_exclusive, args=(str(installed / LOCK_NAME), 1.5, ready))
+    holder.start()
+    try:
+        assert ready.wait(30)
+        start = time.monotonic()
+        RunDir.create(tmp_path / "work", wine=False).cleanup()
+        assert time.monotonic() - start > 0.8
+    finally:
+        holder.join(30)
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32" or (hasattr(os, "geteuid") and os.geteuid() == 0),
+    reason="needs a read-only directory that root can still write",
+)
+def test_in_place_run_in_read_only_install_gives_a_clear_error(installed):
+    os.chmod(installed, 0o555)
+    try:
+        with pytest.raises(PermissionError, match="not writable"):
+            quick_trim().run(srim_directory=str(installed))
+        RunDir.create(wine=False).cleanup()  # a copy needs no write access to the install
+    finally:
+        os.chmod(installed, 0o755)

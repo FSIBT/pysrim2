@@ -188,7 +188,7 @@ def test_trim_run_reads_results_from_relative_srim_directory(tmp_path, monkeypat
         "check_call",
         lambda cmd, **kw: (srim_directory / "RANGE.txt").write_text("new"),
     )
-    monkeypatch.setattr(TRIM, "_write_input_files", lambda self: None, raising=False)
+    monkeypatch.setattr(TRIM, "_write_input_files", lambda self, *a, **k: None, raising=False)
 
     class FakeResults:
         def __init__(self, directory):
@@ -219,7 +219,7 @@ def test_trim_run_removes_stale_output_and_fails_if_none_written(tmp_path, monke
         "check_call",
         lambda cmd, **kw: seen.update(left=sorted(p.name for p in tmp_path.rglob("*.txt"))),
     )
-    monkeypatch.setattr(TRIM, "_write_input_files", lambda self: None, raising=False)
+    monkeypatch.setattr(TRIM, "_write_input_files", lambda self, *a, **k: None, raising=False)
 
     with pytest.raises(SRIMRunError, match="RANGE.txt"):
         _quick_trim().run(srim_directory=str(tmp_path))
@@ -239,7 +239,7 @@ def test_trim_run_removes_stale_event_files_in_both_places(tmp_path, monkeypatch
         "check_call",
         lambda cmd, **kw: seen.update(left=sorted(p.name for p in tmp_path.rglob("*.txt"))),
     )
-    monkeypatch.setattr(TRIM, "_write_input_files", lambda self: None, raising=False)
+    monkeypatch.setattr(TRIM, "_write_input_files", lambda self, *a, **k: None, raising=False)
 
     with pytest.raises(SRIMRunError):
         _quick_trim().run(srim_directory=str(tmp_path))

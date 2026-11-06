@@ -45,8 +45,8 @@ def srim_install(tmp_path, monkeypatch):
 
     def fake_call(cmd, **kw):
         # the run happens in a private copy of the install (the current directory)
-        seen["trim_in"] = Path("TRIM.IN").read_bytes()
-        shutil.copy(TEST_FILES / "1" / "RANGE.txt", "RANGE.txt")
+        seen["trim_in"] = Path(kw["cwd"], "TRIM.IN").read_bytes()
+        shutil.copy(TEST_FILES / "1" / "RANGE.txt", Path(kw["cwd"], "RANGE.txt"))
 
     monkeypatch.setattr(subprocess, "check_call", fake_call)
     monkeypatch.setattr("srim.srim.Results", lambda path: type("R", (), {})())

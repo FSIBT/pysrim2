@@ -23,7 +23,8 @@ from srim.installer.srim_install import _download
 from srim.paths import data_dir, wine_prefix
 
 # xvfb-run's default screen is 640x480x8; wine 11's wineboot hangs on it.
-XVFB_ARGS = ["-a", "-s", "-screen 0 1024x768x24"]
+XVFB_SCREEN_ARGS = ["-s", "-screen 0 1024x768x24"]
+XVFB_ARGS = ["-a", *XVFB_SCREEN_ARGS]
 MSVBVM50_URL = "https://download.microsoft.com/download/vb50pro/utility/1/win98/en-us/msvbvm50.exe"
 MSVBVM50_NAME = "msvbvm50.exe"
 MSVBVM50_SHA256 = "b5f8ea5b9d8b30822a2be2cdcb89cda99ec0149832659ad81f45360daa6e6965"

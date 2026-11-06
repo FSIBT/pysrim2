@@ -330,3 +330,11 @@ Target:
 
 ## Open questions
 (none yet — to be filled from review)
+
+### 0.10.0 — custom incident-particle distributions (requested by Arun's co-worker; decided by Arun: implement and document BOTH modes)
+- Distributions for ion energy, angle (and possibly start position): built-ins Normal, Uniform, LogNormal, Histogram(edges, counts), and Custom(user function: sampler `(rng, n) -> array` or pdf), registered by name for run.yaml.
+- **Exact mode:** sample N ions with a seeded RNG and feed them to TRIM through SRIM's per-ion input file (TRIM.DAT); one run, every ion from the distribution. (Format/switch to be confirmed by a container spike.)
+- **Binned mode:** discretise into bins, one ordinary TRIM per bin via the 0.9.0 scan engine (parallel), combine per-ion results weighted by bin probability; always works, approximate with bin count.
+- Reproducibility: seed + distribution recorded in run.yaml; Custom functions by registered name + checksum of the sampled ion file; distribution parameters scannable.
+- Docs: concepts, both modes with trade-offs, examples, notebook.
+- Later releases shift: docs overhaul + CITATION/Zenodo → 0.11.0; outreach last.

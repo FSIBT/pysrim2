@@ -70,6 +70,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="copy outputs and run.yaml here (default ./srim-output-<UTC timestamp>)",
     )
 
+    clean = sub.add_parser("clean", help="delete files pysrim2 left behind")
+    clean.add_argument("what", choices=("runs",), help="runs: private run directories")
+    clean.add_argument(
+        "--older-than",
+        type=float,
+        default=0.0,
+        metavar="DAYS",
+        help="only those unused for this many days (default 0: all that are not in use)",
+    )
+    clean.add_argument("--dry-run", action="store_true", help="list what would be deleted")
+
     imp = sub.add_parser("import", help="turn a TRIM.IN into a run.yaml")
     imp.add_argument("trim_in", metavar="TRIM.IN")
     imp.add_argument("-o", "--output", metavar="run.yaml", help="file to write (default run.yaml)")
@@ -87,6 +98,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run(args)
     if args.command == "import":
         return _import(args)
+    if args.command == "clean":
+        return _clean(args)
     return _doctor(args)
 
 
@@ -232,6 +245,24 @@ def _import(args) -> int:
     return EXIT_OK
 
 
+def _clean(args) -> int:
+    from srim.rundir import disk_usage, prune_runs, run_folders, runs_base
+
+    base = runs_base()
+    # measure first (pruning deletes), then report
+    sizes = {folder: disk_usage(folder) for folder in run_folders(base)}
+    removed = prune_runs(base, older_than_days=args.older_than, dry_run=args.dry_run)
+    verb = "would delete" if args.dry_run else "deleted"
+    for folder in removed:
+        print(f"{verb} {folder} ({sizes.get(folder, 0) / 1e6:.1f} MB)")
+    total = sum(sizes.get(f, 0) for f in removed)
+    print(
+        f"{verb} {len(removed)} run director{'y' if len(removed) == 1 else 'ies'}, "
+        f"{total / 1e6:.1f} MB (in use or newer ones are kept)"
+    )
+    return EXIT_OK
+
+
 # --- doctor -----------------------------------------------------------------
 
 
@@ -361,6 +392,20 @@ def collect_checks() -> list[dict]:
             not stale,
             ", ".join(str(t) for t in installed) or "not installed (optional)",
             "run: pysrim2 install skill",
+        )
+    )
+    from srim.rundir import retention_days, runs_base, runs_disk_usage
+
+    count, size = runs_disk_usage()
+    days = retention_days()
+    checks.append(
+        _check(
+            "run-directories",
+            True,
+            f"{count} in {runs_base()}, {size / 1e6:.1f} MB "
+            f"(unused ones are deleted after {days:g} days; `pysrim2 clean runs` deletes them now)"
+            if days
+            else f"{count} in {runs_base()}, {size / 1e6:.1f} MB (kept: retention is off)",
         )
     )
     if not native:

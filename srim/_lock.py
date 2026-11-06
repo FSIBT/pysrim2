@@ -14,7 +14,7 @@ MESSAGE_AFTER_SECONDS = 5.0
 if sys.platform == "win32":
     import msvcrt
 
-    def _try_lock(fd):
+    def _try_lock(fd, shared=False):  # msvcrt has no shared mode: always exclusive
         try:
             os.lseek(fd, 0, os.SEEK_SET)
             msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
@@ -29,9 +29,9 @@ if sys.platform == "win32":
 else:
     import fcntl
 
-    def _try_lock(fd):
+    def _try_lock(fd, shared=False):
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(fd, (fcntl.LOCK_SH if shared else fcntl.LOCK_EX) | fcntl.LOCK_NB)
         except OSError:
             return False
         return True
@@ -55,20 +55,29 @@ class FileLock:
         Seconds after which a "waiting" message is written to ``stderr`` (once).
     poll : float, optional
         Seconds between attempts.
+    shared : bool, optional
+        Take a shared lock (POSIX only; on Windows it is exclusive) on an *existing*
+        file without creating or writing it, so a read-only directory works.
     """
 
-    def __init__(self, path, timeout=None, message_after=MESSAGE_AFTER_SECONDS, poll=0.05):
+    def __init__(
+        self, path, timeout=None, message_after=MESSAGE_AFTER_SECONDS, poll=0.05, shared=False
+    ):
         self.path = os.fspath(path)
         self.timeout = timeout
         self.message_after = message_after
         self.poll = poll
+        self.shared = shared
         self._fd = None
 
     def acquire(self):
-        fd = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o666)
+        if self.shared and sys.platform != "win32":
+            fd = os.open(self.path, os.O_RDONLY)
+        else:
+            fd = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o666)
         start = time.monotonic()
         told = False
-        while not _try_lock(fd):
+        while not _try_lock(fd, self.shared):
             waited = time.monotonic() - start
             if self.timeout is not None and waited >= self.timeout:
                 os.close(fd)

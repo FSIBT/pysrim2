@@ -1,5 +1,7 @@
 """Write Inputfile for SRIM and TRIM calculations"""
 
+import os
+
 
 class AutoTRIM:
     def __init__(self, mode=1, restart_directroy=None):
@@ -16,9 +18,9 @@ class AutoTRIM:
         """
         self._mode = mode
 
-    def write(self):
-        """write AUTOTRIM in current directory"""
-        with open("TRIMAUTO", "w") as f:
+    def write(self, directory="."):
+        """write AUTOTRIM into ``directory`` (default: the current directory)"""
+        with open(os.path.join(directory, "TRIMAUTO"), "w") as f:
             f.write(f"{self._mode}")
 
 
@@ -186,9 +188,9 @@ class TRIMInput:
             + self.newline
         )
 
-    def write(self):
-        """Write TRIMInput class to ``TRIM.IN``"""
-        with open("TRIM.IN", "wb") as f:
+    def write(self, directory="."):
+        """Write TRIMInput class to ``TRIM.IN`` in ``directory`` (default: the current one)"""
+        with open(os.path.join(directory, "TRIM.IN"), "wb") as f:
             methods = [
                 self._write_title,
                 self._write_ion,
@@ -290,9 +292,9 @@ class SRInput:
             + self.newline
         )
 
-    def write(self):
-        """Write SR calcualtion to ``SR.IN``"""
-        with open("SR.IN", "wb") as f:
+    def write(self, directory="."):
+        """Write SR calcualtion to ``SR.IN`` in ``directory`` (default: the current one)"""
+        with open(os.path.join(directory, "SR.IN"), "wb") as f:
             methods = [
                 self._write_filename,
                 self._write_ion,

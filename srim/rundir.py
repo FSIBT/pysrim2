@@ -22,11 +22,14 @@ What SRIM writes (determined by inspecting a TRIM and an SR run):
 import contextlib
 import os
 import shutil
+import stat
 import sys
 import tempfile
+import time
 import warnings
 from pathlib import Path
 
+from ._lock import LOCK_NAME, FileLock
 from .paths import data_dir, srim_dir, wine_prefix
 
 RESULT_FILES = frozenset(
@@ -66,7 +69,11 @@ WRITABLE_NAMES = frozenset(
 )
 COPY_ALWAYS_DIRS = frozenset({"sr module", "srim outputs", "srim restore"})
 SMALL_FILE_BYTES = 16 * 1024
-SKIP_NAMES = frozenset({".pysrim2.lock"})
+SKIP_NAMES = frozenset({LOCK_NAME})
+RUN_LOCK_NAME = ".pysrim2-run.lock"  # in the run folder: held while a process uses it
+RETENTION_ENV = "PYSRIM2_RUN_RETENTION_DAYS"
+DEFAULT_RETENTION_DAYS = 7.0
+LAST_RUN_MARKER = ".last-isolated-run"  # in data_dir(): when the latest isolated run finished
 
 # In a wine prefix only large binaries are linked; everything wine may write (registry,
 # user profile, temp files, ini files, caches) is copied.
@@ -110,6 +117,172 @@ def _warn_full_copy(what):
             RuntimeWarning,
             stacklevel=3,
         )
+
+
+def remove_tree(path):
+    """Delete the folder ``path`` robustly; return the list of paths that could not go.
+
+    Read-only files and folders (which stop ``rmtree`` on Windows) are made writable
+    and retried. Leftovers are reported with a ``RuntimeWarning``, never silently kept.
+    """
+    leftovers = []
+
+    def handler(func, failed, exc):
+        if isinstance(exc, FileNotFoundError):
+            return
+        try:
+            os.chmod(failed, stat.S_IRWXU)
+            os.chmod(os.path.dirname(failed), stat.S_IRWXU)
+            func(failed)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            leftovers.append(str(failed))
+
+    if not os.path.lexists(path):
+        return []
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(path, onexc=handler)
+    else:
+        shutil.rmtree(path, onerror=lambda func, p, info: handler(func, p, info[1]))
+    if leftovers:
+        warnings.warn(
+            f"could not delete {len(leftovers)} item(s) of {path} (in use? read-only?): "
+            f"{leftovers[:3]}",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+    return leftovers
+
+
+def retention_days():
+    """Days after which unused run directories are deleted (``$PYSRIM2_RUN_RETENTION_DAYS``,
+    default 7; 0 keeps them forever)."""
+    try:
+        days = float(os.environ.get(RETENTION_ENV, DEFAULT_RETENTION_DAYS))
+    except ValueError:
+        return DEFAULT_RETENTION_DAYS
+    return max(days, 0.0)
+
+
+def runs_base():
+    """The default folder of the run directories: ``data_dir()/runs``."""
+    return data_dir() / "runs"
+
+
+def run_folders(base):
+    base = Path(base)
+    if not base.is_dir():
+        return []
+    return sorted(
+        p for p in base.iterdir() if p.name.startswith("run-") and (p / RUN_LOCK_NAME).is_file()
+    )
+
+
+def runs_disk_usage(base=None):
+    """Return ``(number of run directories, bytes they use)`` below ``base``."""
+    folders = run_folders(base if base is not None else runs_base())
+    return len(folders), sum(disk_usage(f) for f in folders)
+
+
+def prune_runs(base=None, older_than_days=None, dry_run=False):
+    """Delete run directories below ``base`` that nobody uses and that are older than the limit.
+
+    A run directory counts as in use while a process holds its lock; its age is the time
+    since its last use. ``older_than_days`` defaults to :func:`retention_days` (0 = no
+    limit given: nothing is deleted when called without argument). Failed runs are
+    deleted after the same time. Returns the list of folders deleted (or that would be).
+    """
+    days = retention_days() if older_than_days is None else float(older_than_days)
+    if older_than_days is None and days <= 0:
+        return []
+    cutoff = time.time() - days * 86400
+    removed = []
+    for folder in run_folders(base if base is not None else runs_base()):
+        marker = folder / RUN_LOCK_NAME
+        lock = FileLock(marker, timeout=0)
+        try:
+            lock.acquire()
+        except (TimeoutError, OSError):
+            continue  # in use
+        try:
+            if marker.stat().st_mtime > cutoff:
+                continue
+            removed.append(folder)
+            if dry_run:
+                continue
+        finally:
+            lock.release()
+        remove_tree(folder)
+    return removed
+
+
+def note_isolated_run():
+    """Record that an isolated run just finished (see :func:`warn_if_stale_install`)."""
+    try:
+        marker = data_dir() / LAST_RUN_MARKER
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(str(time.time()))
+    except OSError:
+        pass
+
+
+_warned_stale = False
+
+
+def warn_if_stale_install(directory):
+    """Warn (once) when ``directory`` is the installed SRIM and its outputs are older than
+    the latest isolated run: legacy code reading outputs from there gets old results."""
+    global _warned_stale
+    if _warned_stale:
+        return
+    try:
+        marker = data_dir() / LAST_RUN_MARKER
+        if not marker.is_file() or not os.path.samefile(directory, srim_dir()):
+            return
+        installed = Path(directory)
+        newest = max(
+            (
+                p.stat().st_mtime
+                for name in RESULT_FILES
+                for p in (installed / name,)
+                if p.is_file()
+            ),
+            default=0.0,
+        )
+        if newest >= marker.stat().st_mtime:
+            return
+    except OSError:
+        return
+    _warned_stale = True
+    warnings.warn(
+        f"{directory} holds the installed SRIM, but since pysrim2 0.9.0 TRIM.run() and SR.run() "
+        "work in private run directories, so the files there are NOT from your latest run. "
+        "Read the outputs from the returned results (`results.directory`, "
+        "`TRIM.copy_output_files(results.directory, dest)`) or pass `output_dir=` to run().",
+        UserWarning,
+        stacklevel=3,
+    )
+
+
+class OwnsRunDir:
+    """Mixin of the result classes: ``close()`` / ``with`` delete the run directory
+    a default (isolated) run made, once the results are no longer needed."""
+
+    _run_root = None
+
+    def close(self):
+        """Delete the run directory these results were read from (if the run made one)."""
+        root, self._run_root = self._run_root, None
+        if root is not None:
+            remove_tree(root)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+        return False
 
 
 class _Placer:
@@ -226,7 +399,8 @@ class RunDir:
         Private clone of pysrim2's wine prefix, or ``None`` (Windows, no wine).
     """
 
-    def __init__(self, root, path, source, wine_prefix, keep, manifest):
+    def __init__(self, root, path, source, wine_prefix, keep, manifest, lock=None):
+        self._lock = lock
         self.root = Path(root)
         self.path = Path(path)
         self.source = Path(source)
@@ -251,12 +425,13 @@ class RunDir:
             private prefix has been set up.
         """
         source = Path(source) if source is not None else srim_dir()
-        base = Path(base) if base is not None else data_dir() / "runs"
+        base = Path(os.path.abspath(base)) if base is not None else runs_base()
         # fail early and with the missing path in the error if there is no install
         with os.scandir(source):
             pass
         base.mkdir(parents=True, exist_ok=True)
         root = Path(tempfile.mkdtemp(prefix="run-", dir=base))
+        lock = FileLock(root / RUN_LOCK_NAME).acquire()  # marks the folder as in use
         try:
             path = root / "srim"
             manifest = cls._populate(source, path)
@@ -266,12 +441,29 @@ class RunDir:
             if wine:
                 prefix = clone_wine_prefix(wine_prefix(), root / "wine")
         except BaseException:
-            shutil.rmtree(root, ignore_errors=True)
+            lock.release()
+            remove_tree(root)
             raise
-        return cls(root, path, source, prefix, keep, manifest)
+        return cls(root, path, source, prefix, keep, manifest, lock)
 
     @staticmethod
     def _populate(source, path):
+        # A legacy in-place run (srim_directory=) holds an exclusive lock while it writes;
+        # wait for it so the copy is not torn. Nothing is created in the install: if no
+        # in-place run ever happened there is no lock file and nothing to wait for.
+        guard = FileLock(Path(source) / LOCK_NAME, shared=True)
+        try:
+            guard.acquire()
+        except OSError:
+            guard = None
+        try:
+            return RunDir._copy_tree(source, path)
+        finally:
+            if guard is not None:
+                guard.release()
+
+    @staticmethod
+    def _copy_tree(source, path):
         placer = _Placer("the SRIM install")
         path.mkdir()
         manifest = {}
@@ -319,7 +511,7 @@ class RunDir:
             if rel in known or not os.path.lexists(entry.path):
                 continue
             if entry.is_dir(follow_symlinks=False):
-                shutil.rmtree(entry.path, ignore_errors=True)
+                remove_tree(entry.path)
             else:
                 os.remove(entry.path)
 
@@ -332,7 +524,7 @@ class RunDir:
         if self.wine_prefix is None:
             return
         self.stop_wine()
-        shutil.rmtree(self.wine_prefix, ignore_errors=True)
+        remove_tree(self.wine_prefix)
         self.wine_prefix = None
 
     def stop_wine(self):
@@ -345,7 +537,16 @@ class RunDir:
     def cleanup(self):
         """Stop this run's wine processes and delete the whole run folder."""
         self.stop_wine()
-        shutil.rmtree(self.root, ignore_errors=True)
+        self.release_lock()
+        remove_tree(self.root)
+
+    def release_lock(self):
+        """Mark the folder as no longer in use (it can then be pruned once it is old)."""
+        lock, self._lock = self._lock, None
+        if lock is not None:
+            with contextlib.suppress(OSError):
+                os.utime(lock.path)
+            lock.release()
 
     def __enter__(self):
         return self
@@ -353,9 +554,12 @@ class RunDir:
     def __exit__(self, exc_type, exc, tb):
         if exc is not None:
             self.stop_wine()
+            self.release_lock()
             exc.add_note(f"the run directory was kept for debugging: {self.path}")
         elif not self.keep:
             self.cleanup()
+        else:
+            self.release_lock()
         return False
 
 

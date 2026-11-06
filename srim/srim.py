@@ -1,5 +1,6 @@
 """Module for automating srim calculations"""
 
+import contextlib
 import os
 import random
 import re
@@ -11,6 +12,7 @@ import tempfile
 import warnings
 from datetime import UTC, datetime
 
+from . import _xvfb
 from ._lock import LOCK_NAME, FileLock
 from .core import Element, Ion, Layer, Target
 from .core.utils import (
@@ -28,7 +30,7 @@ from .input import AutoTRIM, SRInput, TRIMInput
 from .installer.wine import XVFB_ARGS, _kill_wineserver, wine_env
 from .output import Results, SRResults
 from .paths import srim_dir, wine_prefix
-from .rundir import RunDir
+from .rundir import RunDir, note_isolated_run, prune_runs, runs_base, warn_if_stale_install
 from .spec import (
     ALWAYS_SETTINGS,
     SCHEMA_VERSION,
@@ -84,36 +86,62 @@ class SRIMProcessError(subprocess.CalledProcessError):
         return f"{text}\n{self.stderr}" if self.stderr else text
 
 
-def _run_srim(executable, prefix=None):
+def _run_srim(executable, prefix=None, cwd=None):
     """Run a SRIM executable and wait for it.
 
     ``prefix`` is the run's private wine prefix (see :class:`srim.rundir.RunDir`); it
     replaces pysrim2's shared prefix, and if the run fails only that prefix's
-    wineserver is stopped.
+    wineserver is stopped. ``cwd`` is the directory to run in (the process's own
+    working directory is never changed).
 
-    Under ``xvfb-run`` the child's stderr is captured so xvfb's harmless
-    "X connection to :N broken" and Mesa/EGL warning lines are dropped from
-    stdout and stderr; other lines are passed on to ``sys.stdout``/``sys.stderr``
-    after the run (stderr is included in the error if SRIM fails). Without ``xvfb-run`` (Windows) the child is run unchanged.
+    Under ``xvfb-run`` every run claims its own display number (``-n``), the child's
+    stderr is captured so xvfb's harmless "X connection to :N broken" and Mesa/EGL
+    warning lines are dropped from stdout and stderr; other lines are passed on to
+    ``sys.stdout``/``sys.stderr`` after the run (stderr is included in the error if SRIM
+    fails). A failure of the X server to start is retried up to three times. Without
+    ``xvfb-run`` (Windows) the child is run unchanged.
     """
     command = _launch_command(executable)
     env = _launch_env(prefix)
     try:
-        _run_command(command, env)
+        _run_command(command, env, cwd)
     except BaseException:
         if prefix is not None:
             _kill_wineserver(env)
         raise
 
 
-def _run_command(command, env):
+def _run_command(command, env, cwd=None):
     if command[0] != "xvfb-run":
-        subprocess.check_call(command, env=env)
+        subprocess.check_call(command, env=env, cwd=cwd)
         return
+    held = []
+    try:
+        number = _xvfb.FIRST_DISPLAY
+        for attempt in range(_xvfb.MAX_START_ATTEMPTS):
+            if attempt:
+                _xvfb.backoff(attempt)
+            number, lock = _xvfb.claim_display(number)
+            held.append(lock)  # keep failed numbers claimed until we are done
+            try:
+                _run_xvfb(_xvfb.with_display(command, number), env, cwd)
+                return
+            except SRIMProcessError as exc:
+                if attempt == _xvfb.MAX_START_ATTEMPTS - 1 or not _xvfb.is_startup_failure(
+                    exc.stderr
+                ):
+                    raise
+            number += 1
+    finally:
+        for lock in held:
+            lock.release()
+
+
+def _run_xvfb(command, env, cwd):
     # Output goes to temp files, not pipes: wine's daemonised wineserver would
     # keep a pipe open and block us. It is shown only after the run ends, not live.
     with tempfile.TemporaryFile() as out_log, tempfile.TemporaryFile() as err_log:
-        done = subprocess.run(command, env=env, stdout=out_log, stderr=err_log)
+        done = subprocess.run(command, env=env, cwd=cwd, stdout=out_log, stderr=err_log)
         out_log.seek(0)
         err_log.seek(0)
         out_text = out_log.read().decode(errors="replace")
@@ -331,18 +359,35 @@ def _managed_run(
             raise ValueError("work_dir= and run_dir= cannot be combined with srim_directory=")
         root = os.path.abspath(srim_directory)
         # Legacy in-place run: take turns with other runs in this directory.
-        with FileLock(os.path.join(root, LOCK_NAME), timeout=lock_timeout):
+        lock = FileLock(os.path.join(root, LOCK_NAME), timeout=lock_timeout)
+        try:
+            lock.acquire()
+        except PermissionError as exc:
+            raise PermissionError(
+                f"cannot create the lock file {lock.path}: {root} is not writable, so a run "
+                "in place is impossible. Omit srim_directory= to run in an isolated copy "
+                "(the default), or make the directory writable."
+            ) from exc
+        try:
             value = execute(root, None)
             where = locate(root)
             if output_dir is not None:
                 collect(where, output_dir)
                 where = output_dir
             return finish(value, where)
+        finally:
+            lock.release()
 
     if run_dir is not None and work_dir is not None:
         raise ValueError("work_dir= cannot be combined with run_dir=")
     owned = run_dir is None
-    rd = RunDir.create(work_dir, source=srim_dir()) if owned else run_dir
+    if owned:
+        base = work_dir if work_dir is not None else runs_base()
+        with contextlib.suppress(Exception):  # tidying must never break a run
+            prune_runs(base)
+        rd = RunDir.create(work_dir, source=srim_dir())
+    else:
+        rd = run_dir
     try:
         if not owned:
             rd.reset()
@@ -353,13 +398,21 @@ def _managed_run(
             where = output_dir
     except BaseException as exc:
         rd.stop_wine()  # only this run's wineserver
+        if owned:
+            rd.release_lock()  # a failed run's directory is pruned after the retention time
         exc.add_note(f"the run directory was kept for debugging: {rd.path}")
         raise
     if owned:
+        note_isolated_run()
         if output_dir is not None and not keep:
             rd.cleanup()
-        else:
-            rd.release_wine()
+            return finish(value, where)
+        rd.release_wine()
+        rd.release_lock()
+        results = finish(value, where)
+        if output_dir is None:
+            results._run_root = rd.root  # results.close() deletes the run directory
+        return results
     return finish(value, where)
 
 
@@ -406,10 +459,10 @@ class TRIM:
         self.target = target
         self.ion = ion
 
-    def _write_input_files(self):
-        """Write necissary TRIM input files for calculation"""
-        AutoTRIM().write()
-        TRIMInput(self).write()
+    def _write_input_files(self, directory="."):
+        """Write necissary TRIM input files for calculation into ``directory``"""
+        AutoTRIM().write(directory)
+        TRIMInput(self).write(directory)
 
     def to_spec(self):
         """Describe this calculation as a :class:`srim.spec.RunSpec`.
@@ -539,6 +592,8 @@ class TRIM:
             "EXYZ.txt",
         }
 
+        warn_if_stale_install(src_directory)
+
         if not os.path.isdir(src_directory):
             raise ValueError("src_directory must be directory")
 
@@ -646,28 +701,24 @@ class TRIM:
     def _execute(self, srim_directory, prefix, write_spec):
         """Write the inputs, run ``TRIM.exe`` in ``srim_directory`` and return the spec."""
         srim_directory = os.path.abspath(srim_directory)
-        current_directory = os.getcwd()
-        try:
-            os.chdir(srim_directory)
-            _remove_stale(srim_directory, TRIM_OUTPUT_FILES + ("run.yaml",), "SRIM Outputs")
-            self._write_input_files()
-            started = datetime.now(UTC)
-            # Make sure compatible with Windows, OSX, and Linux
-            _run_srim("TRIM.exe", prefix)
-            finished = datetime.now(UTC)
-            _require_output(srim_directory, "RANGE.txt")
-            spec = self.to_spec()
-            if write_spec:
-                try:
-                    spec.to_yaml(
-                        os.path.join(srim_directory, "run.yaml"),
-                        _provenance(srim_directory, started, finished, spec.seed),
-                    )
-                except Exception as exc:  # the run itself succeeded; keep its results
-                    warnings.warn(f"could not write run.yaml: {exc}", RuntimeWarning, stacklevel=2)
-            return spec
-        finally:
-            os.chdir(current_directory)
+        # The process's working directory is never changed (runs may happen in threads).
+        _remove_stale(srim_directory, TRIM_OUTPUT_FILES + ("run.yaml",), "SRIM Outputs")
+        self._write_input_files(srim_directory)
+        started = datetime.now(UTC)
+        # Make sure compatible with Windows, OSX, and Linux
+        _run_srim("TRIM.exe", prefix, srim_directory)
+        finished = datetime.now(UTC)
+        _require_output(srim_directory, "RANGE.txt")
+        spec = self.to_spec()
+        if write_spec:
+            try:
+                spec.to_yaml(
+                    os.path.join(srim_directory, "run.yaml"),
+                    _provenance(srim_directory, started, finished, spec.seed),
+                )
+            except Exception as exc:  # the run itself succeeded; keep its results
+                warnings.warn(f"could not write run.yaml: {exc}", RuntimeWarning, stacklevel=2)
+        return spec
 
 
 def _provenance(srim_directory, started, finished, seed):
@@ -767,9 +818,9 @@ class SR:
         self.layer = layer
         self.ion = ion
 
-    def _write_input_file(self):
-        """Write necissary SR input file for calculation"""
-        SRInput(self).write()
+    def _write_input_file(self, directory="."):
+        """Write necissary SR input file for calculation into ``directory``"""
+        SRInput(self).write(directory)
 
     def run(
         self,
@@ -803,16 +854,11 @@ class SR:
 
         def execute(directory, prefix):
             sr_directory = os.path.abspath(os.path.join(directory, "SR Module"))
-            current_directory = os.getcwd()
-            try:
-                os.chdir(sr_directory)
-                _remove_stale(sr_directory, [self.settings.output_filename])
-                self._write_input_file()
-                # Make sure compatible with Windows, OSX, and Linux
-                _run_srim("SRModule.exe", prefix)
-                _require_output(sr_directory, self.settings.output_filename)
-            finally:
-                os.chdir(current_directory)
+            _remove_stale(sr_directory, [self.settings.output_filename])
+            self._write_input_file(sr_directory)
+            # Make sure compatible with Windows, OSX, and Linux
+            _run_srim("SRModule.exe", prefix, sr_directory)
+            _require_output(sr_directory, self.settings.output_filename)
 
         def collect(where, destination):
             _copy_outputs(where, destination, (self.settings.output_filename,))
