@@ -50,7 +50,7 @@ class FakeServer:
     def send_group_signal(self, pid, sig):
         assert pid == self.pid  # the group is led by the server
         self.signals.append(sig)
-        if sig == signal.SIGKILL or (sig == signal.SIGTERM and self.exits_on_term):
+        if sig == web.SIGKILL or (sig == signal.SIGTERM and self.exits_on_term):
             self.exited = True
 
     def poll(self):
@@ -292,13 +292,13 @@ def test_stopping_the_server_signals_its_group_then_kills_it(monkeypatch):
     )
     monkeypatch.setattr(web, "STOP_SECONDS", 0.01)
     web.stop_server(stuck)
-    assert stuck.signals == [signal.SIGTERM, signal.SIGKILL]  # the viewers die with it
+    assert stuck.signals == [signal.SIGTERM, web.SIGKILL]  # the viewers die with it
 
 
 @requires_posix
 def test_a_server_that_exits_on_term_is_still_killed_with_its_group(started):
     web.stop_server(started.server)
-    assert started.server.signals == [signal.SIGTERM, signal.SIGKILL]
+    assert started.server.signals == [signal.SIGTERM, web.SIGKILL]
 
 
 def test_stopping_on_windows_ends_the_process_tree_with_taskkill(monkeypatch):

@@ -56,6 +56,8 @@ STOP_SECONDS = 1.0
 #: seconds between two checks that the parent process is still there
 PARENT_POLL_SECONDS = 0.5
 IS_WINDOWS = os.name == "nt"
+#: SIGKILL where it exists (POSIX); the Windows path never sends it
+SIGKILL = getattr(signal, "SIGKILL", signal.SIGTERM)
 #: hosts that only this machine can reach
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 
@@ -137,7 +139,7 @@ def stop_server(server) -> None:
         return
     _signal_group(server, signal.SIGTERM)
     _wait_quietly(server)
-    _signal_group(server, signal.SIGKILL)  # the viewers too, whether or not the leader exited
+    _signal_group(server, SIGKILL)  # the viewers too, whether or not the leader exited
     _wait_quietly(server)
 
 
@@ -170,7 +172,7 @@ def exit_with_parent(on_orphaned=None, poll: float = PARENT_POLL_SECONDS):
 def _kill_own_group() -> None:
     """The server's orphan action: end its group (the viewers) if it leads one."""
     if os.getpgrp() == os.getpid():
-        os.killpg(os.getpid(), signal.SIGKILL)
+        os.killpg(os.getpid(), SIGKILL)
     os._exit(1)
 
 

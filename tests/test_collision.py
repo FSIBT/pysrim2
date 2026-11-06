@@ -224,7 +224,8 @@ def test_skipped_lines_are_counted_and_warned_about_once():
         assert c.skipped_lines == {"recoil": 56, "summary": 4}
         list(c.iter_events())
         _ = c.df
-    assert len(w) == 1
+    # only this warning counts (Windows CI can record unrelated ones in the same block)
+    assert len([x for x in w if "skipped" in str(x.message)]) == 1
 
 
 def test_clean_file_has_no_skipped_lines_and_no_warning(tmp_path, recwarn):
