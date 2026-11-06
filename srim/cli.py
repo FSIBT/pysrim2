@@ -160,6 +160,13 @@ def build_parser() -> argparse.ArgumentParser:
         "(plot and dashboard also a terminal on stdin and stdout), else plain is used",
     )
     scan_run.add_argument(
+        "--no-wait",
+        action="store_true",
+        help="the terminal views (plot, dashboard) close as soon as the scan has finished. By "
+        "default they stay open after the end, showing its final state, until q (or ctrl+c) "
+        "quits; the exit code is the scan's either way. plain and json ignore this option",
+    )
+    scan_run.add_argument(
         "--host",
         default="127.0.0.1",
         metavar="HOST",
@@ -657,12 +664,14 @@ def _sigterm_stops(stop):
         restore()
 
 
-def _run_in_app(call, events, scan, *, view, plot, stop, pause):
+def _run_in_app(call, events, scan, *, view, plot, stop, pause, wait: bool = True):
     """Run ``call()`` (the scan) in a thread and the live view in this one.
 
-    The scan's events are in ``events``; ``None`` is put when the scan thread has ended, which
-    is when the app exits. If the app fails, the scan is stopped (its partial result is kept)
-    and the error is raised here, as if the scan had raised it. SIGTERM stops the scan too.
+    The scan's events are in ``events``; ``None`` is put when the scan thread has ended. The app
+    then stays open until q (``wait``, the default: see :class:`~srim.ui.tui.app.ScanApp`) or
+    exits at once (``wait=False``, or when the scan was stopped or failed). If the app fails,
+    the scan is stopped (its partial result is kept) and the error is raised here, as if the
+    scan had raised it. SIGTERM stops the scan too.
     When the app quits before the scan has stopped (ctrl+c twice), the command waits at most
     :data:`TERMINAL_JOIN_SECONDS` and returns None: the scan thread is a daemon and goes on
     stopping only until the process exits.
@@ -683,7 +692,9 @@ def _run_in_app(call, events, scan, *, view, plot, stop, pause):
     thread = threading.Thread(target=work, name="pysrim2-scan", daemon=True)
     thread.start()
     try:
-        ScanApp(scan, events, stop_event=stop, pause_event=pause, view=view, plot=plot).run()
+        ScanApp(
+            scan, events, stop_event=stop, pause_event=pause, view=view, plot=plot, wait=wait
+        ).run()
     finally:
         if thread.is_alive():  # the app failed or quit early: stop the scan
             stop.set()
@@ -821,7 +832,14 @@ def _scan_run(args) -> int:
         try:
             if terminal:
                 result = _run_in_app(
-                    scan_call, events, scan, view=view, plot=args.plot, stop=stop, pause=pause
+                    scan_call,
+                    events,
+                    scan,
+                    view=view,
+                    plot=args.plot,
+                    stop=stop,
+                    pause=pause,
+                    wait=not args.no_wait,
                 )
                 if result is None:  # the app quit first: the scan is not finished
                     csv = folder / "result" / "scan.csv"

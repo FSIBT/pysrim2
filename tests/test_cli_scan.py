@@ -263,6 +263,7 @@ def test_a_terminal_view_runs_the_scan_in_a_thread_and_feeds_the_app(work, monke
     app = FakeApp.last
     assert app.kinds[0] == "scan_started" and app.kinds[-1] == "scan_finished"
     assert app.kwargs["view"] == "dashboard" and app.kwargs["plot"] == "ion.energy_keV,mean"
+    assert app.kwargs["wait"] is True  # the app stays open after the scan until q
     assert f"result: {out / 'result' / 'scan.csv'}" in capsys.readouterr().out
     assert (out / "result" / "scan.csv").is_file()
 
@@ -762,3 +763,20 @@ def test_a_web_run_turns_sigterm_into_a_stop_and_restores_the_handler(work, monk
                      str(free_port()), "-o", str(work / "out")])  # fmt: skip
     assert code == 0 and len(calls) == 1
     assert signal.getsignal(signal.SIGTERM) is before  # the previous handler is back
+
+
+def test_no_wait_closes_a_terminal_view_when_the_scan_ends(work, monkeypatch, capsys):
+    pytest.importorskip("textual")
+    monkeypatch.setattr(cli, "_view_for", lambda ui: "plot")
+    monkeypatch.setattr("srim.ui.tui.app.ScanApp", FakeApp)
+    out = work / "out"
+    code = cli.main(["scan", "run", str(write_scan(work)), "-o", str(out), "--no-wait"])
+    assert code == 0
+    assert FakeApp.last.kwargs["wait"] is False
+
+
+@pytest.mark.parametrize("ui", ["plain", "json"])
+def test_no_wait_is_accepted_and_ignored_by_plain_and_json(work, ui, capsys):
+    out = work / "out"
+    code = cli.main(["scan", "run", str(write_scan(work)), "--ui", ui, "--no-wait", "-o", str(out)])
+    assert code == 0 and (out / "result" / "scan.csv").is_file()

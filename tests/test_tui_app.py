@@ -74,10 +74,10 @@ def run(coro):
     return asyncio.run(asyncio.wait_for(coro, 120))
 
 
-def make_app(scan, tmp_path, view="plot", plot=None):
+def make_app(scan, tmp_path, view="plot", plot=None, wait=True):
     events = queue.Queue()
     stop, pause = threading.Event(), threading.Event()
-    app = ScanApp(scan, events, stop_event=stop, pause_event=pause, view=view, plot=plot)
+    app = ScanApp(scan, events, stop_event=stop, pause_event=pause, view=view, plot=plot, wait=wait)
     return app, events, stop, pause
 
 
@@ -345,5 +345,93 @@ def test_a_finished_point_updates_its_table_cells_in_place(tmp_path):
             assert app.screen.table_rebuilds == rebuilt  # updated in place, order unchanged
             events.put(None)
             await pilot.pause()
+
+    run(scenario())
+
+
+def finish(events, scan, stopped=False):
+    events.put(ScanFinished(n_done=3, n_failed=0, seconds=1.0, stopped=stopped))
+    events.put(None)
+
+
+def test_a_finished_scan_keeps_the_app_open_and_says_how_to_quit(tmp_path):
+    scan = scan_of()
+    app, events, stop, pause = make_app(scan, tmp_path)  # wait is on by default
+    feed_start(events, scan, tmp_path)
+    feed_result(events, scan, 0, 1.0)
+    feed_result(events, scan, 1, 2.0)
+    feed_result(events, scan, 2, 3.0)
+    finish(events, scan)
+
+    async def scenario():
+        async with app.run_test(size=(120, 40)) as pilot:
+            await until(lambda: "finished 3/3" in app.screen.status_text)
+            await pilot.pause(0.6)  # several ticks after the end: the app stays open
+            assert app.return_code is None
+            assert "finished — press q to quit" in app.screen.status_text
+            await pilot.press("v")  # every key works after the end, the views too
+            await until(lambda: isinstance(app.screen, DashboardScreen))
+            assert "finished — press q to quit" in app.screen._shown["overall"]
+            await pilot.press("p")  # no pause after the end
+            assert not pause.is_set()
+            await pilot.press("q")  # q quits: the scan was not stopped by it
+            await until(lambda: app.return_code is not None)
+        assert not stop.is_set()
+
+    run(scenario())
+
+
+def test_ctrl_c_after_the_end_quits_without_stopping_anything(tmp_path):
+    scan = scan_of()
+    app, events, stop, _ = make_app(scan, tmp_path)
+    feed_start(events, scan, tmp_path)
+    finish(events, scan)
+
+    async def scenario():
+        async with app.run_test() as pilot:
+            await until(lambda: "finished" in app.screen.status_text)
+            await pilot.press("ctrl+c")
+            await until(lambda: app.return_code is not None)
+        assert not stop.is_set()
+
+    run(scenario())
+
+
+def test_no_wait_closes_the_app_as_soon_as_the_scan_has_finished(tmp_path):
+    scan = scan_of()
+    app, events, _, _ = make_app(scan, tmp_path, wait=False)
+    feed_start(events, scan, tmp_path)
+    finish(events, scan)
+
+    async def scenario():
+        async with app.run_test():
+            await until(lambda: app.return_code is not None)
+
+    run(scenario())
+
+
+def test_a_scan_that_fails_closes_the_app_even_when_waiting(tmp_path):
+    scan = scan_of()
+    app, events, _, _ = make_app(scan, tmp_path)
+    feed_start(events, scan, tmp_path)
+    events.put(None)  # the scan thread ended without scan_finished (it raised)
+
+    async def scenario():
+        async with app.run_test():
+            await until(lambda: app.return_code is not None)
+
+    run(scenario())
+
+
+def test_q_after_a_stopped_scan_still_exits_when_it_ends(tmp_path):
+    scan = scan_of()
+    app, events, stop, _ = make_app(scan, tmp_path)
+    feed_start(events, scan, tmp_path)
+
+    async def scenario():
+        async with app.run_test() as pilot:
+            await pilot.press("q")  # the user stops the scan: the app closes when it ends
+            finish(events, scan, stopped=True)
+            await until(lambda: app.return_code is not None)
 
     run(scenario())

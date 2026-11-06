@@ -4,7 +4,8 @@
 puts every event there, see ``pysrim2 scan run``). Every ``REFRESH_SECONDS`` it applies all
 the events waiting in the queue at once, then redraws the current view: updates are coalesced,
 so a slow terminal never holds up the workers. ``None`` in the queue means the scan thread has
-ended, and the app exits.
+ended, and the app exits. It stays open after the end (``wait``, the default) until ``q``
+or ctrl+c; ``wait=False`` closes it at once.
 
 Keys: ``p`` pauses or resumes the scheduling (``pause_event``), ``q`` (or ``ctrl+c``) stops
 the scan cleanly (``stop_event``; the app exits when the scan has ended), ``v`` switches between
@@ -37,6 +38,8 @@ from .state import ScanState, format_hms, sparkline, status_line
 REFRESH_SECONDS = 0.25
 #: the warnings the dashboard shows
 WARNINGS_SHOWN = 5
+#: the note of the views once the scan has ended and the app waits for ``q``
+FINISHED_NOTE = "finished — press q to quit"
 
 
 def _read(path: Path | None) -> str | None:
@@ -73,6 +76,7 @@ class ScanApp(App):
         view: str = "plot",
         plot=None,
         clock=time.time,
+        wait: bool = True,
     ):
         super().__init__()
         self.state = ScanState(scan)
@@ -82,6 +86,8 @@ class ScanApp(App):
         self.view_name = "dashboard" if view == "dashboard" else "plot"
         self.plot_spec = plot
         self.clock = clock
+        #: True: the app stays open after the scan has ended, until q or ctrl+c
+        self.wait = wait
         #: a line the views show after the status (``stopping…``)
         self.note = ""
         self.ended = False
@@ -98,11 +104,28 @@ class ScanApp(App):
     def tick(self) -> None:
         """Apply the waiting events, then redraw the current view (or exit at the end)."""
         self.drain()
-        if self.ended:
+        if self.ended and not self.holding:
             self.exit()
             return
         if isinstance(self.screen, PlotScreen | DashboardScreen):
             self.screen.update_from(self)
+
+    def scan_over(self) -> bool:
+        """True once the scan has ended: its ``scan_finished`` came, or its thread did."""
+        return self.state.finished or self.ended
+
+    @property
+    def holding(self) -> bool:
+        """The app waits for ``q`` after the scan has finished: not when the user stopped
+        the scan (``q`` or SIGTERM set ``stop_event``) or when it is not waiting (``wait``)."""
+        return self.wait and self.state.finished and not self.stop_event.is_set()
+
+    @property
+    def status_note(self) -> str:
+        """The line the views show after the status: a note of the keys, or the end note."""
+        if self.note:
+            return self.note
+        return FINISHED_NOTE if self.holding else ""
 
     def drain(self) -> None:
         """Apply every event waiting in the queue; ``None`` ends the scan."""
@@ -123,6 +146,8 @@ class ScanApp(App):
     # -- keys ----------------------------------------------------------------------------------
 
     def action_toggle_pause(self) -> None:
+        if self.scan_over():  # nothing is left to pause
+            return
         if self.pause_event.is_set():
             self.pause_event.clear()
         else:
@@ -134,7 +159,11 @@ class ScanApp(App):
         return super().check_action(action, parameters)
 
     def action_stop(self) -> None:
-        """``q``: stop the scan cleanly. Pressed again while it stops, it says how to quit."""
+        """``q``: stop the scan cleanly. Pressed again while it stops, it says how to quit.
+        Once the scan has ended, ``q`` quits the app."""
+        if self.scan_over():
+            self.exit()
+            return
         if not self.stop_event.is_set():
             self.stop_event.set()
             self.note = "stopping…"
@@ -225,7 +254,7 @@ class PlotScreen(_LiveScreen):
             widget.refresh()
             self._drawn = (state.data_version, axes)
             self.plot_rebuilds += 1
-        self._show("strip", status_line(state, app.clock(), app.note))
+        self._show("strip", status_line(state, app.clock(), app.status_note))
 
     def on_screen_resume(self) -> None:
         self.update_from(self.app)
@@ -297,7 +326,9 @@ class DashboardScreen(_LiveScreen):
         done = counts["done"] + counts["cached"]
         eta = state.eta_seconds()
         eta_text = "?" if eta is None else format_hms(eta)
-        flags = " ".join(flag for flag in ("paused" if state.paused else "", app.note) if flag)
+        flags = " ".join(
+            flag for flag in ("paused" if state.paused else "", app.status_note) if flag
+        )
         self._show(
             "overall",
             f"points: done {done} (cached {counts['cached']})  running {counts['running']}  "
