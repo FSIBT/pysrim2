@@ -49,3 +49,13 @@ def test_plot_vacancies_smoke(results, ax):
     assert len(ax.lines) == 1
     assert ax.lines[0].get_label() == "Total vacancies at depth"
     assert isinstance(total, float)
+
+
+def test_plot_vacancies_excludes_knock_ons(results, ax):
+    # VACANCY.txt: knock-ons are primary knock-on atoms, not vacancies; the plotted total
+    # is the sum of the element columns only (the header "Total Target Vacancies")
+    df = results.vacancy.df
+    elements = [c for c in df.columns if c.startswith("vacancies_")]
+    expected = df[elements].sum(axis=1).to_numpy()
+    plot_vacancies(results, ax)
+    assert ax.lines[0].get_ydata() == pytest.approx(expected)

@@ -48,6 +48,7 @@ def plot_vacancies(results, ax):
         matplotlib axes to plot into
     """
     vac = results.vacancy
-    vacancy_depth = vac.knock_ons + np.sum(vac.vacancies, axis=1)
+    # vacancies of the elements only: knock-ons are not vacancies (see VACANCY.txt)
+    vacancy_depth = np.sum(vac.vacancies, axis=1)
     ax.plot(vac.depth, vacancy_depth, label="Total vacancies at depth")
     return sum(vacancy_depth)
