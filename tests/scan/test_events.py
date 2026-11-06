@@ -87,3 +87,29 @@ def test_worker_stats_cpu_is_optional_and_none_by_default():
     assert stats.cpu_percent is None
     assert stats.to_dict()["ions_per_s"] is None
     assert not math.isnan(stats.time)
+
+
+def test_an_event_reads_back_from_its_json_line():
+    originals = [
+        ScanFinished(n_done=3, n_failed=1, seconds=2.5, stopped=True),
+        PointFinished(index=0, id="x", values={"mean": 1.5}, n_ions=10, seconds=0.25),
+        events.BatchFinished(index=1, batch=2, ions=300, value_estimates={"v": [1.0, None]}),
+        events.WorkerStats(worker=0, ions_per_s=None),
+        events.ScanPaused(paused=True),
+    ]
+    for original in originals:
+        back = events.event_from_dict(json.loads(original.to_json()))
+        assert type(back) is type(original)
+        assert back.to_dict() == original.to_dict()
+
+
+def test_an_event_from_a_newer_writer_ignores_the_fields_it_does_not_know():
+    data = {"kind": "scan_paused", "paused": False, "time": 5.0, "future_field": 1}
+    assert events.event_from_dict(data) == events.ScanPaused(paused=False, time=5.0)
+
+
+def test_an_unknown_kind_or_a_missing_field_is_an_error():
+    with pytest.raises(ValueError, match="unknown event kind 'nope'"):
+        events.event_from_dict({"kind": "nope"})
+    with pytest.raises(TypeError):
+        events.event_from_dict({"kind": "scan_paused"})  # no 'paused'

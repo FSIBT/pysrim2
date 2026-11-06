@@ -257,8 +257,24 @@ EVENT_TYPES = {
     )
 }
 
+
+def event_from_dict(data: Mapping):
+    """The event that ``to_dict()`` (or one line of ``to_json()``, parsed) describes.
+
+    Fields the event class does not know are ignored (a newer writer); a missing required
+    field raises TypeError and an unknown ``kind`` raises ValueError.
+    """
+    kind = data.get("kind")
+    cls = EVENT_TYPES.get(kind)
+    if cls is None:
+        raise ValueError(f"unknown event kind {kind!r}")
+    names = {f.name for f in fields(cls)}
+    return cls(**{key: value for key, value in data.items() if key in names})
+
+
 __all__ = [
     "EVENT_TYPES",
+    "event_from_dict",
     "BatchFinished",
     "PointCached",
     "PointFailed",
