@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A scan folder holds a `.pysrim2-scan` marker (written by `run_scan` and `prepare`) and a running scan holds `.scan.lock`: a second `run_scan` in the same folder raises `srim.scan.ScanBusy` before it writes anything.
 - `pysrim2 scan run SCAN.yaml [--workers N] [--backend local|container] [--image REF] [--ui plot|dashboard|web|plain|json] [--output DIR] [--cache DIR | --no-cache] [--retries N] [--set KEY=VALUE ...]` runs a scan and prints its result path. `--ui plain` prints a status line when the state changes; `--ui json` writes every event as one JSON line on stdout. Exit codes: 0 every point done or cached (a point that reached `max_ions` gives a warning), 1 some point failed or is missing, 2 bad input or nothing could start, 130 stopped by Ctrl-C (the partial result is kept). `plot`, `dashboard` and `web` are not available yet: `plain` runs with a notice on stderr.
 - `pysrim2 scan prepare SCAN.yaml -o DIR [--jobs N] [--set ...]` writes the job folders and `submit.sbatch` for a cluster; `pysrim2 scan collect DIR [--cache DIR | --no-cache]` builds the result of the finished tasks and prints a summary per status.
 - `pysrim2 scan clean DIR [--dry-run]` removes the cache entries of a scan folder that no scan is using; `--all` removes the whole folder (only one with a `scan.yaml`); `pysrim2 scan clean --cache PATH` clears a shared cache.

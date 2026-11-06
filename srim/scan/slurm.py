@@ -32,7 +32,7 @@ from ..spec import SpecError
 from .backends import DONE, ERROR_LOG, OUT_DIR, read_job, write_job
 from .batches import MAX_SEED, derive_seed
 from .cache import cache_key
-from .executor import _RESERVED, _open_cache, _summary
+from .executor import _RESERVED, _open_cache, _summary, mark_scan_folder
 from .extract import combine
 from .precision import Precision
 from .result import ScanResult
@@ -84,6 +84,7 @@ def prepare(scan: Scan, scan_dir, *, jobs=None) -> Path:
     if (folder / SCAN_FILE).exists() or (folder / JOBS_DIR).exists():
         raise FileExistsError(f"{folder} already holds a prepared scan; choose another folder")
     folder.mkdir(parents=True, exist_ok=True)
+    mark_scan_folder(folder)
     base_seed = scan.seed if scan.seed is not None else secrets.randbelow(MAX_SEED) + 1
     _recorded(scan, base_seed).to_yaml(
         folder / SCAN_FILE, provenance={"pysrim2_version": __version__}

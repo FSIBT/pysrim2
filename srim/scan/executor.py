@@ -70,6 +70,7 @@ from numbers import Integral, Real
 from pathlib import Path
 
 from .. import __version__
+from .._lock import FileLock
 from ..output import Results
 from ..paths import srim_dir
 from ..rundir import RunDir
@@ -111,6 +112,26 @@ _POLL_SECONDS = 0.1
 _SIGKILL = getattr(signal, "SIGKILL", signal.SIGTERM)
 #: columns the scan builds itself; an extractor may not produce them
 _RESERVED = frozenset({"index", "id", "status", "error", "path", "n_ions", "seeds"})
+#: the marker of a scan folder: ``pysrim2 scan clean --all`` removes only folders that have it
+MARKER_NAME = ".pysrim2-scan"
+#: the lock of a scan folder, held while a scan runs (and by ``pysrim2 scan clean``)
+LOCK_NAME = ".scan.lock"
+
+
+class ScanBusy(RuntimeError):
+    """Another scan is running in the scan folder (its lock is held)."""
+
+
+def mark_scan_folder(folder) -> None:
+    """Write the marker file of a scan folder (one line, with the pysrim2 version)."""
+    text = f"pysrim2 scan folder, pysrim2 {__version__}\n"
+    Path(folder, MARKER_NAME).write_text(text, encoding="utf-8")
+
+
+def scan_lock(folder) -> FileLock:
+    """The lock of a scan folder, not acquired yet. ``acquire()`` takes it without waiting
+    and raises TimeoutError when another scan (or ``scan clean``) holds it."""
+    return FileLock(Path(folder) / LOCK_NAME, timeout=0)
 
 
 def run_scan(
@@ -183,6 +204,8 @@ def run_scan(
 
     Raises
     ------
+    ScanBusy
+        when another scan is running in ``scan_dir`` (nothing is started or written then)
     ValueError
         for an unknown ``backend``, or ``runner=`` with the container back end
     ContainerError
@@ -216,21 +239,29 @@ def run_scan(
         )
     )
     folder = _new_folder(scan_dir)
-    store = _open_cache(cache, folder)
-    recorded.to_yaml(folder / "scan.yaml", provenance={"pysrim2_version": __version__})
-    run = _ScanRun(
-        recorded,
-        folder,
-        workers=workers,
-        base_seed=base_seed,
-        runner=runner,
-        retries=retries,
-        on_event=on_event,
-        stop=stop_event if stop_event is not None else threading.Event(),
-        cache=store,
-    )
-    with _stop_on_signals(run.stop):
-        return run.execute()
+    try:
+        lock = scan_lock(folder).acquire()
+    except TimeoutError:
+        raise ScanBusy(f"a scan is already running in {folder}") from None
+    try:
+        mark_scan_folder(folder)
+        store = _open_cache(cache, folder)
+        recorded.to_yaml(folder / "scan.yaml", provenance={"pysrim2_version": __version__})
+        run = _ScanRun(
+            recorded,
+            folder,
+            workers=workers,
+            base_seed=base_seed,
+            runner=runner,
+            retries=retries,
+            on_event=on_event,
+            stop=stop_event if stop_event is not None else threading.Event(),
+            cache=store,
+        )
+        with _stop_on_signals(run.stop):
+            return run.execute()
+    finally:
+        lock.release()
 
 
 # -- worker processes ----------------------------------------------------------------------
