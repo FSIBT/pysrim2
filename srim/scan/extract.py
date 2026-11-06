@@ -27,6 +27,7 @@ import numpy as np
 
 from ..analysis import implant_summary as _implant_summary
 from ..output import Results
+from ..spec import SpecError, parse_trim_in
 
 #: ``extract(results, point) -> dict``; ``point`` is a ``ScanPoint`` (or ``None``)
 Extractor = Callable[[Results, Any], dict[str, Any]]
@@ -149,22 +150,11 @@ def _output_df(results, attribute, who, setting):
 
 
 def _trim_in_ions(directory):
-    """Number of ions requested in the ``TRIM.IN`` of ``directory``; ``None`` if unreadable.
-
-    The ion line follows the ``Ion:`` header line; its fifth field is the number of ions.
-    """
+    """Number of ions requested in the ``TRIM.IN`` of ``directory``; ``None`` if unreadable."""
     try:
-        lines = Path(directory, "TRIM.IN").read_bytes().decode("latin-1").splitlines()
-    except OSError:
+        return parse_trim_in(Path(directory, "TRIM.IN")).number_ions
+    except (OSError, SpecError):
         return None
-    for i, line in enumerate(lines):
-        if line.startswith("Ion:") and i + 1 < len(lines):
-            fields = lines[i + 1].split()
-            try:
-                return int(float(fields[4]))
-            except (IndexError, ValueError):
-                return None
-    return None
 
 
 def _incident_ions(results):
