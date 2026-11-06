@@ -3,7 +3,6 @@ replaced by a fake display module and the clock is a list the test moves, so not
 
 import sys
 import types
-import warnings
 
 import pytest
 from matplotlib.figure import Figure
@@ -15,6 +14,7 @@ from srim.scan.events import (
     PointQueued,
     ScanFinished,
     ScanStarted,
+    WorkerStats,
 )
 from srim.spec import RunSpec
 from srim.ui import LiveView, notebook
@@ -73,11 +73,15 @@ class FakeDisplay:
 
 @pytest.fixture
 def fake_ipython(monkeypatch):
+    """A notebook session (get_ipython) with a fake display module."""
+    import IPython
+
     display = FakeDisplay()
     module = types.ModuleType("IPython.display")
     module.display = display.display
     module.Pretty = Pretty
     monkeypatch.setitem(sys.modules, "IPython.display", module)
+    monkeypatch.setattr(IPython, "get_ipython", lambda: object())
     return display
 
 
@@ -186,18 +190,36 @@ def test_a_scan_folder_without_its_scan_file_warns_and_the_scan_goes_on(tmp_path
         view(started(tmp_path))  # no scan.yaml here
 
 
-def test_outside_a_notebook_the_view_draws_nothing_and_does_not_fail(tmp_path, monkeypatch):
-    make_scan_folder(tmp_path)
-    display = FakeDisplay(in_notebook=False)
-    module = types.ModuleType("IPython.display")
-    module.display = display.display
-    module.Pretty = Pretty
-    monkeypatch.setitem(sys.modules, "IPython.display", module)
-    view = LiveView(clock=Clock())
-    with warnings.catch_warnings():
-        warnings.simplefilter("error")  # nothing may go wrong
-        view(started(tmp_path))
-        view(ScanFinished(n_done=0, n_failed=0, seconds=0.0, stopped=False))
+def test_outside_a_notebook_the_view_refuses_to_start(tmp_path, fake_ipython, monkeypatch):
+    import IPython
+
+    monkeypatch.setattr(IPython, "get_ipython", lambda: None)
+    with pytest.raises(RuntimeError, match="needs a Jupyter/IPython session"):
+        LiveView()
+
+
+def test_a_plot_option_with_a_bad_syntax_is_refused_before_the_scan(fake_ipython):
+    with pytest.raises(ValueError, match="plot takes X,Y or X,Y,HUE"):
+        LiveView(plot="just-one")
+
+
+def test_a_throttled_change_is_drawn_by_the_next_event_after_the_interval(tmp_path, fake_ipython):
+    scan = make_scan_folder(tmp_path)
+    clock = Clock(1000.0)
+    view = LiveView(clock=clock)
+    feed(view, [started(tmp_path)])
+    drawn = len(view._plot_handle.shown)
+    clock.now += 0.2
+    point = scan.points()[0]
+    view(PointFinished(point.index, point.id, {"mean": 1.0}, 100, 1.0, time=0.0))
+    assert len(view._plot_handle.shown) == drawn  # inside the interval: not yet
+    clock.now += 0.5
+    view(WorkerStats(worker=0, ions_per_s=10.0))  # any event flushes it once it is due
+    assert len(view._plot_handle.shown) == drawn  # 0.7 s: still not due
+    clock.now += 0.5
+    view(WorkerStats(worker=0, ions_per_s=10.0))
+    assert len(view._plot_handle.shown) == drawn + 1
+    assert view._plot_handle.shown[-1].axes[0].lines  # the point is in the figure
 
 
 def test_without_ipython_the_error_names_the_install_command(monkeypatch):

@@ -50,7 +50,8 @@ def check_plot(param_names, plot):
     ``None`` (or an empty part) for ``x``, ``y`` or the hue means the default. ``hue=""``
     (written ``X,Y,`` on the command line) means no hue. ``x`` must be ``index`` or a scanned
     parameter, and ``hue`` one too; ``y`` is checked against the extracted columns once a
-    result is known (see :func:`build`). Raises ValueError otherwise.
+    result is known (see :func:`build`). Raises ValueError otherwise. ``param_names=None``
+    checks the syntax only (the scan is not known yet).
     """
     if plot is None:
         return None, None, None
@@ -62,9 +63,9 @@ def check_plot(param_names, plot):
     x, y, hue = parts
     x = x or None
     y = y or None
-    if x is not None and x != "index" and x not in param_names:
+    if param_names is not None and x is not None and x != "index" and x not in param_names:
         raise ValueError(f"x {x!r} is not a scanned parameter (have: {_names(param_names)})")
-    if hue and hue not in param_names:
+    if param_names is not None and hue and hue not in param_names:
         raise ValueError(f"hue {hue!r} is not a scanned parameter (have: {_names(param_names)})")
     return x, y, (hue if hue is not None else None)
 

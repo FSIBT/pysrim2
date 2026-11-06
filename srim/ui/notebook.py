@@ -6,10 +6,11 @@ has finished. The plot is the one of ``ScanResult.plot`` (the same axes, one ser
 the hue parameter, error bars from ``<value>_err``); ``plot="X,Y[,HUE]"`` picks the axes as
 ``pysrim2 scan run --plot`` does. The status line is the one of the terminal views.
 
-The view runs in the scan's thread, so it draws quickly and never raises: if it fails, the view
-says why (a warning, and the status line when it is shown) and stops, and the scan goes on.
-It needs IPython (for the display) and matplotlib, both imported when the view is made. No
-widgets are used.
+The view runs in the scan's thread, and each redraw runs in the scan's event loop: the figure
+takes tens of milliseconds for a few hundred points, so raise ``every`` for a big scan. It never
+raises: if it fails, the view says why (a warning, and the status line when it is shown) and
+stops, and the scan goes on. It needs a Jupyter (IPython) session, and matplotlib; both are
+checked when the view is made. No widgets are used.
 
 The scan's points come from the scan folder's ``scan.yaml``, which is written before the scan
 starts (``scan_started`` carries the folder).
@@ -41,10 +42,19 @@ class LiveView:
         if every < 0:
             raise ValueError(f"every must not be negative, not {every!r}")
         try:
+            from IPython import get_ipython
             from IPython.display import Pretty, display
             from matplotlib.figure import Figure
         except ImportError as exc:
             raise ImportError(_NEEDS_IPYTHON) from exc
+        if get_ipython() is None:
+            raise RuntimeError(
+                "LiveView needs a Jupyter/IPython session: it draws into the cell that runs the "
+                "scan (in a script, use on_event=PlainProgress() or JsonLines())"
+            )
+        from srim.ui.tui.plot import check_plot
+
+        check_plot(None, plot)  # the syntax; the names are checked when the scan starts
         self.plot = plot
         self.every = every
         self.clock = clock
