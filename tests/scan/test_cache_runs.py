@@ -395,6 +395,22 @@ def test_a_precision_point_that_is_all_cached_has_status_cached(tmp_path, state_
     assert again.table["status"].tolist() == ["cached"]
 
 
+def test_an_all_cached_point_that_hit_max_ions_keeps_max_ions(tmp_path, state_dir):
+    cache_dir = tmp_path / "cache"
+    scan = precision_scan(Precision("cache_draw", rel=0.0001, min_ions=10, max_ions=20,
+                                    batch_ions=10))
+    with pytest.warns(UserWarning, match="max_ions"):
+        first = run_scan(scan, workers=1, scan_dir=tmp_path / "a", runner=recording_runner,
+                         cache=cache_dir)
+    assert first.table["status"].tolist() == ["max_ions"]
+    before = len(calls(state_dir))
+    with pytest.warns(UserWarning, match="max_ions"):
+        again = run_scan(scan, workers=1, scan_dir=tmp_path / "b", runner=recording_runner,
+                         cache=cache_dir)
+    assert len(calls(state_dir)) == before  # every batch came from the cache
+    assert again.table["status"].tolist() == ["max_ions"]
+
+
 def test_a_cached_unit_gives_a_point_cached_event_before_its_finish(tmp_path, state_dir):
     cache_dir = tmp_path / "cache"
     first = run_scan(

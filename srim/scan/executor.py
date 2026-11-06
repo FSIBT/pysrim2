@@ -670,8 +670,9 @@ class _ScanRun:
         return cache_key(spec, spec.seed)
 
     def _status(self, index, status):
-        """``cached`` for a point none of whose units a worker ran, else ``status``."""
-        return status if index in self.ran else "cached"
+        """``cached`` for a point that finished (``done``) with none of its units run by a
+        worker; any other outcome (``max_ions``) keeps its status."""
+        return "cached" if status == "done" and index not in self.ran else status
 
     def _admit(self, unit):
         """Decide how a unit runs: ``"hit"`` (taken from the cache and completed now),
