@@ -198,13 +198,20 @@ class SRIM_Output:
 
     @property
     def metadata(self):
-        """:obj:`dict` with ``ion`` (symbol), ``energy_eV``, ``num_ions`` and ``source`` (file path)"""
-        return {
+        """:obj:`dict` with ``ion`` (symbol), ``energy_eV``, ``num_ions`` and ``source`` (file path).
+
+        ``ions_calculated`` (the raw ion count of SRIM, a float) is included when the file
+        has it; ``num_ions`` is that count rounded to the nearest integer.
+        """
+        meta = {
             "ion": self.ion.symbol,
             "energy_eV": self.ion.energy,
             "num_ions": self.num_ions,
             "source": self._source,
         }
+        if getattr(self, "_ions_calculated", None) is not None:
+            meta["ions_calculated"] = self._ions_calculated
+        return meta
 
     def _read_name(self, output):
         raise NotImplementedError()
@@ -242,10 +249,16 @@ class SRIM_Output:
         raise SRIMOutputParseError("unable to extract total target from file")
 
     def _read_num_ions(self, output):
+        """Number of ions, rounded to the nearest integer.
+
+        SRIM writes "Total Ions calculated" as an effective number, e.g. ``59.93`` for a run
+        of 60 ions, so truncating would give 59. The raw value is kept as
+        ``self._ions_calculated`` (in :attr:`metadata` as ``ions_calculated``).
+        """
         match = re.search(rb"Total Ions calculated\s+=(\d+.\d+)", output)
         if match:
-            # Cast string -> float -> round down to nearest int
-            return int(_to_float(match.group(1)))
+            self._ions_calculated = _to_float(match.group(1))
+            return int(self._ions_calculated + 0.5)
         raise SRIMOutputParseError("unable to extract total ions from file")
 
     def _read_table(self, output):

@@ -37,7 +37,9 @@ create a new `Results`. The attribute is `None` if the file is absent.
 
 TRIM normally writes these six files (`novac` is absent for Kinchin-Pease runs). All have `depth_A` as first column
 (left edge of the depth bin, Angstrom) and one row per depth bin. `.metadata`
-holds `ion` (symbol), `energy_eV`, `num_ions` and `source` (the file read).
+holds `ion` (symbol), `energy_eV`, `num_ions` and `source` (the file read). `num_ions`
+is SRIM's ion count rounded to the nearest integer; the raw value SRIM writes (e.g.
+`59.93` for a run of 60 ions) is `ions_calculated` when the file has it.
 Values are normalised per ion, so they do not depend on the number of ions.
 
 The element columns are named after the elements of the target (`Ni`, `Si`,

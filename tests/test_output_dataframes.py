@@ -80,7 +80,7 @@ def test_metadata(directory):
     ion, energy, num_ions, _ = CASES[directory]
     obj = Ioniz(os.path.join(D, directory))
     md = obj.metadata
-    assert set(md) == {"ion", "energy_eV", "num_ions", "source"}
+    assert set(md) - {"ions_calculated"} == {"ion", "energy_eV", "num_ions", "source"}
     assert md["ion"] == ion
     assert md["energy_eV"] == pytest.approx(energy)
     assert md["num_ions"] == obj.num_ions
@@ -155,3 +155,20 @@ def test_kinchin_pease_multi_element_target_keeps_numbered_columns():
     # test_files/4: Ti/Si/C target, header without symbols, one vacancy column
     df = Vacancy(os.path.join(D, "4")).df
     assert "vacancies_1_per_A_per_ion" in df.columns
+
+
+# SRIM writes the ions of a calculation as an effective number ("Total Ions calculated")
+@pytest.mark.parametrize(
+    "folder, num_ions, calculated",
+    [
+        ("1", 1000, 1000.0),
+        ("SiC-C", 999, 999.40),
+        ("outputs-0.8/thin", 60, 59.93),  # run with 60 ions
+        ("outputs-0.8/exyz", 10, 9.52),  # run with 10 ions
+    ],
+)
+def test_num_ions_is_rounded_and_raw_value_kept(folder, num_ions, calculated):
+    range_ = Range(os.path.join(D, folder))
+    assert range_.num_ions == num_ions
+    assert range_.metadata["num_ions"] == num_ions
+    assert range_.metadata["ions_calculated"] == pytest.approx(calculated)
