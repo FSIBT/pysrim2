@@ -19,8 +19,8 @@ import pytest
 from srim.output import Results
 from srim.scan import Precision, Scan, ScanResult, collect_slurm, prepare_slurm, run_scan
 from srim.scan.backends import read_job, run_job
-from srim.scan.extract import register
 from srim.scan.batches import MergedResults
+from srim.scan.extract import register
 from srim.spec import RunSpec, SpecError
 
 FIXTURE = Path(__file__).resolve().parents[2] / "test_files" / "1"

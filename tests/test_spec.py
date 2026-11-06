@@ -551,7 +551,6 @@ def test_run_yaml_accepts_a_scan_section_and_ignores_it(tmp_path):
         RunSpec.from_yaml(tmp_path / "bad.yaml")
 
 
-
 def test_copy_output_files_leaves_the_sources_in_place_for_results(tmp_path):
     """Files of SRIM Outputs are copied, so Results of the source keeps reading them."""
     from srim.output import Results

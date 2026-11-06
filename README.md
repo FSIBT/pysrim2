@@ -167,7 +167,7 @@ and keeps every run in a cache, so a rerun computes nothing new. Define it with
 from srim.scan import Scan, run_scan
 
 scan = Scan(base, grid={"ion.energy_keV": [10.0, 20.0, 30.0]}, ions=1000, seed=1)
-result = run_scan(scan)          # a table with one row per point, and a scan folder
+result = run_scan(scan)  # a table with one row per point, and a scan folder
 ```
 
 Precision targets, batches of a fixed ion count, the result table, Slurm and containers are
