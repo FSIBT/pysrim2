@@ -52,13 +52,16 @@ def make_srim(root):
 
 
 def snapshot(root):
-    """Names, sizes, mtimes (also of directories) and inodes below ``root``."""
+    """What "unchanged" means: the names, and the size and mtime of every regular file.
+    Not link counts, ctimes or folder mtimes (creating a hard link changes those)."""
     out = {}
     for dirpath, dirs, files in os.walk(root):
-        for name in dirs + files:
+        for name in dirs:
+            out[os.path.relpath(os.path.join(dirpath, name), root)] = None
+        for name in files:
             path = os.path.join(dirpath, name)
             st = os.lstat(path)
-            out[os.path.relpath(path, root)] = (st.st_size, st.st_mtime_ns, st.st_ino)
+            out[os.path.relpath(path, root)] = (st.st_size, st.st_mtime_ns)
     return out
 
 
@@ -695,6 +698,9 @@ def stale_setup(installed, tmp_path, monkeypatch):
         (installed / name).write_text("old result")
         old(installed / name, 1)
     rundir_module.note_isolated_run()
+    marker = tmp_path / "home" / rundir_module.LAST_RUN_MARKER
+    t = time.time() - 100  # explicit times: no dependence on file system resolution
+    os.utime(marker, (t, t))
     return installed
 
 
@@ -727,6 +733,8 @@ def test_no_stale_warning_for_other_dirs_or_fresh_in_place_outputs(stale_setup, 
         warnings.simplefilter("error")
         TRIM.copy_output_files(str(other), str(tmp_path))
         (stale_setup / "RANGE.txt").write_text("fresh in-place run")  # newer than the marker
+        now = time.time()
+        os.utime(stale_setup / "RANGE.txt", (now, now))
         TRIM.copy_output_files(str(stale_setup), str(tmp_path))
 
 
@@ -827,3 +835,23 @@ def test_in_place_run_on_a_read_only_file_system_gives_the_clear_error(installed
     monkeypatch.setattr(FileLock, "acquire", erofs)
     with pytest.raises(PermissionError, match="not writable"):
         quick_trim().run(srim_directory=str(installed))
+
+
+def test_srim_is_started_with_an_absolute_path_inside_the_run_dir(installed, tmp_path, monkeypatch):
+    commands = []
+    fake_srim_program(monkeypatch)
+    inner = subprocess.check_call
+
+    def spy(cmd, **kw):
+        commands.append((cmd, kw["cwd"]))
+        return inner(cmd, **kw)
+
+    monkeypatch.setattr(subprocess, "check_call", spy)
+    results = quick_trim().run(work_dir=tmp_path / "work")
+    ((cmd, cwd),) = commands
+    assert os.path.isabs(cmd[-1]) and cmd[-1] == os.path.join(cwd, "TRIM.exe")
+    assert Path(cwd) == Path(results.directory)
+    sr = SR(Layer.from_formula("Si", 2.33, 1000.0), Ion("He", energy=1.0e6))
+    sr.run(work_dir=tmp_path / "work")
+    cmd, cwd = commands[-1]
+    assert os.path.isabs(cmd[-1]) and cmd[-1].endswith("SRModule.exe") and cwd in cmd[-1]

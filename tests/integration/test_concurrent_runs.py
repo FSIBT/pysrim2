@@ -57,9 +57,13 @@ def failing_worker(base):
 
 
 def snapshot(root):
+    """What "unchanged" means: the names, and the size and mtime of every regular file.
+    Not link counts, ctimes or folder mtimes (creating a hard link changes those)."""
     out = {}
     for dirpath, dirs, files in os.walk(root):
-        for name in dirs + files:
+        for name in dirs:
+            out[os.path.relpath(os.path.join(dirpath, name), root)] = None
+        for name in files:
             path = os.path.join(dirpath, name)
             st = os.lstat(path)
             out[os.path.relpath(path, root)] = (st.st_size, st.st_mtime_ns)

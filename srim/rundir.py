@@ -268,7 +268,8 @@ def warn_if_stale_install(directory):
             ),
             default=0.0,
         )
-        if newest >= marker.stat().st_mtime:
+        # 2 s of slack: coarse file time stamps must not cause a false alarm
+        if newest >= marker.stat().st_mtime - 2:
             return
     except OSError:
         return

@@ -102,7 +102,9 @@ def _run_srim(executable, prefix=None, cwd=None):
     fails). A failure of the X server to start is retried up to three times. Without
     ``xvfb-run`` (Windows) the child is run unchanged.
     """
-    command = _launch_command(executable)
+    # An absolute path: on Windows a relative executable is looked up from the parent's
+    # working directory, not from ``cwd``.
+    command = _launch_command(os.path.join(os.path.abspath(cwd), executable) if cwd else executable)
     env = _launch_env(prefix)
     try:
         _run_command(command, env, cwd)
