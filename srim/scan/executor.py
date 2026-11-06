@@ -11,17 +11,20 @@ Layout of a scan folder::
 
     scan.yaml                  the scan (base run spec and scan section), with the base seed
     points/<id[:16]>/          one point's outputs and run.yaml; error.log if an attempt failed
-    points/<id[:16]>/batches/<b>/   the batches of a point with a precision target
+    points/<id[:16]>/batches/<b>/   the batches of a point with a precision target or batch_ions
     result/                    scan.csv and metadata.yaml (ScanResult.to_csv)
     cache/                     the result cache (unless cache=False or another folder is named)
 
 Seeds: a point runs with ``derive_seed(base_seed, int(id[:15], 16))``, so a point keeps its
-seed when points are added or reordered. Batch ``b`` of a point with a precision target
+seed when points are added or reordered. Batch ``b`` of a point with batches
 runs with ``derive_seed(point_seed, b)``. A failed unit (a point, or a batch) is retried
 ``retries`` times with the same seed, then the point gets status ``failed``; the scan goes on.
 
-Precision targets (:mod:`srim.scan.precision`): a point runs as batches of
-``batch_ions`` ions, and the unit of work is one batch. A decision is taken only when all
+Batches (:mod:`srim.scan.precision`): a point with a precision target runs as batches of
+``batch_ions`` ions, and the unit of work is one batch. A fixed ion count with
+``batch_ions`` (``Scan(batch_ions=)``) runs the same way, with all its batches planned at
+once; the point is then done when all its batches are, and its values and ``<value>_err``
+are the batch-means estimate of the merged batches. A decision is taken only when all
 batches of the point planned so far are done, so the result does not depend on the timing
 of the workers: the target's value and error are compared with the goal, and more batches
 are planned or the point is done (``done``), or it reached ``max_ions`` (``max_ions``, with a
@@ -310,6 +313,7 @@ def run_scan(
                 extract=scan.extract,
                 ions=scan.ions,
                 seed=base_seed,
+                batch_ions=scan.batch_ions,
             )
         )
         store = _open_cache(cache, folder)
@@ -542,6 +546,9 @@ class _ScanRun:
         self.plan: dict[int, list[int]] = {p.index: [] for p in self.points}
         self.finished: dict[int, dict[int, float]] = {p.index: {} for p in self.points}
         self.batch_values: dict[tuple[int, int], dict] = {}
+        self.batch_ions = scan.batch_ions
+        #: a point runs as batches: a precision target, or batch_ions with a fixed count
+        self.batched = self.precision is not None or self.batch_ions is not None
         self.pending: deque = deque()
         self.rows: dict[int, dict] = {}
         self.workers: dict[int, _Worker] = {}
@@ -551,9 +558,13 @@ class _ScanRun:
         self.n_failed = 0
         self.last_error: dict[int, str] = {}
         self.deaths = 0
-        if self.precision is None:
+        if not self.batched:
             self.pending.extend((p.index, 0, 1) for p in self.points)
             capacity = len(self.points)
+        elif self.precision is None:
+            for p in self.points:
+                self._plan_fixed(p.index)
+            capacity = sum(len(self.plan[p.index]) for p in self.points)
         else:
             for p in self.points:
                 self._schedule(p.index, initial_batches(self.precision))
@@ -721,7 +732,7 @@ class _ScanRun:
 
     def _complete(self, worker, index, batch, attempt, seconds):
         """A unit's outputs are in its folder (run by ``worker``, or taken from the cache)."""
-        if self.precision is None:
+        if not self.batched:
             self._finished(worker, index, attempt, seconds)
         else:
             self._batch_finished(worker, index, batch, attempt, seconds)
@@ -795,6 +806,15 @@ class _ScanRun:
 
     # -- units of work ----------------------------------------------------------------
 
+    def _plan_fixed(self, index):
+        """Plan all batches of a fixed-count point with ``batch_ions``: the last one holds
+        the remaining ions. Their count is known, so none is added later."""
+        total = self.points[index].spec.number_ions
+        size = self.batch_ions
+        for batch in range(math.ceil(total / size)):
+            self.plan[index].append(min(size, total - batch * size))
+            self.pending.append((index, batch, 1))
+
     def _schedule(self, index, count):
         """Plan up to ``count`` more batches of a precision point (never beyond
         ``max_ions``) and queue them. Each batch has the ions the maximum still allows."""
@@ -808,19 +828,19 @@ class _ScanRun:
             self.pending.append((index, batch, 1))
 
     def _unit_dir(self, index, batch):
-        if self.precision is None:
+        if not self.batched:
             return self.dirs[index]
         return self.dirs[index] / "batches" / str(batch)
 
     def _unit_spec(self, index, batch):
-        if self.precision is None:
+        if not self.batched:
             return self.specs[index]
         seed = derive_seed(self.seeds[index], batch)
         ions = self.plan[index][batch]
         return self.points[index].spec.with_overrides([f"number_ions={ions}", f"seed={seed}"])
 
     def _planned_ions(self, index):
-        if self.precision is None:
+        if not self.batched:
             return self.points[index].spec.number_ions
         return sum(self.plan[index])
 
@@ -830,7 +850,7 @@ class _ScanRun:
 
     def _row_seeds(self, index):
         """The seeds column: the point's seed, or the seeds of the finished batches."""
-        if self.precision is None:
+        if not self.batched:
             return str(self.seeds[index])
         done = sorted(self.finished[index])
         return ",".join(str(derive_seed(self.seeds[index], b)) for b in done) or None
@@ -986,7 +1006,22 @@ class _ScanRun:
         if worker is not None:
             self._emit(WorkerStats(worker.ident, size / seconds if seconds > 0 else None))
         if len(self.finished[index]) == len(self.plan[index]):
-            self._decide(index, batch, attempt)
+            if self.precision is None:
+                self._finish_batched(index, attempt)
+            else:
+                self._decide(index, batch, attempt)
+
+    def _finish_batched(self, index, attempt):
+        """All batches of a fixed-count point are done: its values are the estimate of the
+        merged batches, and the point is ``done`` (no batch is added)."""
+        try:
+            values, errs = self._estimate(index, sorted(self.finished[index]))
+        except Exception as exc:
+            summary = _summary(exc)
+            self._log_error(index, attempt, summary, traceback.format_exc())
+            self._give_up(index, attempt, summary, n_ions=sum(self.plan[index]))
+            return
+        self._finish_precision(index, "done", values, errs)
 
     def _decide(self, index, batch, attempt):
         """All batches of a precision point planned so far are done: met, or add batches,
@@ -1063,35 +1098,26 @@ class _ScanRun:
         point = self.points[index]
         batches = list(batches)
         ions = sum(self.plan[index][b] for b in batches)
-        parts, merged = [], None
-        try:
-            for b in batches:
-                parts.append(Results(str(self._unit_dir(index, b))))
-            infos = [
-                BatchInfo(
-                    b,
-                    derive_seed(self.seeds[index], b),
-                    self.plan[index][b],
-                    directory=str(self._unit_dir(index, b)),
-                )
-                for b in batches
-            ]
-            spec = point.spec.with_overrides([f"number_ions={ions}"]).to_dict()
-            merged = MergedResults(parts, infos, spec=spec, base_seed=self.seeds[index])
-            values = dict(self.extract(merged, point))
-        finally:
-            if merged is not None:  # closes the parts too
-                merged.close()
-            else:
-                for part in parts:
-                    part.close()
+        infos = [
+            BatchInfo(
+                b,
+                derive_seed(self.seeds[index], b),
+                self.plan[index][b],
+                directory=str(self._unit_dir(index, b)),
+            )
+            for b in batches
+        ]
+        spec = point.spec.with_overrides([f"number_ions={ions}"]).to_dict()
+        values, errs = estimate_batches(
+            self.extract,
+            point,
+            [self._unit_dir(index, b) for b in batches],
+            infos,
+            spec,
+            self.seeds[index],
+            [self.batch_values[(index, b)] for b in batches],
+        )
         self._check_names(values)
-        weights = [self.plan[index][b] for b in batches]
-        errs = {}
-        for name, value in values.items():
-            if _is_number(value):
-                samples = [_as_float(self.batch_values[(index, b)].get(name)) for b in batches]
-                errs[name] = batch_error(samples, weights)
         return values, errs
 
     def _failed(self, index, batch, attempt, summary, tb):
@@ -1250,6 +1276,35 @@ def _summary(exc) -> str:
     text = " ".join(str(exc).split())
     name = type(exc).__name__
     return f"{name}: {text}" if text else name
+
+
+def estimate_batches(extract, point, directories, infos, spec, base_seed, batch_values):
+    """Values and errors of a point from its batches (the batch-means estimator of
+    :mod:`srim.scan.precision`).
+
+    ``extract`` is applied to the batches merged (:class:`~srim.scan.MergedResults`, built
+    from ``directories`` and ``infos``, the :class:`BatchInfo` of each batch, in order);
+    each error is the batch-means error of ``batch_values``, the values of each batch alone.
+    """
+    parts, merged = [], None
+    try:
+        for directory in directories:
+            parts.append(Results(str(directory)))
+        merged = MergedResults(parts, infos, spec=spec, base_seed=base_seed)
+        values = dict(extract(merged, point))
+    finally:
+        if merged is not None:  # closes the parts too
+            merged.close()
+        else:
+            for part in parts:
+                part.close()
+    weights = [info.n_ions for info in infos]
+    errs = {}
+    for name, value in values.items():
+        if _is_number(value):
+            samples = [_as_float(batch.get(name)) for batch in batch_values]
+            errs[name] = batch_error(samples, weights)
+    return values, errs
 
 
 def _is_number(value) -> bool:

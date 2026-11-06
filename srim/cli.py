@@ -560,7 +560,13 @@ def _read_scan(value, overrides):
     if "number_ions" in keys and ions == scan.base.number_ions:
         ions = None  # the ion count came from the base spec, so it follows the override
     return Scan(
-        base, grid=scan.grid, points=scan.rows, extract=scan.extract, ions=ions, seed=scan.seed
+        base,
+        grid=scan.grid,
+        points=scan.rows,
+        extract=scan.extract,
+        ions=ions,
+        seed=scan.seed,
+        batch_ions=scan.batch_ions,
     )
 
 

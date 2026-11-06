@@ -12,6 +12,7 @@ A scan is a :class:`RunSpec` plus, in a ``run.yaml`` ``scan:`` section (next to 
         - {ion.angle_deg: 0.0}
       extract: [implant_summary, sputter_yield, {vacancy_at: {depth_nm: 50.0}}]
       ions: 1000           # or: precision: {target: sputter_yield, rel: 0.05, ...}
+      batch_ions: 100      # optional: split each point into batches of this many ions
       seed: 1              # optional base seed for the batches
 
 Keys are dotted like ``--set``: ``ion.energy_keV``, ``target.0.thickness_nm``; the form
@@ -45,7 +46,7 @@ RESERVED_KEYS = {
     "number_ions": "use ions= (or precision=) for the ion count",
     "seed": "use seed= for the base seed",
 }
-_SECTION_KEYS = ("grid", "points", "extract", "ions", "precision", "seed")
+_SECTION_KEYS = ("grid", "points", "extract", "ions", "precision", "batch_ions", "seed")
 
 
 def normalise_key(key) -> str:
@@ -187,6 +188,19 @@ def _ions(ions, base: RunSpec):
     return int(ions)
 
 
+def _batch_ions(batch_ions, ions):
+    if batch_ions is None:
+        return None
+    if isinstance(ions, Precision):
+        raise SpecError(
+            "scan.batch_ions cannot be combined with a precision target: a precision target "
+            "already runs in batches (set precision.batch_ions)"
+        )
+    if isinstance(batch_ions, bool) or not isinstance(batch_ions, Integral) or batch_ions < 1:
+        raise SpecError(f"scan.batch_ions must be a whole number >= 1, got {batch_ions!r}")
+    return int(batch_ions)
+
+
 def _seed(seed):
     if seed is None:
         return None
@@ -223,6 +237,11 @@ class Scan:
         functions only). Default ``["implant_summary"]``.
     ions : int or :class:`~srim.scan.Precision`, optional
         ions per point, or a precision goal. Default: ``base.number_ions``.
+    batch_ions : int, optional
+        with a fixed ``ions``: split each point into batches of this many ions (the last one
+        may be smaller), each an independent run that the workers share. The point's values
+        and their ``<value>_err`` come from the batches (batch means), as for a precision
+        target. Default ``None``: one run per point. Not allowed with a precision target.
     seed : int, optional
         base seed of the batches (``None``: the scan draws a random base seed and records
         it in ``scan.yaml``)
@@ -232,7 +251,16 @@ class Scan:
     (``scan.grid.ion.energy_keV``, ``scan.points[1]``) as a :class:`SpecError`.
     """
 
-    def __init__(self, base, grid=None, points=None, extract=None, ions=None, seed=None):
+    def __init__(
+        self,
+        base,
+        grid=None,
+        points=None,
+        extract=None,
+        ions=None,
+        seed=None,
+        batch_ions=None,
+    ):
         if not isinstance(base, RunSpec):
             raise TypeError(f"a scan starts from a RunSpec, not {type(base).__name__}")
         self.base = base
@@ -246,6 +274,7 @@ class Scan:
                 )
         self.extract = _extract(extract)
         self.ions = _ions(ions, base)
+        self.batch_ions = _batch_ions(batch_ions, self.ions)
         self.seed = _seed(seed)
         if self.rows is not None:
             for i, row in enumerate(self.rows):
@@ -314,6 +343,8 @@ class Scan:
             out["precision"] = self.ions.to_dict()
         else:
             out["ions"] = self.ions
+        if self.batch_ions is not None:
+            out["batch_ions"] = self.batch_ions
         if self.seed is not None:
             out["seed"] = self.seed
         return out
@@ -365,4 +396,5 @@ class Scan:
             extract=section.get("extract"),
             ions=ions,
             seed=section.get("seed"),
+            batch_ions=section.get("batch_ions"),
         )

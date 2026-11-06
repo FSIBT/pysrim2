@@ -196,6 +196,7 @@ def _recorded(scan: Scan, base_seed: int) -> Scan:
         extract=scan.extract,
         ions=scan.ions,
         seed=base_seed,
+        batch_ions=scan.batch_ions,
     )
 
 

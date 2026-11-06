@@ -296,3 +296,29 @@ def test_ion_count_does_not_change_the_point_id(base):
     large = Scan(base, ions=5000).points()[0]
     assert small.spec.number_ions != large.spec.number_ions
     assert small.id == large.id
+
+
+def test_batch_ions_is_recorded_and_read_back_from_run_yaml(base, tmp_path):
+    scan = Scan(base, grid={"ion.energy_keV": [10.0]}, ions=1000, batch_ions=250)
+    assert scan.to_dict()["batch_ions"] == 250
+    path = tmp_path / "run.yaml"
+    scan.to_yaml(path)
+    again = Scan.from_yaml(path)
+    assert again.batch_ions == 250
+    assert again.ions == 1000
+
+
+def test_no_batch_ions_is_not_written(base):
+    assert "batch_ions" not in Scan(base, grid={"ion.energy_keV": [10.0]}).to_dict()
+
+
+def test_batch_ions_must_be_a_whole_number_of_at_least_one(base):
+    for bad in (0, -5, 2.5, True):
+        with pytest.raises(SpecError, match="scan.batch_ions"):
+            Scan(base, grid={"ion.energy_keV": [10.0]}, batch_ions=bad)
+
+
+def test_batch_ions_with_a_precision_target_is_refused(base):
+    precision = Precision(target="sputter_yield", rel=0.05)
+    with pytest.raises(SpecError, match="precision"):
+        Scan(base, grid={"ion.energy_keV": [10.0]}, ions=precision, batch_ions=100)
