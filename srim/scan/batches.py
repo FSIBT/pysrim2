@@ -11,7 +11,12 @@ import math
 import random
 import shutil
 import tempfile
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from concurrent.futures import (
+    FIRST_EXCEPTION,
+    ProcessPoolExecutor,
+    ThreadPoolExecutor,
+    wait,
+)
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -271,18 +276,38 @@ def _default_runner(spec):
     return TRIM.from_spec(spec).run()
 
 
-def _run_to_directory(spec_dict, directory):
-    """Worker of the process pool: run, leave the outputs in ``directory``."""
-    from ..spec import RunSpec
-    from ..srim import TRIM
+def _run_to_directory(spec_dict, directory, runner=None):
+    """Worker of the process pool: run, leave the outputs in ``directory``.
 
-    results = TRIM.from_spec(RunSpec.from_dict(spec_dict)).run(output_dir=directory)
-    results.close()
+    Results objects cannot cross process boundaries, so the parent re-opens the directory.
+    A custom ``runner`` (must be picklable) returns a ``Results``; its directory is copied.
+    """
+    from ..spec import RunSpec
+
+    spec = RunSpec.from_dict(spec_dict)
+    if runner is None:
+        from ..srim import TRIM
+
+        TRIM.from_spec(spec).run(output_dir=directory).close()
+    else:
+        results = runner(spec)
+        try:
+            shutil.copytree(results.directory, directory)
+        finally:
+            results.close()
     return directory
 
 
 def run_batches(
-    spec, n_ions, batch_ions, seed=None, *, runner=None, parallel=None, keep_per_ion=True
+    spec,
+    n_ions,
+    batch_ions,
+    seed=None,
+    *,
+    runner=None,
+    parallel=None,
+    keep_per_ion=True,
+    pool=None,
 ):
     """Run ``n_ions`` ions as batches of ``batch_ions`` ions and merge the results.
 
@@ -298,23 +323,39 @@ def run_batches(
         base seed (recorded in the result)
     runner : callable, optional
         ``runner(spec) -> Results`` (anything with the output attributes and ``close()``).
-        Default: ``TRIM.from_spec(spec).run()``; for tests or custom back ends.
+        Default: ``TRIM.from_spec(spec).run()``; for tests or custom back ends. With
+        ``parallel > 1`` it is called from several threads and must be thread-safe.
     parallel : :obj:`int`, optional
         number of batches running at once. The default runner uses a process pool, a
-        custom ``runner`` a thread pool. Default: one after the other.
+        custom ``runner`` a thread pool. Default: one after the other. When the first
+        batch fails, batches that have not started are cancelled; running ones finish.
     keep_per_ion : :obj:`bool`
         if False the per-ion tables (``range3d``, ``exyz`` ...) and ``collision`` are not
         provided by the result (``None``); the batch summaries are still computed.
+    pool : ``"thread"`` or ``"process"``, optional
+        pool type for ``parallel > 1`` (default ``"process"`` without ``runner``, else
+        ``"thread"``). A process pool needs a picklable ``runner`` (whose results have a
+        ``directory`` that is copied) and, on macOS, Windows and Python 3.14 (spawn or
+        forkserver), the calling script must be guarded by ``if __name__ == "__main__":``.
 
     Returns
     -------
     :class:`MergedResults`
+        its tables' ``metadata["num_ions"]`` is the *requested* total, whereas the tables'
+        own unique-ion counts can differ slightly (SRIM may omit a few ions).
+
+    Raises
+    ------
+    Exception
+        the first failing batch's exception, with a note naming the batch and its seed.
     """
     n_ions, batch_ions = int(n_ions), int(batch_ions)
     if n_ions < 1 or batch_ions < 1:
         raise ValueError("n_ions and batch_ions must be positive")
     if parallel is not None and int(parallel) < 1:
         raise ValueError("parallel must be positive")
+    if pool not in (None, "thread", "process"):
+        raise ValueError("pool must be 'thread' or 'process'")
     base = random.randrange(0, MAX_SEED) if seed is None else int(seed)
     count = math.ceil(n_ions / batch_ions)
     sizes = [min(batch_ions, n_ions - i * batch_ions) for i in range(count)]
@@ -324,31 +365,37 @@ def run_batches(
         for n, s in zip(sizes, seeds, strict=True)
     ]
     workers = min(int(parallel or 1), count)
+    pool = pool or ("process" if runner is None else "thread")
+
+    def annotate(exc, i):
+        exc.add_note(f"batch {i} of {count}, seed {seeds[i]}, ions {sizes[i]}")
 
     tmpdir = None
     results = []
     try:
         if workers <= 1:
             run = runner or _default_runner
-            for one in specs:
-                results.append(run(one))
-        elif runner is not None:
-            with ThreadPoolExecutor(workers) as pool:
-                futures = [pool.submit(runner, one) for one in specs]
-                _collect(futures, results)
+            for i, one in enumerate(specs):
+                try:
+                    results.append(run(one))
+                except BaseException as exc:
+                    annotate(exc, i)
+                    raise
+        elif pool == "thread":
+            with ThreadPoolExecutor(workers) as executor:
+                futures = [executor.submit(runner or _default_runner, one) for one in specs]
+                results.extend(_collect(executor, futures, annotate, lambda r: r))
         else:
             from ..output import Results
 
             tmpdir = tempfile.mkdtemp(prefix="pysrim2-batches-")
             dirs = [f"{tmpdir}/batch-{i}" for i in range(count)]
-            with ProcessPoolExecutor(workers) as pool:
+            with ProcessPoolExecutor(workers) as executor:
                 futures = [
-                    pool.submit(_run_to_directory, one.to_dict(), d)
+                    executor.submit(_run_to_directory, one.to_dict(), d, runner)
                     for one, d in zip(specs, dirs, strict=True)
                 ]
-                done = []
-                _collect(futures, done)
-            results.extend(Results(d) for d in done)
+                results.extend(_collect(executor, futures, annotate, Results))
         total = spec.with_overrides([f"number_ions={n_ions}", f"seed={base}"])
         batches = [
             BatchInfo(i, s, n, _summary(r))
@@ -365,16 +412,23 @@ def run_batches(
         raise
 
 
-def _collect(futures, into):
-    """Results in submission order; on a failure wait for the rest, then raise."""
-    error = None
-    for future in futures:
-        try:
-            into.append(future.result())
-        except BaseException as exc:
-            error = error or exc
-    if error is not None:
-        raise error
+def _collect(executor, futures, annotate, convert):
+    """Results in submission order. On the first failure the batches that have not
+    started are cancelled, running ones are awaited (and their results closed), and the
+    failure is raised with a note naming its batch."""
+    wait(futures, return_when=FIRST_EXCEPTION)
+    failed = next((i for i, f in enumerate(futures) if f.done() and f.exception()), None)
+    if failed is None:
+        return [convert(f.result()) for f in futures]
+    executor.shutdown(wait=True, cancel_futures=True)
+    for f in futures:
+        if f.done() and not f.cancelled() and f.exception() is None:
+            close = getattr(convert(f.result()), "close", None)
+            if close is not None:
+                close()
+    exc = futures[failed].exception()
+    annotate(exc, failed)
+    raise exc
 
 
 def _summary(results):

@@ -61,6 +61,12 @@ class FakeResults:
     def close(self):
         self.closed = True
 
+    def as_real(self):
+        """A real ``Results`` (what a process pool needs: a directory)."""
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            return Results("test_files/1")
+
 
 class Runner:
     def __init__(self):
@@ -187,3 +193,42 @@ def test_collision_is_streamed_across_batches():
     assert [e["ion"] for e in got] == list(range(1, 16))
     assert [e["batch"] for e in got] == [0] * 10 + [1] * 5
     assert hasattr(merged.collision.iter_events(), "__next__")
+
+
+def test_failure_gets_note_sequential():
+    def runner(spec):
+        raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError) as info:
+        run_batches(SPEC, 20, 10, seed=1, runner=runner)
+    assert f"batch 0 of 2, seed {derive_seed(1, 0)}, ions 10" in info.value.__notes__
+
+
+def test_failure_cancels_queued_batches():
+    import threading
+
+    started = []
+    lock = threading.Lock()
+
+    def runner(spec):
+        with lock:
+            started.append(spec.seed)
+        raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError) as info:
+        run_batches(SPEC, 100, 10, seed=1, runner=runner, parallel=2)
+    assert len(started) < 10
+    assert any("batch " in n for n in info.value.__notes__)
+
+
+def pool_runner(spec):
+    return FakeResults(spec, 1.0 + spec.number_ions / 10).as_real()
+
+
+def test_process_pool_with_picklable_runner(tmp_path):
+    merged = run_batches(SPEC, 20, 10, seed=3, runner=pool_runner, parallel=2, pool="process")
+    assert merged.seeds == [derive_seed(3, i) for i in range(2)]
+    assert merged.batches[0].n_ions == 10
+    assert len(merged.range3d.df) > 0
+    assert merged.ioniz.metadata["num_ions"] == 20
+    merged.close()
