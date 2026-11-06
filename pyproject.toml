@@ -33,7 +33,8 @@ dependencies = [
 [project.optional-dependencies]
 parquet = ["pyarrow"]
 hdf5 = ["tables"]
-all = ["pysrim2[parquet,hdf5]"]
+plot = ["matplotlib"]
+all = ["pysrim2[parquet,hdf5,plot]"]
 
 [project.scripts]
 pysrim2 = "srim.cli:main"

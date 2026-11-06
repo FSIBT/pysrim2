@@ -12,7 +12,8 @@ Columns, in order (the table is a :class:`pandas.DataFrame`):
 - ``status``: ``done``, ``failed``, ``max_ions`` (precision not reached within the limit)
   or ``cached``
 - ``error``: the error message of a failed point, else ``NaN``
-- ``path``: where the point's outputs are, relative to the scan folder (``base_dir``); ``NaN`` if none
+- ``path``: where the point's outputs are, relative to the scan folder
+  (``base_dir``); ``NaN`` if none
 
 Rows are built with :meth:`ScanResult.from_rows`: each row is a dict with ``index`` (the
 point's index in :meth:`Scan.points`) and the values; the parameters are taken from the
@@ -191,7 +192,9 @@ class ScanResult:
         try:
             import matplotlib.pyplot as plt
         except ImportError as exc:
-            raise ImportError("ScanResult.plot needs matplotlib: pip install matplotlib") from exc
+            raise ImportError(
+                'ScanResult.plot needs matplotlib: pip install "pysrim2[plot]"'
+            ) from exc
         params = self.scan.param_names
         if x is None:
             if not params:

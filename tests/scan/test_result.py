@@ -193,7 +193,7 @@ def test_plot_without_matplotlib_says_how_to_install(scan, monkeypatch):
     result = ScanResult.from_rows(scan, rows_for(scan, [1.0, 2.0, 3.0, 4.0]))
     monkeypatch.setitem(sys.modules, "matplotlib", None)
     monkeypatch.setitem(sys.modules, "matplotlib.pyplot", None)
-    with pytest.raises(ImportError, match="pip install matplotlib"):
+    with pytest.raises(ImportError, match=r'pip install "pysrim2\[plot\]"'):
         result.plot()
 
 

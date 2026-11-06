@@ -2515,6 +2515,7 @@ dependencies = [
 
 [package.optional-dependencies]
 all = [
+    { name = "matplotlib" },
     { name = "pyarrow" },
     { name = "tables" },
 ]
@@ -2523,6 +2524,9 @@ hdf5 = [
 ]
 parquet = [
     { name = "pyarrow" },
+]
+plot = [
+    { name = "matplotlib" },
 ]
 
 [package.dev-dependencies]
@@ -2548,14 +2552,15 @@ docs = [
 
 [package.metadata]
 requires-dist = [
+    { name = "matplotlib", marker = "extra == 'plot'" },
     { name = "numpy" },
     { name = "pandas" },
     { name = "pyarrow", marker = "extra == 'parquet'" },
-    { name = "pysrim2", extras = ["parquet", "hdf5"], marker = "extra == 'all'" },
+    { name = "pysrim2", extras = ["parquet", "hdf5", "plot"], marker = "extra == 'all'" },
     { name = "pyyaml" },
     { name = "tables", marker = "extra == 'hdf5'" },
 ]
-provides-extras = ["parquet", "hdf5", "all"]
+provides-extras = ["parquet", "hdf5", "plot", "all"]
 
 [package.metadata.requires-dev]
 dev = [
