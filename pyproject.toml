@@ -34,8 +34,8 @@ dependencies = [
 parquet = ["pyarrow"]
 hdf5 = ["tables"]
 plot = ["matplotlib"]
-# live terminal views of `pysrim2 scan run --ui plot|dashboard` (plot: textual-plotext)
-tui = ["textual>=0.86.2", "textual-plotext>=1.0.1"]
+# live views of `pysrim2 scan run --ui plot|dashboard|web` (plot: textual-plotext; web: textual-serve)
+tui = ["textual>=0.86.2", "textual-plotext>=1.0.1", "textual-serve>=1.1.3"]
 all = ["pysrim2[parquet,hdf5,plot,tui]"]
 
 [project.scripts]
