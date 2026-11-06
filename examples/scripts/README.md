@@ -9,6 +9,8 @@ to a local `output` folder, so it works the same natively and in the container.
 | `multilayer_damage.py [ions] [folder]` | Full-cascade run through a three-layer target (Au / Si / Al); writes the vacancy profile (`results.vacancy.df` plus a total) to `vacancy_profile.csv`. |
 | `stopping_table.py [folder]` | SRIM's SR module: stopping power and range of He in Si from 10 keV to 1 MeV, as `stopping_table.csv`. Fast. |
 | `run_yaml_example/` | The boron case as a `run.yaml` for `pysrim2 run run.yaml --set ion.energy_keV=30`; see its README. |
+| `angle_energy_scan.py [folder]` | A scan (see the [scans page](https://pysrim2.readthedocs.io/en/latest/scans.html)): B into 1000 nm of Si at 20 and 40 keV, each at 0 and 30 degrees, 50 ions per point, two worker processes. Prints one row per point and writes `result/scan.csv` in the folder (default `output/scan`). |
+| `scan.yaml` | The same scan as a file: `pysrim2 scan run scan.yaml --ui plain` (a new `scan-<UTC time>` folder, or `--output DIR`). |
 
 `boron_in_gold_on_silicon.py` is also the example of the
 [agent skill](../../skills/pysrim2/SKILL.md); a test keeps the two copies identical.
@@ -25,6 +27,8 @@ pysrim2 doctor
 python boron_in_gold_on_silicon.py
 python multilayer_damage.py 20
 python stopping_table.py
+python angle_energy_scan.py
+pysrim2 scan run scan.yaml --ui plain
 ```
 
 ## Run in the container

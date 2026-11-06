@@ -1,0 +1,24 @@
+# The scan of angle_energy_scan.py as a file. Run it with:
+#   pysrim2 scan run scan.yaml --ui plain
+# Output: a new folder ./scan-<UTC time> (use --output DIR to choose it).
+version: 1
+spec:
+  ion: {symbol: B, energy_keV: 20.0, angle_deg: 0.0}
+  number_ions: 50
+  calculation: 1
+  seed: 12345
+  settings: {description: pysrim run, ranges: 1}
+  target:
+    - name: Si
+      thickness_nm: 1000.0
+      density_g_cm3: 2.33
+      phase: 0
+      elements:
+        - {symbol: Si, stoich: 1.0, displacement_eV: 25.0, lattice_eV: 0.0, surface_eV: 3.0}
+scan:
+  grid:  # every combination: 2 energies x 2 angles = 4 points
+    ion.energy_keV: [20.0, 40.0]
+    ion.angle_deg: [0.0, 30.0]
+  extract: [implant_summary]
+  ions: 50
+  seed: 12345
