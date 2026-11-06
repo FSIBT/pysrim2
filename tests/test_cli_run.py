@@ -161,3 +161,17 @@ def test_import_bad_file_exits_2(tmp_path, capsys):
     assert cli.main(["import", str(bad), "-o", str(tmp_path / "r.yaml")]) == 2
     assert "not a TRIM.IN" in capsys.readouterr().err
     assert cli.main(["import", str(tmp_path / "nope"), "-o", str(tmp_path / "r.yaml")]) == 2
+
+
+def test_run_set_before_the_spec_path(srim_install, run_yaml, tmp_path):
+    # --set takes several values (nargs="+"), so the path after it is read as one of them
+    out = tmp_path / "out"
+    code = cli.main(["run", "--set", "ion.energy_keV=30", "seed=9", str(run_yaml), "-o", str(out)])
+    assert code == 0
+    spec = RunSpec.from_yaml(out / "run.yaml")
+    assert (spec.ion.energy_keV, spec.seed) == (30.0, 9)
+
+
+def test_run_without_a_spec_path_exits_2(srim_install, capsys):
+    assert cli.main(["run", "--set", "ion.energy_keV=30"]) == 2
+    assert "no run.yaml" in capsys.readouterr().err

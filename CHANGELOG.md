@@ -34,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `pysrim2 run --set KEY=VALUE run.yaml` works: the path after `--set` was read as one of its values, so the command failed with a missing `run.yaml`. `pysrim2 scan run` and `prepare` take the same order.
 - `implant_summary` on an empty frame returns NaN values without emitting RuntimeWarnings.
 - `pysrim2 run` no longer leaves an empty output folder behind when the run fails.
 - The agent skill names the event-file DataFrames correctly (`results.exyz.df`, not `results.exyz`).

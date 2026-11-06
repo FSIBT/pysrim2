@@ -53,7 +53,12 @@ def build_parser() -> argparse.ArgumentParser:
     doctor.add_argument("--json", action="store_true", help="machine-readable output")
 
     run = sub.add_parser("run", help="run TRIM from a run.yaml")
-    run.add_argument("spec", metavar="run.yaml", help="run specification (see docs/run-spec.md)")
+    run.add_argument(
+        "spec",
+        metavar="run.yaml",
+        nargs="?",
+        help="run specification (see docs/run-spec.md); may also follow --set",
+    )
     run.add_argument(
         "--set",
         dest="overrides",
@@ -211,14 +216,31 @@ def _install(args) -> int:
 # --- run / import -----------------------------------------------------------
 
 
+def _spec_path(value, overrides):
+    """The ``run.yaml`` path and the ``--set`` items. ``--set`` takes several values, so
+    ``run --set a=1 run.yaml`` reads the path as a value: it is the first item with no "="."""
+    if value is not None:
+        return value, overrides
+    for i, item in enumerate(overrides):
+        if "=" not in item:
+            return item, overrides[:i] + overrides[i + 1 :]
+    return None, overrides
+
+
 def _run(args) -> int:
     from srim.spec import RunSpec, SpecError
     from srim.srim import TRIM
 
+    path, overrides = _spec_path(args.spec, args.overrides)
+    if path is None:
+        print(
+            "no run.yaml given (usage: pysrim2 run run.yaml [--set KEY=VALUE ...])", file=sys.stderr
+        )
+        return EXIT_BAD_INPUT
     try:
-        spec = RunSpec.from_yaml(args.spec).with_overrides(args.overrides)
+        spec = RunSpec.from_yaml(path).with_overrides(overrides)
     except (SpecError, OSError) as exc:
-        print(f"{args.spec}: {exc}", file=sys.stderr)
+        print(f"{path}: {exc}", file=sys.stderr)
         return EXIT_BAD_INPUT
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     output = Path(args.output or f"srim-output-{stamp}")
