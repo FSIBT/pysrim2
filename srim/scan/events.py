@@ -261,8 +261,10 @@ EVENT_TYPES = {
 def event_from_dict(data: Mapping):
     """The event that ``to_dict()`` (or one line of ``to_json()``, parsed) describes.
 
-    Fields the event class does not know are ignored (a newer writer); a missing required
-    field raises TypeError and an unknown ``kind`` raises ValueError.
+    Values come back as the JSON gives them: a NaN or infinite float was written as ``null``,
+    so it reads back as None (not NaN). Fields the event class does not know are ignored (a
+    newer writer); a missing required field raises TypeError and an unknown ``kind`` raises
+    ValueError.
     """
     kind = data.get("kind")
     cls = EVENT_TYPES.get(kind)
