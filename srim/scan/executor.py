@@ -133,6 +133,17 @@ class ScanBusy(RuntimeError):
     """Another scan is running in the scan folder (its lock is held)."""
 
 
+def _refuse_foreign_folder(folder: Path) -> None:
+    """Raise :class:`ValueError` for a folder with other files that is not a scan folder."""
+    if not (folder / MARKER_NAME).is_file():
+        others = [p.name for p in folder.iterdir() if p.name != LOCK_NAME]
+        if others:
+            raise ValueError(
+                f"{folder} is not empty and not a scan folder (no {MARKER_NAME}); "
+                "choose a new or empty folder"
+            )
+
+
 def mark_scan_folder(folder) -> None:
     """Write the marker file of a scan folder (one line, with the pysrim2 version).
 
@@ -141,13 +152,7 @@ def mark_scan_folder(folder) -> None:
     ``pysrim2 scan clean --all`` can never remove it.
     """
     folder = Path(folder)
-    if not (folder / MARKER_NAME).is_file():
-        others = [p.name for p in folder.iterdir() if p.name != LOCK_NAME]
-        if others:
-            raise ValueError(
-                f"{folder} is not empty and not a scan folder (no {MARKER_NAME}); "
-                "choose a new or empty folder"
-            )
+    _refuse_foreign_folder(folder)
     text = f"pysrim2 scan folder, pysrim2 {__version__}\n"
     Path(folder, MARKER_NAME).write_text(text, encoding="utf-8")
 
@@ -290,12 +295,13 @@ def run_scan(
         _require_srim()
         _prune_old_runs()
     folder = _new_folder(scan_dir)
-    mark_scan_folder(folder)  # refuses a foreign folder before any lock file is left in it
+    _refuse_foreign_folder(folder)  # before any lock file is left in a foreign folder
     try:
         lock = scan_lock(folder).acquire()
     except TimeoutError:
         raise ScanBusy(f"a scan is already running in {folder}") from None
     try:
+        mark_scan_folder(folder)
         # a rerun in the same folder keeps the base seed of the scan it describes, so the
         # points are the same runs and the cache serves them
         base_seed = scan.seed
