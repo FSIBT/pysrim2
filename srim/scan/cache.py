@@ -35,6 +35,7 @@ import contextlib
 import hashlib
 import logging
 import os
+import re
 import shutil
 import uuid
 from collections.abc import Mapping
@@ -250,9 +251,13 @@ def materialise(entry, out) -> None:
 def clear_cache(path) -> int:
     """Remove the entries of the cache at ``path``; returns how many were removed.
 
-    Only a folder with a pysrim2 ``CACHEDIR.TAG`` is cleared; anything else raises
-    ValueError and nothing is touched. An entry whose key is locked (a scan is computing or
-    storing it) is kept. The tag stays, so the folder is still recognised as a cache.
+    Only a folder with a pysrim2 ``CACHEDIR.TAG`` is cleared; anything else raises ValueError
+    and nothing is touched. Only what the cache itself makes is removed: shard folders named
+    ``[0-9a-f]{2}`` holding entries named ``[0-9a-f]{64}``, and the contents of ``tmp/``. Any
+    other item is left in place with a warning. An entry whose key is locked (a scan is
+    computing or storing it) is kept. Lock files in ``locks/`` are never removed (they are
+    tiny and removing one could let a second writer lock a different file for the same key).
+    The tag stays, so the folder is still recognised as a cache.
     """
     root = Path(os.path.abspath(os.fspath(path)))
     if not is_cache(root):
@@ -261,42 +266,49 @@ def clear_cache(path) -> int:
         )
     cache = RunCache(root)
     removed = 0
-    for shard in sorted(root.iterdir()):
-        if shard.name in ("locks", "tmp") or not shard.is_dir() or shard.is_symlink():
+    for item in sorted(root.iterdir()):
+        if item.name in (TAG_NAME, "locks", "tmp"):
             continue
-        for entry in sorted(shard.iterdir()):
+        if not _is_plain_dir(item, _SHARD):
+            log.warning("clear_cache: %s is not part of the cache; left in place", item)
+            continue
+        for entry in sorted(item.iterdir()):
+            if not _is_plain_dir(entry, _KEY):
+                log.warning("clear_cache: %s is not a cache entry; left in place", entry)
+                continue
             lock = cache.try_lock(entry.name)
             if lock is None:
-                continue
+                continue  # being computed or stored by a scan
             try:
                 shutil.rmtree(entry, ignore_errors=True)
                 removed += 1
             finally:
                 lock.release()
-        _rmdir_if_empty(shard)
-    locks = root / "locks"
-    for lock_file in sorted(locks.glob("*.lock")) if locks.is_dir() else ():
-        lock = FileLock(lock_file, timeout=0)
-        try:
-            lock.acquire()
-        except TimeoutError:
-            continue
-        try:
-            lock_file.unlink(missing_ok=True)
-        finally:
-            lock.release()
-    if (root / "tmp").is_dir():
-        for leftover in sorted((root / "tmp").iterdir()):
-            lock = cache.try_lock(leftover.name.split("-")[0])
+        _rmdir_if_empty(item)
+    tmp = root / "tmp"
+    if tmp.is_dir():
+        for leftover in sorted(tmp.iterdir()):
+            key = leftover.name.split("-", 1)[0]
+            if not _KEY.fullmatch(key):
+                log.warning("clear_cache: %s is not a cache leftover; left in place", leftover)
+                continue
+            lock = cache.try_lock(key)
             if lock is None:
                 continue
             try:
                 shutil.rmtree(leftover, ignore_errors=True)
             finally:
                 lock.release()
-    _rmdir_if_empty(root / "locks")
-    _rmdir_if_empty(root / "tmp")
+        _rmdir_if_empty(tmp)
     return removed
+
+
+_SHARD = re.compile(r"[0-9a-f]{2}")
+_KEY = re.compile(r"[0-9a-f]{64}")
+
+
+def _is_plain_dir(path: Path, pattern) -> bool:
+    return path.is_dir() and not path.is_symlink() and pattern.fullmatch(path.name) is not None
 
 
 def _recorded_sha(entry: Path) -> str | None:

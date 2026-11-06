@@ -331,7 +331,7 @@ def test_a_key_is_locked_while_held_and_clear_cache_keeps_it(tmp_path):
     assert cache.lookup(key) is None
 
 
-def test_clear_cache_removes_entries_and_keeps_the_tag(tmp_path):
+def test_clear_cache_removes_entries_and_keeps_the_tag_and_the_locks(tmp_path):
     root = tmp_path / "cache"
     cache = RunCache(root)
     cache.prepare()
@@ -341,7 +341,34 @@ def test_clear_cache_removes_entries_and_keeps_the_tag(tmp_path):
     assert clear_cache(root) == 2
     assert all(cache.lookup(key) is None for key in keys)
     assert (root / "CACHEDIR.TAG").is_file()
-    assert not any(entry.is_dir() for entry in root.iterdir() if entry.name != "CACHEDIR.TAG")
+    assert not [
+        shard for shard in root.iterdir() if shard.name not in ("CACHEDIR.TAG", "locks", "tmp")
+    ]
+    assert all((root / "locks" / f"{key}.lock").is_file() for key in keys)  # lock files stay
+
+
+def test_clear_cache_leaves_strays_alone_and_warns(tmp_path, caplog):
+    root = tmp_path / "cache"
+    cache = RunCache(root)
+    cache.prepare()
+    key = new_key()
+    cache.store(key, make_run(tmp_path / "run"))
+    stray_dir = root / "notes"
+    stray_dir.mkdir()
+    (stray_dir / "thesis.txt").write_text("keep me")
+    (root / "zz").mkdir()  # not a shard name
+    (root / "zz" / ("f" * 64)).mkdir()
+    (root / "ab").mkdir()
+    (root / "ab" / "not-a-key").mkdir()  # a shard holding something that is not an entry
+    with caplog.at_level(logging.WARNING, logger="srim.scan.cache"):
+        assert clear_cache(root) == 1
+    assert (stray_dir / "thesis.txt").read_text() == "keep me"
+    assert (root / "zz" / ("f" * 64)).is_dir()
+    assert (root / "ab" / "not-a-key").is_dir()
+    assert cache.lookup(key) is None
+    messages = " ".join(r.getMessage() for r in caplog.records if r.name == "srim.scan.cache")
+    for name in ("notes", "zz", "not-a-key"):
+        assert name in messages
 
 
 def test_clear_cache_refuses_a_folder_that_is_not_a_cache(tmp_path):
