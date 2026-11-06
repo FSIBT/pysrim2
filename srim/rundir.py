@@ -71,7 +71,27 @@ SKIP_NAMES = frozenset({".pysrim2.lock"})
 # In a wine prefix only large binaries are linked; everything wine may write (registry,
 # user profile, temp files, ini files, caches) is copied.
 WINE_LINK_SUFFIXES = frozenset(
-    {".dll", ".exe", ".sys", ".drv", ".ocx", ".nls", ".ttf", ".ttc", ".fon", ".acm", ".cpl", ".so"}
+    {
+        ".dll",
+        ".exe",
+        ".sys",
+        ".drv",
+        ".ocx",
+        ".nls",
+        ".ttf",
+        ".ttc",
+        ".fon",
+        ".acm",
+        ".cpl",
+        ".so",
+        ".ax",
+        ".tlb",
+        ".msstyles",
+        ".vxd",
+        ".ds",
+        ".com",
+        ".mui",
+    }
 )
 WINE_COPY_DIRS = frozenset({"users", "programdata", "temp"})
 WINE_SKIP_NAMES = frozenset({"wineserver"})
