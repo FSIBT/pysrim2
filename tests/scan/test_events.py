@@ -22,6 +22,7 @@ def test_every_kind_is_registered_once():
             "point_finished",
             "point_failed",
             "point_retried",
+            "point_stopped",
             "batch_finished",
             "worker_stats",
             "scan_finished",
@@ -59,6 +60,13 @@ def test_numpy_values_and_non_finite_floats_become_json_safe():
     data = json.loads(text)
     assert data["values"] == {"mean": 1.5, "count": 4, "bad": None}
     assert data["n_ions"] == 10
+
+
+def test_nan_inside_an_array_becomes_null():
+    event = PointFinished(
+        index=0, id="x", values={"v": np.array([1.0, np.nan])}, n_ions=1, seconds=0.0
+    )
+    assert json.loads(event.to_json())["values"] == {"v": [1.0, None]}
 
 
 def test_paths_become_strings():

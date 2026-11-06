@@ -26,6 +26,7 @@ from srim.scan.events import (
     PointQueued,
     PointRetried,
     PointStarted,
+    PointStopped,
     ScanFinished,
     ScanStarted,
 )
@@ -438,6 +439,10 @@ def test_stop_event_ends_running_points_without_orphans(tmp_path, state_dir):
     assert not (tmp_path / "s" / "points" / result.table["id"].iloc[1][:16]).exists()
     assert isinstance(events[-1], ScanFinished) and events[-1].stopped is True
     assert events[-1].n_done == 1
+    stopped = [e for e in events if isinstance(e, PointStopped)]
+    assert [e.index for e in stopped] == [1, 2, 3]
+    assert all(e.error is None for e in stopped)
+    assert all(i < len(events) - 1 for i, e in enumerate(events) if isinstance(e, PointStopped))
     assert pid_gone(child), "the SRIM stand-in child is still running after the stop"
 
 
@@ -466,9 +471,71 @@ def test_a_stop_before_the_start_runs_nothing(tmp_path):
     assert result.table["status"].tolist() == ["stopped"] * 4
     assert not any(isinstance(e, PointStarted) for e in recorder.events)
     assert recorder.events[-1].stopped is True
+    assert sum(isinstance(e, PointStopped) for e in recorder.events) == 4
 
 
 # -- arguments ----------------------------------------------------------------------------
+
+
+def fail_once_then_fixture(spec):
+    """20 keV fails its first attempt; the marker file tells later attempts apart."""
+    marker = Path(os.environ[STATE_VAR]) / "tried-20"
+    if energy_of(spec) == 20.0 and not marker.exists():
+        marker.touch()
+        raise RuntimeError("first try fails")
+    return fixture_runner(spec)
+
+
+def test_a_stop_during_a_retry_keeps_the_error_log_and_last_error(tmp_path, state_dir):
+    """Attempt 1 of 20 keV fails and the scan stops before its retry runs."""
+    stop = threading.Event()
+
+    def stop_on_failure(event):
+        if isinstance(event, PointFailed) and not event.final:
+            stop.set()
+
+    recorder = Recorder(after=stop_on_failure)
+    result = run_scan(
+        energy_scan(),
+        workers=2,
+        runner=fail_once_then_fixture,
+        scan_dir=tmp_path / "s",
+        stop_event=stop,
+        on_event=recorder,
+    )
+    row = result.table.iloc[1]
+    assert row["status"] == "stopped"
+    assert row["error"] == "RuntimeError: first try fails"
+    folder = tmp_path / "s" / "points" / energy_scan().points()[1].id[:16]
+    assert "attempt 1" in (folder / "error.log").read_text()
+    assert not (folder / "RANGE.txt").exists()  # nothing of the cut-short attempt is kept
+    stopped = [e for e in recorder.events if isinstance(e, PointStopped) and e.index == 1]
+    assert stopped and stopped[0].error == "RuntimeError: first try fails"
+    assert (state_dir / "tried-20").exists()  # attempt 1 did run
+
+
+def picky_extractor(results, point):
+    """Fails for 20 keV: the outputs exist, so the point is failed without a SRIM retry."""
+    if point.params["ion.energy_keV"] == 20.0:
+        raise ValueError("no good")
+    return {"ok": 1.0}
+
+
+def counting_runner(spec):
+    Path(os.environ[STATE_VAR], f"run-{energy_of(spec)}-{time.monotonic_ns()}").touch()
+    return fixture_runner(spec)
+
+
+def test_an_extractor_failure_fails_the_point_without_a_srim_retry(tmp_path, state_dir):
+    scan = Scan(BASE, grid={"ion.energy_keV": [10.0, 20.0]}, extract=[picky_extractor], seed=5)
+    result = run_scan(scan, workers=2, runner=counting_runner, scan_dir=tmp_path / "s", retries=2)
+    assert result.table["status"].tolist() == ["done", "failed"]
+    failed = result.table.iloc[1]
+    assert failed["error"] == "ValueError: no good"
+    assert failed["n_ions"] == 10  # the outputs exist: the requested count is kept
+    assert len(list(state_dir.glob("run-20.0-*"))) == 1  # SRIM ran once, not retried
+    log = (tmp_path / "s" / "points" / scan.points()[1].id[:16] / "error.log").read_text()
+    assert "Traceback" in log and "no good" in log
 
 
 def test_other_backends_are_not_available_yet(tmp_path):

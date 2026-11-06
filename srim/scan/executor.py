@@ -61,6 +61,7 @@ from .events import (
     PointQueued,
     PointRetried,
     PointStarted,
+    PointStopped,
     ScanFinished,
     ScanStarted,
     WorkerStats,
@@ -293,6 +294,7 @@ class _ScanRun:
         self.stopping = False
         self.n_done = 0
         self.n_failed = 0
+        self.last_error: dict[int, str] = {}
         self.ctx = multiprocessing.get_context("spawn")
         self.results = self.ctx.Queue()
 
@@ -304,12 +306,16 @@ class _ScanRun:
         for point in self.points:
             self._emit(PointQueued(point.index, point.id))
         try:
-            for ident in range(self.n_workers):
-                self.workers[ident] = self._spawn(ident)
-            self._loop()
+            if self.stop.is_set():  # stopped before the start: no worker is started
+                self._halt()
+            else:
+                for ident in range(self.n_workers):
+                    self.workers[ident] = self._spawn(ident)
+                self._loop()
         finally:
             self._shutdown()
-        rows = self._rows_in_order()
+        self._settle_unfinished()
+        rows = [self.rows[point.index] for point in self.points]
         result = ScanResult.from_rows(self.scan, rows, base_dir=self.folder)
         result.to_csv(self.folder / "result")
         self._emit(
@@ -471,7 +477,8 @@ class _ScanRun:
         except Exception as exc:
             summary = _summary(exc)
             self._log_error(index, attempt, summary, traceback.format_exc())
-            self._give_up(index, attempt, summary)
+            # the outputs exist, so the ions were run: the requested count is kept
+            self._give_up(index, attempt, summary, n_ions=n_ions)
             return
         self.rows[index] = {
             "index": index,
@@ -493,39 +500,57 @@ class _ScanRun:
             self._give_up(index, attempt, summary)
             return
         point = self.points[index]
+        self.last_error[index] = summary
         self._emit(PointFailed(index, point.id, summary, attempt, final=False))
         self.pending.append((index, attempt + 1))
         self._emit(PointRetried(index, point.id, attempt + 1))
 
-    def _give_up(self, index, attempt, summary):
+    def _give_up(self, index, attempt, summary, n_ions=None):
         point = self.points[index]
         self._emit(PointFailed(index, point.id, summary, attempt, final=True))
         self.rows[index] = {
             "index": index,
             "status": "failed",
-            "n_ions": None,
+            "n_ions": n_ions,
             "seeds": str(self.seeds[index]),
             "path": str(self.dirs[index]),
             "error": summary,
         }
         self.n_failed += 1
 
-    def _rows_in_order(self) -> list[dict]:
-        rows = []
+    def _settle_unfinished(self):
+        """A row and a ``point_stopped`` event for every point that did not finish.
+
+        A point that failed earlier keeps its folder (with ``error.log``) and its last error;
+        the outputs of an attempt that was cut short are removed.
+        """
         for point in self.points:
-            row = self.rows.get(point.index)
-            if row is None:  # stopped before it finished: no outputs are kept
-                shutil.rmtree(self.dirs[point.index], ignore_errors=True)
-                row = {
-                    "index": point.index,
-                    "status": "stopped",
-                    "n_ions": None,
-                    "seeds": None,
-                    "path": None,
-                    "error": None,
-                }
-            rows.append(row)
-        return rows
+            index = point.index
+            if index in self.rows:
+                continue
+            error = self.last_error.get(index)
+            self._clear_outputs(index, keep_log=error is not None)
+            self.rows[index] = {
+                "index": index,
+                "status": "stopped",
+                "n_ions": None,
+                "seeds": None,
+                "path": str(self.dirs[index]) if error is not None else None,
+                "error": error,
+            }
+            self._emit(PointStopped(index, point.id, error))
+
+    def _clear_outputs(self, index, keep_log):
+        out = self.dirs[index]
+        if not keep_log:
+            shutil.rmtree(out, ignore_errors=True)
+            return
+        for entry in out.iterdir() if out.is_dir() else ():
+            if entry.name != "error.log":
+                if entry.is_dir() and not entry.is_symlink():
+                    shutil.rmtree(entry, ignore_errors=True)
+                else:
+                    entry.unlink(missing_ok=True)
 
     # -- output ------------------------------------------------------------------------
 

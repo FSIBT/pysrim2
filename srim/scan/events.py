@@ -10,15 +10,20 @@ Order of events of one scan::
     scan_started
     point_queued (one per point, in order)
     then, per point: point_started, point_progress, (point_failed, point_retried,
-    point_started, ...)*, and either point_finished or a final point_failed
+    point_started, ...)*, and one of point_finished, a final point_failed, or (if the
+    scan was stopped) point_stopped
     worker_stats (after each finished point)
+    point_stopped (for every unfinished point, once the workers are down)
     scan_finished (always last)
 
 ``point_progress`` is emitted only at the start (``ions_done=0``) and just before
 ``point_finished`` (``ions_done=ions_total``) for now; live progress inside a SRIM run
 comes later. ``batch_finished`` is defined here for precision targets (batches within a
-point); the executor does not emit it yet. A point that was stopped has no terminal event
-(its row has status ``stopped``); ``scan_finished.stopped`` says that the scan was stopped.
+point); the executor does not emit it yet.
+
+A point that does not finish when the scan is stopped gets ``point_stopped`` (after all the
+workers have stopped, before ``scan_finished``); its row has status ``stopped``.
+``scan_finished.stopped`` says that the scan was stopped.
 """
 
 import json
@@ -39,7 +44,7 @@ def _plain(value):
     if isinstance(value, Path):
         return str(value)
     if hasattr(value, "tolist") and not isinstance(value, (str, bytes)):
-        value = value.tolist()  # numpy scalars and arrays
+        return _plain(value.tolist())  # numpy scalars and arrays, recursively
     if isinstance(value, float) and not math.isfinite(value):
         return None
     return value
@@ -126,6 +131,18 @@ class PointFinished(_Event):
 
 
 @dataclass(frozen=True)
+class PointStopped(_Event):
+    """A point did not finish because the scan was stopped. ``error`` is the one-line
+    error of its last failed attempt, or ``None`` if it never failed."""
+
+    kind: ClassVar[str] = "point_stopped"
+    index: int
+    id: str
+    error: str | None = None
+    time: float = field(default_factory=now)
+
+
+@dataclass(frozen=True)
 class PointFailed(_Event):
     """An attempt of a point failed with the one-line ``error``. ``final`` is False when
     the point is retried (see :class:`PointRetried`) and True when it gives up."""
@@ -199,6 +216,7 @@ EVENT_TYPES = {
         PointFinished,
         PointFailed,
         PointRetried,
+        PointStopped,
         BatchFinished,
         WorkerStats,
         ScanFinished,
@@ -214,6 +232,7 @@ __all__ = [
     "PointQueued",
     "PointRetried",
     "PointStarted",
+    "PointStopped",
     "ScanFinished",
     "ScanStarted",
     "WorkerStats",
