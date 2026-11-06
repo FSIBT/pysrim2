@@ -290,12 +290,12 @@ def run_scan(
         _require_srim()
         _prune_old_runs()
     folder = _new_folder(scan_dir)
+    mark_scan_folder(folder)  # refuses a foreign folder before any lock file is left in it
     try:
         lock = scan_lock(folder).acquire()
     except TimeoutError:
         raise ScanBusy(f"a scan is already running in {folder}") from None
     try:
-        mark_scan_folder(folder)
         # a rerun in the same folder keeps the base seed of the scan it describes, so the
         # points are the same runs and the cache serves them
         base_seed = scan.seed

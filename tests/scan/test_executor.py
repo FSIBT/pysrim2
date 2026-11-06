@@ -897,3 +897,15 @@ def test_ions_in_layer_works_for_cached_points(tmp_path):
 
 def never_runs(spec):
     raise AssertionError("a cached run must not be computed again")
+
+
+def test_a_refused_foreign_folder_keeps_no_lock_file(tmp_path):
+    from srim.scan.executor import LOCK_NAME
+
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "notes.txt").write_text("mine")
+    with pytest.raises(ValueError, match="not a scan folder"):
+        run_scan(energy_scan(), workers=1, runner=fixture_runner, scan_dir=project, cache=False)
+    assert sorted(p.name for p in project.iterdir()) == ["notes.txt"]
+    assert not (project / LOCK_NAME).exists()
