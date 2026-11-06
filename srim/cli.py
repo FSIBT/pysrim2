@@ -25,6 +25,7 @@ import signal
 import subprocess
 import sys
 import threading
+from contextlib import nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -37,6 +38,7 @@ from srim.installer.vb5 import Vb5SetupError, vb5_ready
 from srim.installer.wine import WINE_MANUAL_HINT, WineSetupError, distro_wine_commands, wine_status
 from srim.paths import srim_dir
 from srim.ui import JsonLines, PlainProgress
+from srim.ui.web import WebView, port_problem
 
 EXIT_OK = 0
 EXIT_FAILED = 1
@@ -152,9 +154,25 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("plot", "dashboard", "web", "plain", "json"),
         default="plot",
         help="plot (default): the live plot; dashboard: the full-screen dashboard (keys: p "
-        "pause/resume, q stop, v switch view, l error log); plain: a status line when it "
-        "changes; json: one JSON event per line on stdout. plot and dashboard need the [tui] "
-        "extra and a terminal on stdin and stdout, else plain is used; web is not available yet",
+        "pause/resume, q stop, v switch view, l error log); web: the same live view in a "
+        "browser (URL printed; see --host and --port); plain: a status line when it changes; "
+        "json: one JSON event per line on stdout. plot, dashboard and web need the [tui] extra "
+        "(plot and dashboard also a terminal on stdin and stdout), else plain is used",
+    )
+    scan_run.add_argument(
+        "--host",
+        default="127.0.0.1",
+        metavar="HOST",
+        help="web: the address the server listens on (default 127.0.0.1, this machine only). "
+        "Any other address lets everyone who can reach it pause and stop the scan: the web view "
+        "has no authentication",
+    )
+    scan_run.add_argument(
+        "--port",
+        type=int,
+        default=8000,
+        metavar="PORT",
+        help="web: the port of the server (default 8000)",
     )
     scan_run.add_argument(
         "--plot",
@@ -582,19 +600,31 @@ def _runner_from_env():
     return runner
 
 
+#: the packages of the [tui] extra that each graphical view needs, and their names for users
+VIEW_PACKAGES = {
+    "plot": ("textual", "textual_plotext"),
+    "dashboard": ("textual",),
+    "web": ("textual", "textual_plotext", "textual_serve"),
+}
+PACKAGE_NAMES = {
+    "textual": "textual",
+    "textual_plotext": "textual-plotext",
+    "textual_serve": "textual-serve",
+}
+
+
 def _view_for(ui: str) -> str:
-    """The view that runs for ``--ui``: ``plot`` or ``dashboard`` (the Textual app, when its
-    package is installed and stdin and stdout are terminals), else ``plain`` with a notice on
-    stderr. ``json`` and ``plain`` are themselves. ``web`` is not available yet."""
+    """The view that runs for ``--ui``: ``plot``, ``dashboard`` or ``web`` (the Textual app,
+    when its packages are installed; ``plot`` and ``dashboard`` also need stdin and stdout to be
+    terminals), else ``plain`` with a notice on stderr. ``json`` and ``plain`` are themselves."""
     if ui not in GRAPHICAL_UIS:
         return ui
-    if ui == "web":
-        reason = "not available yet"
-    elif importlib.util.find_spec("textual") is None:
-        reason = "the optional textual package is not installed"
-    elif ui == "plot" and importlib.util.find_spec("textual_plotext") is None:
-        reason = "the optional textual-plotext package is not installed"
-    elif not (sys.stdout.isatty() and sys.stdin.isatty()):
+    missing = next(
+        (name for name in VIEW_PACKAGES[ui] if importlib.util.find_spec(name) is None), None
+    )
+    if missing is not None:
+        reason = f"the optional {PACKAGE_NAMES[missing]} package is not installed"
+    elif ui != "web" and not (sys.stdout.isatty() and sys.stdin.isatty()):
         reason = "stdin and stdout are not both terminals"
     else:
         return ui
@@ -721,16 +751,36 @@ def _scan_run(args) -> int:
                 file=sys.stderr,
             )
     view = _view_for(args.ui)
+    if view == "web":
+        problem = port_problem(args.host, args.port)
+        if problem:
+            print(f"--ui web: {problem}; using --ui plain", file=sys.stderr)
+            view = "plain"
     terminal = view in TERMINAL_VIEWS
     events = queue.Queue() if terminal else None  # the app drains it (see _run_in_app)
+    state = {}  # "started" once the scan has begun, "stopped" from its last event
+    stop, pause = threading.Event(), threading.Event()
+    web_view = None
     if view == "json":
         consumer = JsonLines(sys.stdout)
     elif terminal:
         consumer = events.put
+    elif view == "web":
+        web_view = WebView(
+            folder,
+            host=args.host,
+            port=args.port,
+            plot=args.plot,
+            stop_event=stop,
+            pause_event=pause,
+        )
+        plain = PlainProgress(sys.stdout)
+
+        def consumer(event):  # the status lines in the terminal, and the browser's events
+            plain(event)
+            web_view.on_event(event)
     else:
         consumer = PlainProgress(sys.stdout)
-    state = {}  # "started" once the scan has begun, "stopped" from its last event
-    stop, pause = threading.Event(), threading.Event()
 
     def on_event(event):
         if event.kind == "scan_started":
@@ -754,35 +804,36 @@ def _scan_run(args) -> int:
             runner=_runner_from_env(),
         )
 
-    try:
-        if terminal:
-            result = _run_in_app(
-                scan_call, events, scan, view=view, plot=args.plot, stop=stop, pause=pause
-            )
-            if result is None:  # the app quit first: the scan is not finished
-                csv = folder / "result" / "scan.csv"
-                if csv.is_file():
-                    print(f"result: {csv}", file=sys.stderr)
-                print("stopped: the partial result above is kept", file=sys.stderr)
-                return EXIT_INTERRUPTED
-        else:
-            result = scan_call()
-    except KeyboardInterrupt:
-        print("cancelled", file=sys.stderr)
-        return EXIT_INTERRUPTED
-    except ScanBusy as exc:
-        print(f"{exc}; wait for it or choose another folder", file=sys.stderr)
-        return EXIT_BAD_INPUT
-    except (SpecError, ValueError, FileNotFoundError, container.ContainerError, RuntimeError,
-            subprocess.SubprocessError, OSError) as exc:  # fmt: skip
-        if not state.get("started"):  # nothing ran: bad input, or no SRIM / container runtime
-            print(f"scan did not start: {exc}", file=sys.stderr)
+    with web_view or nullcontext():  # the server stops when the scan has ended (see WebView)
+        try:
+            if terminal:
+                result = _run_in_app(
+                    scan_call, events, scan, view=view, plot=args.plot, stop=stop, pause=pause
+                )
+                if result is None:  # the app quit first: the scan is not finished
+                    csv = folder / "result" / "scan.csv"
+                    if csv.is_file():
+                        print(f"result: {csv}", file=sys.stderr)
+                    print("stopped: the partial result above is kept", file=sys.stderr)
+                    return EXIT_INTERRUPTED
+            else:
+                result = scan_call()
+        except KeyboardInterrupt:
+            print("cancelled", file=sys.stderr)
+            return EXIT_INTERRUPTED
+        except ScanBusy as exc:
+            print(f"{exc}; wait for it or choose another folder", file=sys.stderr)
             return EXIT_BAD_INPUT
-        print(f"scan failed: {exc}", file=sys.stderr)  # after scan_started: the run failed
-        return EXIT_FAILED
-    # the terminal view has ended: its result is printed as plain text
-    say_view = "plain" if terminal else view
-    return _report_outcome(result, folder, say_view, state.get("stopped", False))
+        except (SpecError, ValueError, FileNotFoundError, container.ContainerError, RuntimeError,
+                subprocess.SubprocessError, OSError) as exc:  # fmt: skip
+            if not state.get("started"):  # nothing ran: bad input, or no SRIM / container runtime
+                print(f"scan did not start: {exc}", file=sys.stderr)
+                return EXIT_BAD_INPUT
+            print(f"scan failed: {exc}", file=sys.stderr)  # after scan_started: the run failed
+            return EXIT_FAILED
+        # the terminal view has ended: its result is printed as plain text
+        say_view = "plain" if terminal else view
+        return _report_outcome(result, folder, say_view, state.get("stopped", False))
 
 
 def _scan_prepare(args) -> int:

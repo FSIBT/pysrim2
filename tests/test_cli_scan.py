@@ -11,6 +11,7 @@ import json
 import os
 import queue
 import signal
+import socket
 import sys
 import threading
 import time
@@ -188,8 +189,15 @@ def test_graphical_ui_falls_back_to_plain_with_the_reason(monkeypatch, capsys):
     monkeypatch.setattr(cli.importlib.util, "find_spec", lambda name: object())
     assert cli._view_for("plot") == "plain"  # not a terminal (capsys is not one)
     assert "stdin and stdout are not both terminals" in capsys.readouterr().err
+    assert cli._view_for("web") == "web"  # a browser needs no terminal
+    monkeypatch.setattr(
+        cli.importlib.util, "find_spec", lambda name: None if name == "textual_serve" else object()
+    )
     assert cli._view_for("web") == "plain"
-    assert "--ui web: not available yet; using --ui plain" in capsys.readouterr().err
+    assert "--ui web: the optional textual-serve package is not installed; using --ui plain" in (
+        capsys.readouterr().err
+    )
+    monkeypatch.setattr(cli.importlib.util, "find_spec", lambda name: object())
     assert cli._view_for("json") == "json"
     assert cli._view_for("plain") == "plain"
     assert capsys.readouterr().err == ""
@@ -630,3 +638,66 @@ def test_quitting_before_the_scan_stopped_exits_130_with_the_partial_result(
     code = cli.main(["scan", "run", str(write_scan(work)), "-o", str(out)])
     assert code == 130
     assert "stopped: the partial result above is kept" in capsys.readouterr().err
+
+
+class FakeServerProcess:
+    """The server process of --ui web, without a server: it records that it was stopped."""
+
+    def __init__(self):
+        self.terminated = False
+
+    def poll(self):
+        return 0 if self.terminated else None
+
+    def terminate(self):
+        self.terminated = True
+
+    def wait(self, timeout=None):
+        return 0
+
+
+def test_web_run_prints_the_url_writes_the_events_and_stops_the_server(work, monkeypatch, capsys):
+    import srim.ui.web as web
+
+    started, server = [], FakeServerProcess()
+    monkeypatch.setattr(web, "start_server", lambda argv: started.append(argv) or server)
+    monkeypatch.setattr(web, "GRACE_SECONDS", 0.0)
+    port = free_port()
+    out = work / "out"
+    code = cli.main(["scan", "run", str(write_scan(work)), "--workers", "2", "--ui", "web",
+                     "--port", str(port), "-o", str(out)])  # fmt: skip
+    captured = capsys.readouterr()
+    assert code == 0
+    assert f"web view: http://127.0.0.1:{port}" in captured.out
+    assert captured.out.splitlines()[0].startswith("done 0/2")  # the plain status lines too
+    kinds = [json.loads(line)["kind"] for line in (out / "events.jsonl").read_text().splitlines()]
+    assert kinds[0] == "scan_started" and kinds[-1] == "scan_finished"
+    argv = started[0]
+    assert argv[argv.index("--port") + 1] == str(port)
+    assert argv[argv.index("--host") + 1] == "127.0.0.1"
+    assert server.terminated
+
+
+def test_web_run_on_a_busy_port_goes_on_as_plain(work, monkeypatch, capsys):
+    import srim.ui.web as web
+
+    started = []
+    monkeypatch.setattr(web, "start_server", lambda argv: started.append(argv))
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as busy:
+        busy.bind(("127.0.0.1", 0))
+        busy.listen(1)
+        port = busy.getsockname()[1]
+        out = work / "out"
+        code = cli.main(["scan", "run", str(write_scan(work)), "--ui", "web", "--port", str(port),
+                         "-o", str(out)])  # fmt: skip
+    captured = capsys.readouterr()
+    assert code == 0
+    assert f"--ui web: cannot listen on 127.0.0.1:{port}" in captured.err
+    assert "; using --ui plain" in captured.err
+    assert started == [] and not (out / "events.jsonl").exists()
+
+
+def free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        return probe.getsockname()[1]

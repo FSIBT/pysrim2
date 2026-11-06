@@ -129,8 +129,8 @@ class WebView:
         plot: str | None = None,
         stop_event,
         pause_event,
-        poll: float = POLL_SECONDS,
-        grace: float = GRACE_SECONDS,
+        poll: float | None = None,
+        grace: float | None = None,
     ):
         self.folder = Path(folder)
         self.host = host
@@ -138,8 +138,8 @@ class WebView:
         self.plot = plot
         self.stop_event = stop_event
         self.pause_event = pause_event
-        self.poll = poll
-        self.grace = grace
+        self.poll = POLL_SECONDS if poll is None else poll
+        self.grace = GRACE_SECONDS if grace is None else grace
         #: True once the scan has emitted ``scan_finished``
         self.finished = False
         self._log = None
