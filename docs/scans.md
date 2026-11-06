@@ -27,6 +27,13 @@ for a plot or a report.
   number of ions keeps the id.
 - **Ions.** `ions` is the number of ions per point. Instead, `precision` runs each
   point in batches until a value is known well enough (see [Precision targets](#precision-targets)).
+- **Batches of a fixed count.** `batch_ions` (in Python `Scan(..., batch_ions=N)`, in YAML
+  `scan: {batch_ions: N}`) splits each point of `ions` ions into `ceil(ions / N)` runs of
+  `N` ions (the last one smaller), spread over the workers. Without it a point is one run
+  on one worker, so one big point uses one core. The batches are merged like a precision
+  point's: the values are the extractors applied to all the ions, and `<value>_err` is the
+  batch-means error (see [Precision targets](#precision-targets)). Each batch is cached.
+  Not allowed with `precision`, which has its own `batch_ions`.
 - **Seeds.** The base seed (`seed`) is recorded in `scan.yaml`. Each point gets a seed
   derived from the base seed and its id, so a point keeps its seed when other points
   are added or reordered. Without `seed`, each `run_scan` draws a base seed and records
@@ -114,7 +121,7 @@ it) and `scan-si` in the Python example. The folder holds:
 scan.yaml                    the scan, with the base seed that was used
 points/<id[:16]>/            one point's SRIM outputs and run.yaml
 points/<id[:16]>/error.log   the errors of a point that failed (one entry per attempt)
-points/<id[:16]>/batches/<b>/  the batches of a point with a precision target
+points/<id[:16]>/batches/<b>/  the batches of a point with a precision target or batch_ions
 result/scan.csv              the result table (one row per point)
 result/metadata.yaml         the scan and the base spec, with the pysrim2 version
 cache/                       finished runs, reused by later scans (see Cache and reruns)
@@ -425,8 +432,8 @@ On a cluster, pysrim2 can write the job folders and an array script, and collect
 results afterwards. The compute nodes need no scan process:
 
 ```shell
-pysrim2 scan prepare scan.yaml -o my-scan              # one job folder per point
-pysrim2 scan prepare scan.yaml -o my-scan --jobs 8     # 8 job folders, points dealt round-robin
+pysrim2 scan prepare scan.yaml -o my-scan              # one job folder per point (per batch with batch_ions)
+pysrim2 scan prepare scan.yaml -o my-scan --jobs 8     # 8 job folders, the units dealt round-robin
 cd my-scan && sbatch submit.sbatch                     # the array: one task per job folder
 # when the tasks are done:
 pysrim2 scan collect my-scan
@@ -444,7 +451,8 @@ pysrim2 scan collect my-scan
   has status `missing`, so you can collect early and again later. The finished runs go
   into the cache (`--cache DIR` or `--no-cache`, as for `scan run`).
 - Fixed ion counts only. A precision target needs the local or container backend, because
-  its batches depend on the results of earlier batches.
+  its batches depend on the results of earlier batches. With `batch_ions` each batch is a
+  unit of its own (`<point>-b<NNNN>` in the job folders), and `collect` merges them.
 
 Exit codes of the job commands: `run-job` 0 every unit done, 1 some unit failed, 2 not a job
 folder. `scan collect` 0 every point done, 1 some point failed or missing, 2 bad input.
