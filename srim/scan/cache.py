@@ -174,12 +174,11 @@ class RunCache:
             part = root / f".{TAG_NAME}.{uuid.uuid4().hex}"
             part.write_text(_TAG_TEXT, encoding="utf-8")
             try:
-                os.replace(part, root / TAG_NAME)
-            except PermissionError:
-                # Windows: another scan has the tag open; fine if it is complete
+                # POSIX: replaces atomically; Windows: fails if another scan was first (its
+                # tag is complete too, it was renamed into place the same way)
+                os.rename(part, root / TAG_NAME)
+            except (FileExistsError, PermissionError):
                 part.unlink(missing_ok=True)
-                if not is_cache(root):
-                    raise
         (root / "locks").mkdir(exist_ok=True)
         (root / "tmp").mkdir(exist_ok=True)
 
