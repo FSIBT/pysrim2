@@ -2,16 +2,30 @@
 
 Each picture on this page is made by the script shown under it. The scripts are in
 `docs/gallery/`, and one command rebuilds all the pictures from them. The pictures of
-SRIM runs use real SRIM output with small ion counts and fixed seeds. The live-view
+SRIM runs use real SRIM output with fixed seeds. The live-view
 screenshots use illustrative values from a scripted event stream, not from a SRIM run.
 
+(gallery-tracks)=
+## Collision cascades of 4.5 MeV carbon ions in SiC (COLLISON.txt)
+
+![Map of the collisions of carbon ions and their recoils in SiC](gallery/images/tracks.png)
+
+Every collision of 1000 carbon ions and of the target atoms they set moving, counted by
+depth and lateral position. The ion tracks run along the middle; the lines that branch off
+are recoils. The data is the full-cascade output committed in `test_files/SiC-C`, so no SRIM
+run is needed.
+
+```{literalinclude} gallery/tracks.py
+:language: python
+```
+
 (gallery-heatmap)=
-## Where 5 MeV nickel ions stop in nickel (RANGE_3D.txt)
+## Where 10,000 nickel ions at 5 MeV stop in nickel (RANGE_3D.txt)
 
 ![Heatmap of where 5 MeV nickel ions stop in nickel](gallery/images/heatmap.png)
 
-The ions of a 3D range run, counted by depth along the beam and by lateral distance from
-it. The data is the SRIM output committed in `test_files/1`, so no SRIM run is needed.
+The final positions of 10,000 ions of a 3D range run, counted by depth along the beam and
+by lateral distance from it. A quick Kinchin-Pease run. Needs SRIM.
 
 ```{literalinclude} gallery/heatmap.py
 :language: python
@@ -35,7 +49,7 @@ into SiC. The data is the full-cascade output committed in `test_files/2`.
 ![Mean depth of boron ions in silicon against energy, one line per angle](gallery/images/scan_plot.png)
 
 The mean depth of boron ions in silicon from 10 to 50 keV, at 0 and 45 degrees. Each point
-is a quick SRIM run, and the points run on two worker processes. Needs SRIM.
+is a quick SRIM run of 2000 ions, and the points run on two worker processes. Needs SRIM.
 
 ```{literalinclude} gallery/scan_plot.py
 :language: python
@@ -68,9 +82,9 @@ The values are illustrative, as in the picture above.
 (gallery-beam)=
 ## A beam with a 1 keV Gaussian energy spread (exact mode)
 
-![Energy distribution of 200 boron ions with a 1 keV Gaussian spread](gallery/images/beam.png)
+![Energy distribution of 2000 boron ions with a 1 keV Gaussian spread](gallery/images/beam.png)
 
-The energies of 200 boron ions that SRIM ran in exact mode, drawn over the Gaussian
+The energies of 2000 boron ions that SRIM ran in exact mode, drawn over the Gaussian
 density the beam was defined with. Needs SRIM.
 
 ```{literalinclude} gallery/beam.py

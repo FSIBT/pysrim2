@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/FSIBT/pysrim2/main/docs/gallery/images/heatmap.png" alt="Heatmap of where 5 MeV nickel ions stop in nickel" width="480">
+  <img src="https://raw.githubusercontent.com/FSIBT/pysrim2/main/docs/gallery/images/tracks.png" alt="Map of the collisions of carbon ions and their recoils in SiC" width="480">
 </p>
 
 # pysrim2: Automation, Analysis, and Plotting of SRIM Calculations

@@ -102,10 +102,10 @@ How the agent route works
 :link-type: ref
 :::
 
-:::{grid-item-card} Live plot of a scan
-:img-top: gallery/images/tui_plot.svg
-:img-alt: Terminal live plot of a running scan
-:link: gallery-tui_plot
+:::{grid-item-card} Collision cascades
+:img-top: gallery/images/tracks.png
+:img-alt: Map of the collisions of carbon ions in SiC
+:link: gallery-tracks
 :link-type: ref
 :::
 
