@@ -438,7 +438,9 @@ def test_a_stop_during_a_beam_keeps_only_the_finished_beams(tmp_path, specs_dir)
     stop = threading.Event()
 
     def stop_after_the_first_beam(event):
-        # the first beam (500 ions) is done once 500 ions are: stop while the second runs
+        # one worker runs the units in order, so more than 500 ions done means the first beam
+        # (500 ions) is complete and the second has started: stop then. With more workers a
+        # unit of the second beam can finish before the first beam does.
         if isinstance(event, PointProgress) and event.ions_done > 500:
             stop.set()
 
@@ -446,7 +448,7 @@ def test_a_stop_during_a_beam_keeps_only_the_finished_beams(tmp_path, specs_dir)
     scan_dir = tmp_path / "scan"
     result = run_scan(
         scan,
-        workers=2,
+        workers=1,
         runner=scaled_runner,
         scan_dir=scan_dir,
         cache=False,
