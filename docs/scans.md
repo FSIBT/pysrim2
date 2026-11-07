@@ -337,6 +337,50 @@ error bars from `<y>_err`. `ax` is a matplotlib Axes, or a new one is made.
 
 The exports hold no host paths: `path` is relative to the scan folder.
 
+## Beam distributions in scans
+
+A run spec with a distributed beam (see {doc}`beam`) can be scanned like any other. Its
+parameters are the shape parameters of the distributions and the bins:
+
+```python
+scan = Scan(
+    beam_spec,  # a RunSpec with ion.energy_keV a Gaussian, beam.mode binned
+    grid={
+        "ion.energy_keV.gaussian.sigma": [0.5, 1.0, 2.0],  # the spread, one value per point
+        "beam.bins.energy_keV": [5, 10],  # the number of energy bins
+    },
+    extract=["implant_summary"],
+    ions=1000,
+    seed=12345,
+)
+```
+
+The same keys work in `scan.yaml` (`ion.energy_keV.gaussian.sigma: [0.5, 1.0, 2.0]`). A key
+that names a different kind than the one in the base spec is an error, naming the key:
+`ion.energy_keV.uniform.low` on a Gaussian is refused.
+
+**Binned points are batched points.** A binned point runs one unit per bin that gets ions,
+and its ions are split over the bins by apportionment (see {doc}`beam`). The point folder
+`points/<id[:16]>/` then holds, besides `run.yaml`:
+
+- `units.csv`: one row per finished unit, with `unit`, `beam_batch`, `bin` (empty for a
+  plain batch), `n_ions` and `seed`
+- `beam_bins.csv`: one row per bin, with the bin's energy and angle, its edges, its
+  probability and its `n_ions` (the table of `results.beam_bins`)
+- `batches/<unit>/`: the outputs of each unit
+
+`srim.beam.open_results("<scan folder>/points/<id[:16]>")` opens such a point as one merged
+result (see {doc}`dataframes`). The point's values are the extractors applied to all its
+units merged. A precision target on a binned point is run in beam batches, and its goal is
+checked after each one.
+
+**Exact distributed points.** An exact point is one TRIM.DAT file per run, which holds at
+most 99 999 ions. A scan refuses an exact distributed point that asks for more in one
+run: give `batch_ions: 99999` (in `scan:`, or `precision: {batch_ions: 99999}` for a precision
+target), so that the ions run as units. Python `run_beam` does this split for you.
+
+Units are cached like other runs (see [Cache and reruns](#cache-and-reruns)), so a rerun of the same binned scan in the same folder runs nothing.
+
 ## Cache and reruns
 
 Every finished SRIM run is kept in a cache. The key of a run is the SHA-256 of its run

@@ -48,6 +48,7 @@ Top level of `spec:`
 | `calculation` | int | 1 | TRIM calculation type, 1 to 7 (1 = quick Kinchin-Pease, 2 = full cascade) |
 | `seed` | int | picked at load | random seed (>= 0), see [Seed](#seed) |
 | `settings` | mapping | `{}` | `TRIMSettings` values that differ from the defaults |
+| `beam` | mapping | absent | how a distributed beam runs: `mode` (`exact` or `binned`), `bins`, `max_bins`; see [Beam distributions](beam.md) |
 
 `ion`
 
@@ -55,8 +56,44 @@ Top level of `spec:`
 |---|---|---|---|
 | `symbol` | str | required | element symbol |
 | `mass_amu` | float | from the element table | mass in amu (> 0); written only if it differs from the table |
-| `energy_keV` | float | required | energy in keV (> 0) |
-| `angle_deg` | float | 0.0 | angle of incidence in degrees, `0 <= angle < 90` |
+| `energy_keV` | float or distribution | required | energy in keV (> 0); a number or a distribution (see below) |
+| `angle_deg` | float or distribution | 0.0 | angle of incidence in degrees, `0 <= angle < 90`; a number or a distribution |
+| `azimuth_deg` | float or distribution | absent | direction around the beam axis in degrees, `0 <= azimuth < 360` |
+| `position` | mapping | absent | start position: `y_nm`, `z_nm` and `depth_nm` (numbers or distributions, default 0); exact mode only |
+
+A beam is *distributed* when `energy_keV` or `angle_deg` is a distribution, or when
+`azimuth_deg` or `position` is given. A distributed beam is run with `run_beam` (or
+`pysrim2 run`), not with a plain `TRIM` run: the sampled ions are written to `TRIM.DAT`
+(exact mode) or the bins become runs (binned mode). A spec without a distribution is a single
+beam, as before.
+
+A distribution is a one-key mapping, such as `{gaussian: {mean: 20.0, sigma: 1.0}}`. The
+kinds are `fixed`, `gaussian`, `uniform`, `triangular`, `lognormal`, `histogram` (a `file`,
+or `edges` with `counts`, or `centres` with `counts`) and `function` (`ref:
+python:<module>:<name>` with a `range`). Each takes an optional `range: [low, high]`. The
+physical limits (energy above 0, angle in `[0, 90)`, depth inside the target) are applied
+before sampling; see [Beam distributions](beam.md).
+
+```yaml
+ion:
+  symbol: B
+  energy_keV: {gaussian: {mean: 20.0, sigma: 1.0, range: [17.0, 23.0]}}
+  angle_deg: {uniform: {low: 0.0, high: 5.0}}
+  position:
+    depth_nm: 0.0
+    y_nm: {gaussian: {mean: 0.0, sigma: 50.0}}
+```
+
+`beam`
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `mode` | str | `exact` | `exact`: every ion is in a `TRIM.DAT` file; `binned`: one run per bin |
+| `bins` | mapping | 10 energy bins, 6 angle bins | `energy_keV` and/or `angle_deg`: an int (equal-probability bins) or a list of edges (binned mode only) |
+| `max_bins` | int | 2000 | binned mode refuses more combined bins than this |
+
+`beam` is refused when no beam parameter is a distribution. In exact mode, `calculation` must be
+1 or 2 (SRIM 4 or 5); a `position` distribution or a non-uniform azimuth needs exact mode.
 
 Each entry of `target` (a layer)
 

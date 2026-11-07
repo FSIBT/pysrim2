@@ -35,6 +35,7 @@ Use :ref:`modindex` to search the API documentation.
    run-spec
    export
    scans
+   beam
    concurrency
    agents
    tutorial

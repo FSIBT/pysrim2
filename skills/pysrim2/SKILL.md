@@ -192,7 +192,68 @@ echo $?  # 0 all points done or cached; 1 a point failed or is missing; 2 bad in
   `pysrim2 scan collect DIR` once the array has finished.
 - Never edit the output files of a point or the cache in place: large files are hard links.
 
-## 8. Installing this skill
+## 8. Beam distributions
+
+Use this when the beam is not one energy and one angle: an energy spread, a divergence, an
+azimuth, or a start position. Full reference: `docs/beam.md` in the repository, or the
+[beam page](https://pysrim2.readthedocs.io/en/latest/beam.html).
+
+Python (the energy is a Gaussian with mean 20 keV and sigma 1 keV):
+
+```python
+from srim import TRIM, Ion, Layer, Target
+from srim.analysis import implant_summary
+from srim.beam import Gaussian, run_beam, sampled_ions
+from srim.spec import RunSpec
+
+target = Target([Layer.from_formula("Si", density=2.33, width=10000.0)])  # 1000 nm
+data = (
+    TRIM(target, Ion("B", energy=20e3), number_ions=200, calculation=1, ranges=1, random_seed=12345)
+    .to_spec()
+    .to_dict()
+)
+data["ion"]["energy_keV"] = Gaussian(20.0, 1.0).to_dict()
+spec = RunSpec.from_dict(data)
+
+if __name__ == "__main__":  # required for binned beams (worker processes import this file)
+    with run_beam(spec, output_dir="beam-out") as results:
+        print(implant_summary(results.range3d.df)["mean_depth_A"])
+        print(sampled_ions(results).head())  # exact mode: the ions SRIM ran
+```
+
+The same beam in `run.yaml`: `ion: {symbol: B, energy_keV: {gaussian: {mean: 20.0, sigma: 1.0}}, ...}`,
+then `pysrim2 run run.yaml` (add `--set beam.mode=binned` to switch modes).
+
+- **Shapes**: a number (fixed), `gaussian` (mean, sigma), `uniform` (low, high), `triangular`
+  (low, mode, high), `lognormal` (mu, sigma), `histogram` (`file`, or `edges` with `counts`, or
+  `centres` with `counts`), `function` (`ref: python:<module>:<name>` and a `range`). Any shape
+  takes `range: [low, high]` to truncate.
+- **What can be a distribution**: `ion.energy_keV`, `ion.angle_deg`, `ion.azimuth_deg`, and
+  `ion.position` (`y_nm`, `z_nm`, `depth_nm`). Each is drawn on its own (no correlations).
+- **Which mode**: `exact` (the default) samples every ion and runs SRIM on exactly those ions
+  (`TRIM.DAT`). Use it for positions, a non-uniform azimuth, or when the sampled ions matter.
+  `binned` (`beam: {mode: binned, bins: {energy_keV: 10, angle_deg: 6}}`) runs one SRIM run per
+  bin and has no ion limit; use it for large ion counts when only energy and angle are spread.
+  Binned mode keeps `calculation` as given; exact mode maps 1 to SRIM 4 and 2 to SRIM 5, and
+  refuses 3 (sputtering), so use binned for those.
+- **Limits**: at most 99 999 ions per TRIM.DAT. `run_beam` splits a bigger exact beam into units and
+  merges them; `TRIM.from_spec(spec).run()` refuses it. Binned beams are capped at `beam.max_bins`
+  (2000 by default). `settings.description` must be ASCII for an exact run.
+- **Reading results**: `run_beam` returns `Results` for one exact run, and `MergedResults` for a
+  batched or binned run. Merged per-ion tables have a `batch` column; binned ones also have
+  `bin`, `bin_energy_keV`, `bin_angle_deg`, and `results.beam_bins` lists the bins. `sampled_ions`
+  gives the exact run's ions (energy, angle, azimuth, position). `open_results(point_dir)` reopens a
+  finished scan point. `plot_beam(results, "energy_keV")` needs `pysrim2[plot]`.
+- **Scans**: vary a shape parameter with a dotted key, for example
+  `ion.energy_keV.gaussian.sigma` or `beam.bins.energy_keV`, in `grid=`. An exact distributed point
+  above 99 999 ions needs `batch_ions: 99999`.
+- **Refusals** are `SpecError`s that name the dotted key (for example `ion.energy_keV: no
+  probability in [...]` or `beam.max_bins: ...`). Read the message and fix the spec rather than
+  changing the beam by hand.
+- **Python density functions** must be module-level functions in an importable module (not
+  `__main__`, not a lambda). Run from the folder that holds the module.
+
+## 9. Installing this skill
 
 `pysrim2 install skill [--agent claude|all] [--scope user|project] [--yes]` copies it to
 `~/.claude/skills/pysrim2/` (user) or `./.claude/skills/pysrim2/` (project); `--agent all` also

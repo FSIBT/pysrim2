@@ -262,6 +262,55 @@ ions missing in `RANGE_3D.txt`.
 Note that the root-mean-square radial distance (about 342 A for the reference
 case) is a different quantity from SRIM's lateral or radial straggling.
 
+## Beam distributions
+
+These tables exist for distributed runs (see {doc}`beam`).
+
+### Merged per-ion tables
+
+A result of several units (a batched exact beam, or a binned beam) is a `MergedResults`.
+Its per-ion tables (`range3d`, `exyz`, `backscat`, `transmit`, `sputter`) are concatenated.
+`ion` is the global ion number, and these columns come after it:
+
+| Column | Present | Meaning |
+|---|---|---|
+| `batch` | every merged result | index of the unit (batch) the ion came from |
+| `beam_batch` | binned beams | the beam batch the bin's unit belongs to (a point's ions are planned in beam batches: one without `batch_ions` or a precision target, several with them) |
+| `bin` | binned beams | index of the bin (row of `beam_bins`) |
+| `bin_energy_keV` | binned beams | the bin's energy (the value the bin's run used) |
+| `bin_angle_deg` | binned beams | the bin's angle |
+
+### `beam_bins` (binned beams)
+
+`results.beam_bins` has one row per bin (the bins of `srim.beam.binned.bins_frame`). It is
+also written as `beam_bins.csv` in the point folder.
+
+| Column | Unit | Meaning |
+|---|---|---|
+| `bin` | | bin index |
+| `energy_keV` | keV | the bin's energy (mean of the bin's interval) |
+| `angle_deg` | deg | the bin's angle |
+| `energy_low_keV`, `energy_high_keV` | keV | bin edges; NaN when the energy is fixed |
+| `angle_low_deg`, `angle_high_deg` | deg | bin edges; NaN when the angle is fixed |
+| `probability` | | the bin's probability under the defined distribution |
+| `n_ions` | | ions run in this bin |
+
+### `sampled_ions(results)` (exact beams)
+
+`srim.beam.sampled_ions(results)` reads the ions an exact run ran from its `TRIM.DAT`
+file, one row per ion. The values are read back from the file (7 significant digits).
+
+| Column | Unit | Meaning |
+|---|---|---|
+| `ion` | | ion number (the global number for a merged result) |
+| `batch` | | unit index; only for a merged result (it comes after `ion`) |
+| `energy_keV` | keV | ion energy |
+| `angle_deg` | deg | angle of incidence, `arccos(cos_x)` |
+| `azimuth_deg` | deg | direction around the axis, in `[0, 360)` |
+| `y_nm`, `z_nm`, `depth_nm` | nm | start position |
+| `energy_eV`, `depth_A`, `y_A`, `z_A` | eV, A | the same values in SRIM's units, as written in `TRIM.DAT` |
+| `cos_x`, `cos_y`, `cos_z` | | direction cosines (`cos_x > 0`, into the target) |
+
 ## Exporting
 
 Parquet, HDF5 and CSV export of all these tables is described in {doc}`export`.
