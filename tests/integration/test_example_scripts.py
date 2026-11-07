@@ -45,10 +45,11 @@ def test_beam_energy_spread(tmp_path):
     assert (table["n_ions"] > 0.9 * 200).all()
     assert (table["mean_depth_A"] > 0).all()
     assert (table["straggle_depth_A"] > 0).all()
-    # the same beam both ways. With 200 ions the mean depth changes by several per cent from seed
-    # to seed, so the check is loose: it catches a units or energy mistake, not the statistics.
+    # a smoke test of the example: 200 ions are too few for a statistical comparison of the
+    # two modes (test_beam_runs.py::test_exact_and_binned_agree does that). The loose bound only
+    # catches a units or energy mistake, which would change the depth by a large factor.
     exact, binned = table["mean_depth_A"]
-    assert abs(exact - binned) < 0.25 * exact
+    assert 0.5 < binned / exact < 2.0
     assert (tmp_path / "output" / "beam_energy_spread.csv").is_file()
 
 

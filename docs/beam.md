@@ -29,7 +29,7 @@ tilt are spread: each bin is one SRIM run, and the bins run in parallel.
 
 Binned mode is an approximation. Within a bin every ion has the bin's mean energy and
 angle, so more bins give a closer answer and more SRIM runs. Exact mode has no such
-error, but it uses SRIM's quick Kinchin-Pease or full cascade model on the same ions.
+error: SRIM runs every sampled ion with its own energy, direction and start position.
 
 ## Quick start
 
@@ -44,9 +44,11 @@ from srim.beam import Gaussian, run_beam, sampled_ions
 from srim.spec import RunSpec
 
 target = Target([Layer.from_formula("Si", density=2.33, width=10000.0)])  # 1000 nm
-data = TRIM(
-    target, Ion("B", energy=20e3), number_ions=200, calculation=1, ranges=1, random_seed=12345
-).to_spec().to_dict()
+data = (
+    TRIM(target, Ion("B", energy=20e3), number_ions=200, calculation=1, ranges=1, random_seed=12345)
+    .to_spec()
+    .to_dict()
+)
 data["ion"]["energy_keV"] = Gaussian(20.0, 1.0).to_dict()
 spec = RunSpec.from_dict(data)
 
@@ -440,9 +442,6 @@ with run_beam(spec, output_dir="beam-plot") as results:  # the spec of the binne
     ax = plot_beam(results, "energy_keV")  # one bar per bin
     ax.figure.savefig("beam-energy.png")
 ```
-
-An exact run is drawn as a histogram of its sampled ions instead, with the same call on the
-results of an exact spec.
 
 For an exact run the sampled ions are drawn as a density histogram, and the defined
 density (the clipped distribution) as a line. For a binned run each bin is a bar, with the
