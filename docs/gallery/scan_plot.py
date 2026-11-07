@@ -1,8 +1,8 @@
 """Mean depth of B ions in Si against the energy, one line per angle: a parameter scan.
 
 The base run and the seed are those of ``examples/scripts/angle_energy_scan.py``; this entry
-scans more energies (10 to 50 keV) at two angles (0 and 45 degrees), ten points on two worker
-processes, a quick Kinchin-Pease run each. Needs SRIM.
+scans more energies (10 to 50 keV) at two angles (0 and 45 degrees), ten points of 2000 ions on
+two worker processes, a quick Kinchin-Pease run each. Needs SRIM.
 """
 
 import importlib.util
@@ -19,8 +19,8 @@ OUTPUT = "scan_plot.png"
 
 ROOT = Path(__file__).resolve().parents[2]
 
-# 200 ions per point instead of the example's IONS, so that the ten points stay a quick run.
-IONS = 200
+# 2000 ions per point (the example uses 50), so that the lines are smooth.
+IONS = 2000
 
 
 def _example(name):
