@@ -351,18 +351,12 @@ def _extracted_batches(scan: Scan, point, seed: int, specs, dest: Path):
         clash = sorted(set(values) & (set(scan.param_names) | _RESERVED))
         if clash:
             raise ValueError(f"extractor column(s) {clash} clash with the scan's own columns")
-        record = [(b, b, None, spec.number_ions, spec.seed) for b, spec in enumerate(specs)]
-        write_point_record(
-            dest,
-            point.spec.with_overrides([f"number_ions={n_ions}", f"seed={seed}"]),
-            record,
-            provenance={"pysrim2_version": __version__},
-        )
     except Exception as exc:
         summary = _summary(exc)
         with open(dest / ERROR_LOG, "a", encoding="utf-8") as f:
             f.write(f"extraction: {summary}\n{traceback.format_exc()}\n")
         return _row(index, "failed", n_ions, seed, dest, error=summary)
+    _write_record(point, dest, seed, specs)
     return {
         "index": index,
         "status": "done",
@@ -373,6 +367,21 @@ def _extracted_batches(scan: Scan, point, seed: int, specs, dest: Path):
         **values,
         **{f"{name}_err": err for name, err in errs.items()},
     }
+
+
+def _write_record(point, dest: Path, seed: int, specs) -> None:
+    """Record a collected batched point in its folder (see :func:`write_point_record`). A
+    failure only warns: the point's values are already extracted and stay in the row."""
+    record = [(b, b, None, spec.number_ions, spec.seed) for b, spec in enumerate(specs)]
+    try:
+        write_point_record(
+            dest,
+            point.spec.with_overrides([f"number_ions={point.spec.number_ions}", f"seed={seed}"]),
+            record,
+            provenance={"pysrim2_version": __version__},
+        )
+    except Exception as exc:  # the record is extra: never turn a finished point into a failure
+        log.warning("scan point %d: its record could not be written (%s)", point.index, exc)
 
 
 def _extracted(scan: Scan, point, dest: Path, spec):

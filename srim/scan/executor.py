@@ -1165,7 +1165,7 @@ class _ScanRun:
             if self.precision is None:
                 self._finish_batched(index, attempt)
             else:
-                self._decide(index, beam, attempt)
+                self._decide(index, len(self.beam_units[index]) - 1, attempt)
 
     def _finish_batched(self, index, attempt):
         """All batches of a fixed-count point are done: its values are the estimate of the
@@ -1258,7 +1258,7 @@ class _ScanRun:
                 beam_bins,
                 provenance={"pysrim2_version": __version__},
             )
-        except OSError as exc:
+        except Exception as exc:  # a record is kept for the user, never worth the scan
             log.warning("scan point %d: its record could not be written (%s)", index, exc)
 
     def _finish_precision(self, index, status, values, errs):
