@@ -48,20 +48,27 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="Build the documentation gallery pictures.")
     parser.add_argument("--list", action="store_true", help="list the entries and exit")
     parser.add_argument(
-        "--out", type=Path, default=DEFAULT_OUT, help="directory for the pictures (default: %(default)s)"
+        "--out",
+        type=Path,
+        default=DEFAULT_OUT,
+        help="directory for the pictures (default: %(default)s)",
     )
     parser.add_argument("names", nargs="*", metavar="name", help="entries to build (default: all)")
     args = parser.parse_args(argv)
 
     known = entries()
     if args.list:
+        failed = False
         for name in known:
-            module = load(name)
-            if module.NEEDS_SRIM:
-                print(f"{name}  [SRIM]")
-            else:
-                print(f"{name}  {module.TITLE}")
-        return 0
+            try:
+                module = load(name)
+            except Exception as exc:
+                print(f"FAILED {name}: {exc}")
+                failed = True
+                continue
+            tag = "  [SRIM]" if module.NEEDS_SRIM else ""
+            print(f"{name}{tag}  {module.TITLE}")
+        return 1 if failed else 0
 
     unknown = [name for name in args.names if name not in known]
     if unknown:

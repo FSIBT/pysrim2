@@ -1,4 +1,4 @@
-"""Depth profiles of ionization and vacancies from a Kinchin-Pease style run."""
+"""Depth profiles of ionization and vacancies from a full cascade run (test_files/2)."""
 
 from pathlib import Path
 
@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 
 from srim.output import Results
 
-TITLE = "Ionization, damage energy and vacancies against depth"
+TITLE = "Ionization and vacancies against depth"
 NEEDS_SRIM = False
 OUTPUT = "depth_profiles.png"
 
@@ -25,7 +25,7 @@ def make(outdir):
     left.set_xlabel("depth (nm)")
     left.set_ylabel("ionization (eV/Å/ion)")
     left.set_title("Ionization")
-    left.legend()
+    left.legend(loc="upper right")
 
     right.plot(vacancy["depth_A"] / 10, vacancy[vacancy_columns].sum(axis=1))
     right.set_xlabel("depth (nm)")

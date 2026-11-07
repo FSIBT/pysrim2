@@ -5,10 +5,11 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.colors import LogNorm
+from matplotlib.ticker import FormatStrFormatter
 
 from srim.output import Range3D
 
-TITLE = "Where 1000 nickel ions stop in nickel (RANGE_3D.txt)"
+TITLE = "Where 5 MeV nickel ions stop in nickel (RANGE_3D.txt)"
 NEEDS_SRIM = False
 OUTPUT = "heatmap.png"
 
@@ -21,8 +22,10 @@ def make(outdir):
     lateral_um = np.hypot(df["y_A"], df["z_A"]) / 1e4
 
     fig, ax = plt.subplots(figsize=(6, 4), dpi=100)
-    _, _, _, image = ax.hist2d(depth_um, lateral_um, bins=100, norm=LogNorm())
-    fig.colorbar(image, ax=ax, label="ions per bin")
+    _, _, _, image = ax.hist2d(depth_um, lateral_um, bins=40, norm=LogNorm())
+    cbar = fig.colorbar(image, ax=ax, label="ions per bin")
+    cbar.ax.yaxis.set_major_formatter(FormatStrFormatter("%d"))
+    cbar.ax.yaxis.set_minor_formatter(FormatStrFormatter("%d"))
     ax.set_xlabel("depth along the beam (µm)")
     ax.set_ylabel("lateral distance √(y² + z²) (µm)")
     ax.set_title("5 MeV Ni into Ni")

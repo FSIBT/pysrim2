@@ -1,6 +1,7 @@
 """Tests for the documentation gallery runner (docs/gallery/make.py)."""
 
 import importlib.util
+import types
 from pathlib import Path
 
 import pytest
@@ -41,8 +42,36 @@ def test_list_marks_the_srim_entries(capsys):
     lines = capsys.readouterr().out.splitlines()
     assert len(lines) == len(NAMES)
     for name, line in zip(NAMES, lines, strict=True):
+        module = make.load(name)
         assert line.startswith(name)
-        assert ("[SRIM]" in line) == make.load(name).NEEDS_SRIM
+        assert ("[SRIM]" in line) == module.NEEDS_SRIM
+        assert line.endswith(module.TITLE)
+
+
+def test_list_shows_the_title_of_a_srim_entry(tmp_path, monkeypatch, capsys):
+    fake = types.SimpleNamespace(
+        TITLE="Fake SRIM title", NEEDS_SRIM=True, OUTPUT="fake.png", make=None
+    )
+    real_load = make.load
+    monkeypatch.setattr(make, "entries", lambda: ["fake"])
+    monkeypatch.setattr(make, "load", lambda name: fake if name == "fake" else real_load(name))
+    assert make.main(["--list"]) == 0
+    assert capsys.readouterr().out.splitlines() == ["fake  [SRIM]  Fake SRIM title"]
+
+
+def test_list_reports_a_broken_entry_and_exits_1(monkeypatch, capsys):
+    real_load = make.load
+
+    def load(name):
+        if name == "heatmap":
+            raise SyntaxError("bad entry")
+        return real_load(name)
+
+    monkeypatch.setattr(make, "load", load)
+    assert make.main(["--list"]) == 1
+    out = capsys.readouterr().out
+    assert "FAILED heatmap: bad entry" in out
+    assert "depth_profiles  " in out
 
 
 @pytest.mark.parametrize("name", NO_SRIM_NAMES)
