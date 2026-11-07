@@ -215,6 +215,32 @@ def _seed(seed):
     return int(seed)
 
 
+def _check_trim_dat_units(points, ions, batch_ions) -> None:
+    """Refuse an exact distributed point whose run is more than one TRIM.DAT file can hold.
+
+    An exact distributed beam is written to TRIM.DAT, which holds at most
+    :data:`srim.beam.spec.MAX_TRIM_DAT_IONS` ions, so each run (a unit) must have that many or
+    fewer: a fixed count needs ``batch_ions``, a precision target its ``batch_ions``.
+    """
+    from ..beam.spec import MAX_TRIM_DAT_IONS  # lazy: srim.beam imports srim.scan
+
+    for point in points:
+        if not point.spec.is_distributed or is_binned(point.spec):
+            continue
+        if isinstance(ions, Precision):
+            key, limit, fix = "precision.batch_ions", ions.batch_ions, "precision.batch_ions"
+        elif batch_ions is not None:
+            key, limit, fix = "batch_ions", batch_ions, "batch_ions"
+        else:
+            key, limit, fix = "ions", point.spec.number_ions, "batch_ions"
+        if limit > MAX_TRIM_DAT_IONS:
+            raise SpecError(
+                f"scan point {point.index}: an exact distributed beam runs in TRIM.DAT files of "
+                f"at most {MAX_TRIM_DAT_IONS} ions, and {key} is {limit}; set {fix}: "
+                f"{MAX_TRIM_DAT_IONS} (the ions then run as batches), or use beam.mode: binned"
+            )
+
+
 def is_binned(spec: RunSpec) -> bool:
     """True for a point whose beam runs as bins: ``beam.mode: binned`` with a distribution.
 
@@ -299,6 +325,7 @@ class Scan:
                 for value in values:
                     _apply(base, {key: value}, f"scan.grid.{key}")
         self._points = self._expand()
+        _check_trim_dat_units(self._points, self.ions, self.batch_ions)
 
     @property
     def param_names(self) -> list[str]:

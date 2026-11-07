@@ -32,7 +32,7 @@ from .. import __version__
 from ..output import Results
 from ..spec import SpecError
 from .backends import DONE, ERROR_LOG, OUT_DIR, read_job, write_job
-from .batches import MAX_SEED, BatchInfo, derive_seed
+from .batches import MAX_SEED, BatchInfo, derive_seed, write_point_record
 from .cache import cache_key
 from .executor import (
     _RESERVED,
@@ -47,7 +47,7 @@ from .executor import (
 from .extract import combine
 from .precision import Precision
 from .result import ScanResult
-from .spec import Scan
+from .spec import Scan, is_binned
 
 log = logging.getLogger(__name__)
 
@@ -57,6 +57,7 @@ SUBMIT_FILE = "submit.sbatch"
 #: the error of a point with no outputs yet (its job did not run it, or has not run)
 NOT_RUN = "not run yet"
 _PRECISION_MESSAGE = "precision targets need the local or container backend; use ions= for Slurm"
+_BINNED_MESSAGE = "binned beams cannot be prepared for Slurm in 0.10.0; use exact mode or run_scan"
 
 
 def prepare_slurm(scan: Scan, scan_dir, *, jobs=None) -> Path:
@@ -87,6 +88,8 @@ def prepare_slurm(scan: Scan, scan_dir, *, jobs=None) -> Path:
     if isinstance(scan.ions, Precision):
         raise SpecError(_PRECISION_MESSAGE)
     points = scan.points()
+    if any(is_binned(point.spec) for point in points):
+        raise SpecError(_BINNED_MESSAGE)
     names = [point.id[:16] for point in points]
     if len(set(names)) != len(names):
         raise SpecError("two scan points have the same id; the scan cannot be prepared")
@@ -348,6 +351,13 @@ def _extracted_batches(scan: Scan, point, seed: int, specs, dest: Path):
         clash = sorted(set(values) & (set(scan.param_names) | _RESERVED))
         if clash:
             raise ValueError(f"extractor column(s) {clash} clash with the scan's own columns")
+        record = [(b, b, None, spec.number_ions, spec.seed) for b, spec in enumerate(specs)]
+        write_point_record(
+            dest,
+            point.spec.with_overrides([f"number_ions={n_ions}", f"seed={seed}"]),
+            record,
+            provenance={"pysrim2_version": __version__},
+        )
     except Exception as exc:
         summary = _summary(exc)
         with open(dest / ERROR_LOG, "a", encoding="utf-8") as f:

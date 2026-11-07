@@ -21,10 +21,10 @@ import yaml
 from srim.beam import open_results
 from srim.beam.binned import make_bins
 from srim.output import Results
-from srim.scan import Precision, Scan, derive_seed, run_scan
+from srim.scan import Precision, Scan, derive_seed, prepare_slurm, run_scan
 from srim.scan.events import BatchFinished
 from srim.scan.extract import register
-from srim.spec import RunSpec
+from srim.spec import RunSpec, SpecError
 
 FIXTURE = Path(__file__).resolve().parents[2] / "test_files" / "1"
 SPEC_DIR_VAR = "PYSRIM2_TEST_BEAM_SPECS"
@@ -269,6 +269,11 @@ def test_a_rerun_of_a_binned_scan_runs_nothing(tmp_path, specs_dir):
     assert list(again.table["status"]) == ["cached"]
 
 
+def test_an_exact_distributed_point_over_the_trim_dat_limit_needs_batch_ions():
+    with pytest.raises(SpecError, match="batch_ions"):
+        Scan(beam_base(mode="exact"), ions=150_000)
+
+
 def test_exact_points_split_into_trim_dat_sized_batches(tmp_path, specs_dir):
     scan = Scan(beam_base(mode="exact"), ions=150_000, batch_ions=99_999, seed=BASE_SEED)
     scan_dir = tmp_path / "scan"
@@ -296,3 +301,7 @@ def test_a_histogram_energy_in_exact_mode_runs_through_the_executor(tmp_path, sp
     assert spec["ion"]["energy_keV"] == histogram
 
 
+def test_slurm_refuses_binned_points(tmp_path):
+    scan = Scan(beam_base(bins={"energy_keV": 5}), ions=100)
+    with pytest.raises(SpecError, match="binned beams cannot be prepared for Slurm"):
+        prepare_slurm(scan, tmp_path / "slurm")
