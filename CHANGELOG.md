@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `CITATION.cff`: cite the original pysrim paper (Ostrouchov, Zhang, Weber 2018, JOSS); every git author and co-author is listed in `CITATION.cff` and the package metadata.
+- New documentation front page (`docs/index.md`) with two routes: a Python route (install, the boron reference case) and an agent route (install the skill, give it a task), and four sidebar sections (Get started, Gallery, Guides, Reference).
+- Example gallery (`docs/gallery.md`) with a picture and its code for every entry; the pictures are rebuilt by `docs/gallery/make.py`, and the entries that run SRIM need an installed SRIM.
+- First-simulation page (`docs/first-simulation.md`) replaces the 2018 tutorial.
+- Agent guide (`docs/agents.md`): how an AI coding agent uses the pysrim2 skill, with example prompts.
+- Examples page (`docs/examples.md`) lists the example scripts and notebooks.
+- Regenerated API reference (`docs/api/`), one page per part of the library.
+- Citing page (`docs/citing.md`) with the BibTeX entry and the SRIM citation, and a citing section in the README.
+- The documentation is built in CI (`docs` job, `sphinx-build -W`), so a warning fails the build as it does on Read the Docs.
 
 ## [0.10.0] - 2026-11-06
 

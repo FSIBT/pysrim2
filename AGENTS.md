@@ -66,3 +66,15 @@ pysrim2 is a maintained continuation of pysrim (distribution `pysrim2`, import `
 - Docs: `docs/beam.md` (the user guide), with the beam sections of `docs/run-spec.md`, `docs/scans.md` and `docs/dataframes.md`; the agent section is `skills/pysrim2/SKILL.md` (section 8).
 - Rules that must hold: the random streams are `SeedSequence(seed).spawn(6)`, one `PCG64` per parameter in the order of `exact.STREAMS`, so reordering them changes every beam. Physical cuts go through `effective()` only. The cache key and point id use `fingerprint` and the histogram content. A `TRIM.DAT` is CRLF, has 10 header lines and a trailing 0x1A, and its ion names are exactly 5 characters. `TRIM.IN` of a spec without distributions stays byte-identical.
 - Python density functions are referred to as `python:<module>:<name>` and must be importable by name in the worker processes (`check_function_ref` refuses `__main__`, lambdas and nested functions).
+
+## Docs and gallery (0.11.0)
+
+- Sidebar: `docs/index.md` has four sections (Get started, Gallery, Guides, Reference), each a hidden `{toctree}`. A new page goes into one of them; the README links must name existing pages (`docs/<page>.md` or `.rst`).
+- Docs build: `uv run --group docs sphinx-build -W -b html docs <output dir>`. The CI `docs` job and Read the Docs both use `-W`, so a warning fails both. The docs build never runs SRIM, wine, Docker or a gallery script.
+- The API reference is `docs/api/`: autodoc pages, one per part of the library. Each object is documented on one page only.
+- The boron reference case (200 ions, 20 keV, 7 degrees, 100 nm Au on Si, seed 12345; mean depth about 282 Å) is shown in the README, `docs/first-simulation.md` and `docs/agents.md`. Change them together.
+- Gallery: `docs/gallery/` holds one script per picture. Each `*.py` there (not `make.py`, not `_`-prefixed) is an entry with `TITLE`, `NEEDS_SRIM`, `OUTPUT` and `make(outdir)`; `docs/gallery/README.md` has the contract. Users read the entry scripts as example code, so keep them short.
+- Pictures are committed in `docs/gallery/images/` (under 300 KB each). Rebuild them on Linux with SRIM installed: `uv run --extra plot --extra tui python docs/gallery/make.py` (`--list` shows the entries). Commit the changed images with the change that caused them.
+- Tests: `tests/test_gallery.py` (entry contract, committed images, gallery page), `tests/integration/test_gallery_srim.py` (`-m srim`, builds the SRIM entries), `tests/test_readme.py` (README images exist, README docs links resolve), `tests/test_citation.py` (`CITATION.cff` and `pyproject.toml` authors, every git author listed).
+- Ruff also formats the Python code fences inside the Markdown docs, so `uv run ruff format` covers them.
+- Authors: a new contributor goes into both `pyproject.toml` (`authors`) and `CITATION.cff` (`authors`), in the same order. A contributor with a second git identity goes into `.mailmap` too, so their commits count as one author.
