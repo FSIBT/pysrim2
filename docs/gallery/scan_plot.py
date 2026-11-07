@@ -19,6 +19,9 @@ OUTPUT = "scan_plot.png"
 
 ROOT = Path(__file__).resolve().parents[2]
 
+# 200 ions per point instead of the example's IONS, so that the ten points stay a quick run.
+IONS = 200
+
 
 def _example(name):
     path = ROOT / "examples" / "scripts" / f"{name}.py"
@@ -34,7 +37,7 @@ def make(outdir):
         example.base_spec(),
         grid={"ion.energy_keV": [10.0, 20.0, 30.0, 40.0, 50.0], "ion.angle_deg": [0.0, 45.0]},
         extract=["implant_summary"],
-        ions=example.IONS,
+        ions=IONS,
         seed=example.SEED,
     )
     fig, ax = plt.subplots(figsize=(6, 4), dpi=100)
