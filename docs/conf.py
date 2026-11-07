@@ -15,13 +15,23 @@ extensions = [
     "sphinx.ext.mathjax",
     "sphinx.ext.napoleon",
     "myst_parser",
+    "sphinx_design",
 ]
 
 myst_heading_anchors = 3
+myst_enable_extensions = ["colon_fence"]
 templates_path = ["_templates"]
 source_suffix = {".rst": "restructuredtext", ".md": "markdown"}
 master_doc = "index"
-exclude_patterns = ["_build", "Thumbs.db", ".DS_Store", "superpowers/**", "paper/**"]
+exclude_patterns = [
+    "_build",
+    "Thumbs.db",
+    ".DS_Store",
+    "superpowers/**",
+    "paper/**",
+    # gallery scripts and their README are not pages; the images are used from pages
+    "gallery/README.md",
+]
 pygments_style = "sphinx"
 
 html_theme = "furo"
