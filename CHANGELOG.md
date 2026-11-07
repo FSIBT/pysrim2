@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-06
+
 ### Added
 
 - Beam distributions in `run.yaml` and `RunSpec`: `ion.energy_keV`, `ion.angle_deg` and `ion.azimuth_deg` take a number or a distribution (Gaussian, uniform, triangular, log-normal, histogram file or inline, or a Python function), `ion.position` sets the start position, and `beam:` chooses exact or binned mode; `--set` and scan keys reach into the distributions. Runs without distributions are unchanged.
@@ -246,7 +248,8 @@ Changes since pysrim 0.5.10. See
 
 Versions up to and including 0.5.10 were released as `pysrim` by Chris Ostrouchov.
 
-[Unreleased]: https://github.com/FSIBT/pysrim2/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/FSIBT/pysrim2/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/FSIBT/pysrim2/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/FSIBT/pysrim2/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/FSIBT/pysrim2/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/FSIBT/pysrim2/compare/v0.6.0...v0.7.0
