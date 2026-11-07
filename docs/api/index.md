@@ -5,7 +5,7 @@ One page per part of the library. Each object is documented on one page only.
 - {doc}`srim`: `TRIM`, `SR`, `Ion`, `Layer`, `Target`, `Element` and `Material`.
 - {doc}`output`: the parsed SRIM outputs (`Results` and the output tables).
 - {doc}`spec`: `RunSpec` and the parts of a `run.yaml`.
-- {doc}`scan`: scans over many runs, their results and the extractors.
+- {doc}`scan`: scans over many runs and their results.
 - {doc}`beam`: beam distributions and their runs.
 - {doc}`analysis`: `implant_summary`.
 - {doc}`export`: Parquet, HDF5 and CSV export.
