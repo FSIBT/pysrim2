@@ -35,7 +35,8 @@ exclude_patterns = [
 pygments_style = "sphinx"
 
 html_theme = "furo"
-html_static_path = []
+html_static_path = ["_static"]
+html_css_files = ["custom.css"]
 
 htmlhelp_basename = "pysrim2doc"
 latex_documents = [

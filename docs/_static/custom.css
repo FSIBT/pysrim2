@@ -1,0 +1,16 @@
+/* The front-page cards are narrow: their code blocks use a smaller font to fit one line. */
+.sd-card-body .highlight pre {
+  font-size: 0.7em;
+  padding: 0.5rem;
+}
+
+/* Grid columns may shrink below the width of their code; the code scrolls in its own box. */
+.sd-row > .sd-col,
+.sd-card {
+  min-width: 0;
+}
+
+.sd-card-body .highlight {
+  max-width: 100%;
+  overflow-x: auto;
+}
