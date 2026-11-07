@@ -10,6 +10,7 @@ of a point differ.
 
 import os
 import shutil
+import threading
 import time
 from pathlib import Path
 
@@ -18,16 +19,20 @@ import pandas as pd
 import pytest
 import yaml
 
+import srim.scan.executor as executor_module
+import srim.scan.slurm as slurm_module
 from srim.beam import open_results
 from srim.beam.binned import make_bins
 from srim.output import Results
-from srim.scan import Precision, Scan, derive_seed, prepare_slurm, run_scan
-from srim.scan.events import BatchFinished
+from srim.scan import Precision, Scan, collect_slurm, derive_seed, prepare_slurm, run_scan
+from srim.scan.events import BatchFinished, PointProgress, PointRetried
 from srim.scan.extract import register
 from srim.spec import RunSpec, SpecError
 
 FIXTURE = Path(__file__).resolve().parents[2] / "test_files" / "1"
 SPEC_DIR_VAR = "PYSRIM2_TEST_BEAM_SPECS"
+#: the bin energy (repr) whose first run fails, for the retry test
+FLAKY_VAR = "PYSRIM2_TEST_FLAKY_ENERGY"
 BASE_SEED = 7
 
 
@@ -98,10 +103,29 @@ def scale_ioniz(path: Path, factor: float) -> None:
     path.write_bytes(b"".join(out))
 
 
+def record(spec):
+    """Write the spec of a run into its own file under the spec directory."""
+    directory = Path(os.environ[SPEC_DIR_VAR])
+    name = f"{os.getpid()}-{time.monotonic_ns()}.yaml"
+    (directory / name).write_text(
+        yaml.safe_dump(spec.to_dict(inline=True), sort_keys=True), encoding="utf-8"
+    )
+
+
+def plain_runner(spec):
+    """The fixture, whatever the beam (for a spec whose energy is a distribution)."""
+    record(spec)
+    return Results(str(FIXTURE))
+
+
 def scaled_runner(spec):
-    """The fixture with its ionization profile scaled by (bin energy / 10 keV)."""
+    """The fixture with its ionization profile scaled by (bin energy / 10 keV). Records the
+    spec, so a test can count the runs that were really computed."""
+    record(spec)
     energy = spec.to_dict()["ion"]["energy_keV"]
-    directory = Path(os.environ[SPEC_DIR_VAR]) / f"unit-{spec.seed}"
+    directory = (
+        Path(os.environ[SPEC_DIR_VAR]).parent / "work" / f"{os.getpid()}-{time.monotonic_ns()}"
+    )
     shutil.copytree(FIXTURE, directory)
     scale_ioniz(directory / "IONIZ.txt", float(energy) / 10.0)
     return Results(str(directory))
@@ -305,3 +329,190 @@ def test_slurm_refuses_binned_points(tmp_path):
     scan = Scan(beam_base(bins={"energy_keV": 5}), ions=100)
     with pytest.raises(SpecError, match="binned beams cannot be prepared for Slurm"):
         prepare_slurm(scan, tmp_path / "slurm")
+
+
+def flaky_bin_runner(spec):
+    """Fails the first run that gets the bin energy named by FLAKY_VAR, then runs as usual.
+    The marker file in the spec directory says the failure has happened."""
+    energy = float(spec.to_dict()["ion"]["energy_keV"])
+    target = float(os.environ[FLAKY_VAR])
+    marker = Path(os.environ[SPEC_DIR_VAR]) / "flaky-marker"
+    if abs(energy - target) < 1e-9 and not marker.exists():
+        marker.write_text("failed once", encoding="utf-8")
+        raise ValueError("the first attempt of this bin fails")
+    return scaled_runner(spec)
+
+
+def test_a_bin_unit_that_fails_once_is_retried_and_the_point_is_complete(
+    tmp_path, specs_dir, monkeypatch
+):
+    scan = Scan(beam_base(bins={"energy_keV": 5}), ions=1000, seed=BASE_SEED)
+    monkeypatch.setenv(FLAKY_VAR, repr(make_bins(scan.points()[0].spec)[2].energy_keV))
+    events = []
+    result = run_scan(
+        scan,
+        workers=2,
+        runner=flaky_bin_runner,
+        scan_dir=tmp_path / "scan",
+        cache=False,
+        on_event=events.append,
+    )
+    assert result.table.iloc[0]["status"] == "done"
+    assert result.table.iloc[0]["n_ions"] == 1000
+    assert any(isinstance(e, PointRetried) for e in events)
+    folder = point_folder(tmp_path / "scan", scan)
+    units = pd.read_csv(folder / "units.csv")
+    assert len(units) == 5
+    assert units["n_ions"].sum() == 1000
+    assert set(units["bin"]) == {0, 1, 2, 3, 4}
+    with open_results(folder) as merged:
+        assert merged.n_ions == 1000
+
+
+def test_a_partial_cache_hit_runs_only_the_units_that_are_missing(tmp_path, specs_dir):
+    cache = tmp_path / "cache"
+    first = Scan(
+        beam_base(bins={"energy_keV": 5}), ions=500, extract=["peak_ioniz"], seed=BASE_SEED
+    )
+    run_scan(first, workers=2, runner=scaled_runner, scan_dir=tmp_path / "a", cache=cache)
+    assert len(list(specs_dir.iterdir())) == 5  # the first beam, five bin runs
+    for f in specs_dir.iterdir():
+        f.unlink()
+
+    # the same point, two beams: the first beam's five runs are in the cache
+    second = Scan(
+        beam_base(bins={"energy_keV": 5}),
+        ions=1000,
+        batch_ions=500,
+        extract=["peak_ioniz"],
+        seed=BASE_SEED,
+    )
+    partly = run_scan(second, workers=2, runner=scaled_runner, scan_dir=tmp_path / "b", cache=cache)
+    assert len(list(specs_dir.iterdir())) == 5  # only the second beam ran
+    for f in specs_dir.iterdir():
+        f.unlink()
+
+    fresh = run_scan(second, workers=2, runner=scaled_runner, scan_dir=tmp_path / "c", cache=False)
+    assert len(list(specs_dir.iterdir())) == 10
+    assert partly.table.iloc[0]["status"] == "done"
+    assert partly.table.iloc[0]["peak_ioniz"] == fresh.table.iloc[0]["peak_ioniz"]
+    with (
+        open_results(point_folder(tmp_path / "b", second)) as a,
+        open_results(point_folder(tmp_path / "c", second)) as b,
+    ):
+        pd.testing.assert_frame_equal(a.range3d.df, b.range3d.df)
+
+
+def test_binned_precision_adds_whole_beams_beyond_the_first_ones(tmp_path, specs_dir):
+    # an absolute goal no batch-means error can meet: beams are added up to max_ions
+    precision = Precision(target="peak_ioniz", abs=1e-12, batch_ions=500, max_ions=2000)
+    scan = Scan(
+        beam_base(bins={"energy_keV": [10.0, 13.333333333333334, 20.0]}),
+        ions=precision,
+        extract=["peak_ioniz"],
+        seed=BASE_SEED,
+    )
+    events = []
+    with pytest.warns(UserWarning, match="precision target not reached"):
+        result = run_scan(
+            scan,
+            workers=2,
+            runner=scaled_runner,
+            scan_dir=tmp_path / "scan",
+            cache=False,
+            on_event=events.append,
+        )
+    assert result.table.iloc[0]["status"] == "max_ions"
+    folder = point_folder(tmp_path / "scan", scan)
+    units = pd.read_csv(folder / "units.csv")
+    per_beam = units.groupby("beam_batch")["n_ions"].sum()
+    assert len(per_beam) == 4
+    assert list(per_beam) == [500, 500, 500, 500]
+    decisions = [e for e in events if isinstance(e, BatchFinished)]
+    assert [d.ions for d in decisions] == [1000, 2000]  # one decision per two beams
+    assert [d.batch for d in decisions] == [1, 3]  # the last beam of each decision
+    assert len(list(specs_dir.iterdir())) == len(units)  # one run per unit
+
+
+def test_a_stop_during_a_beam_keeps_only_the_finished_beams(tmp_path, specs_dir):
+    stop = threading.Event()
+
+    def stop_after_the_first_beam(event):
+        # the first beam (500 ions) is done once 500 ions are: stop while the second runs
+        if isinstance(event, PointProgress) and event.ions_done > 500:
+            stop.set()
+
+    scan = Scan(beam_base(bins={"energy_keV": 5}), ions=1000, batch_ions=500, seed=BASE_SEED)
+    scan_dir = tmp_path / "scan"
+    result = run_scan(
+        scan,
+        workers=2,
+        runner=scaled_runner,
+        scan_dir=scan_dir,
+        cache=False,
+        stop_event=stop,
+        on_event=stop_after_the_first_beam,
+    )
+    row = result.table.iloc[0]
+    assert row["status"] == "stopped"
+    assert row["n_ions"] == 500
+    folder = point_folder(scan_dir, scan)
+    units = pd.read_csv(folder / "units.csv")
+    assert set(units["beam_batch"]) == {0}
+    assert len(units) == 5
+    kept = {p.name for p in (folder / "batches").iterdir()}
+    assert kept == {str(u) for u in units["unit"]}
+    with open_results(folder) as merged:
+        assert merged.n_ions == 500
+
+
+def test_a_failing_record_write_warns_and_the_scan_goes_on(
+    tmp_path, specs_dir, monkeypatch, caplog
+):
+    def refused(*args, **kwargs):
+        # not an OSError: a SpecError from RunSpec.to_yaml must not abort the scan either
+        raise ValueError("the spec cannot be written")
+
+    monkeypatch.setattr(executor_module, "write_point_record", refused)
+    scan = Scan(beam_base(bins={"energy_keV": 5}), ions=1000, seed=BASE_SEED)
+    with caplog.at_level("WARNING"):
+        result = run_scan(
+            scan, workers=2, runner=scaled_runner, scan_dir=tmp_path / "s", cache=False
+        )
+    assert result.table.iloc[0]["status"] == "done"
+    assert "could not be written" in caplog.text
+
+
+def test_collect_writes_the_record_of_a_batched_point(tmp_path, specs_dir):
+    scan = Scan(beam_base(mode="exact"), ions=20, batch_ions=10, seed=BASE_SEED)
+    folder = tmp_path / "slurm"
+    prepare_slurm(scan, folder)
+    from srim.scan.backends import run_job
+
+    for job in sorted((folder / "jobs").iterdir()):
+        run_job(job, runner=plain_runner)
+    collected = collect_slurm(folder, cache=False)
+    assert collected.table.iloc[0]["status"] == "done"
+    point = point_folder(folder, scan)
+    units = pd.read_csv(point / "units.csv")
+    assert list(units["n_ions"]) == [10, 10]
+    with open_results(point) as merged:
+        assert merged.n_ions == 20
+
+
+def test_a_failing_record_in_collect_only_warns(tmp_path, specs_dir, monkeypatch, caplog):
+    def refused(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(slurm_module, "write_point_record", refused)
+    scan = Scan(beam_base(mode="exact"), ions=20, batch_ions=10, seed=BASE_SEED)
+    folder = tmp_path / "slurm"
+    prepare_slurm(scan, folder)
+    from srim.scan.backends import run_job
+
+    for job in sorted((folder / "jobs").iterdir()):
+        run_job(job, runner=plain_runner)
+    with caplog.at_level("WARNING"):
+        collected = collect_slurm(folder, cache=False)
+    assert collected.table.iloc[0]["status"] == "done"
+    assert "could not be written" in caplog.text
