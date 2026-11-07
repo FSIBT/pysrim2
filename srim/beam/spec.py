@@ -70,7 +70,7 @@ class BeamOptions:
     max_bins: int = DEFAULT_MAX_BINS
 
     def to_dict(self) -> dict[str, Any]:
-        """``{mode, bins?, max_bins?}``: the optional keys only when they differ from the default."""
+        """``{mode, bins?, max_bins?}``; optional keys only when not the default."""
         out: dict[str, Any] = {"mode": self.mode}
         if self.bins:
             out["bins"] = {
@@ -115,9 +115,7 @@ def position_from_dict(raw: Any, key: str, base_dir: Any = None) -> PositionSpec
         raise SpecError(f"{key} must be a mapping with y_nm, z_nm and depth_nm, got {raw!r}")
     for name in raw:
         if name not in POSITION_KEYS:
-            raise SpecError(
-                f"unknown key '{key}.{name}' (allowed: {', '.join(POSITION_KEYS)})"
-            )
+            raise SpecError(f"unknown key '{key}.{name}' (allowed: {', '.join(POSITION_KEYS)})")
     values = {
         name: quantity_from_value(raw.get(name, 0.0), f"{key}.{name}", base_dir)
         for name in POSITION_KEYS
@@ -209,7 +207,7 @@ def _bin_count(value: Any, key: str) -> int:
         edges = [_check_type(v, float, key) for v in value]
         if len(edges) < 2:
             raise SpecError(f"{key} needs at least two edges, got {len(edges)}")
-        if any(b <= a for a, b in zip(edges, edges[1:])):
+        if any(b <= a for a, b in zip(edges, edges[1:], strict=False)):
             raise SpecError(f"{key} edges must be strictly increasing, got {value!r}")
         return len(edges) - 1
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
@@ -253,7 +251,11 @@ def check_beam(spec, prefix: str = "") -> None:
     if beam is not None:
         if mode not in BEAM_MODES:
             raise SpecError(f"{prefix}beam.mode must be 'exact' or 'binned', got {mode!r}")
-        if isinstance(beam.max_bins, bool) or not isinstance(beam.max_bins, int) or beam.max_bins < 1:
+        if (
+            isinstance(beam.max_bins, bool)
+            or not isinstance(beam.max_bins, int)
+            or beam.max_bins < 1
+        ):
             raise SpecError(
                 f"{prefix}beam.max_bins must be a positive integer, got {beam.max_bins!r}"
             )
@@ -293,9 +295,7 @@ def check_beam(spec, prefix: str = "") -> None:
             lo = hi = depth
             described = f"{depth!r}"
         if lo < 0 or hi >= total:
-            raise SpecError(
-                f"{key} must lie inside the target, [0, {total}) nm; got {described}"
-            )
+            raise SpecError(f"{key} must lie inside the target, [0, {total}) nm; got {described}")
 
     if mode == "exact":
         if spec.calculation not in (1, 2):
@@ -331,9 +331,7 @@ def check_beam(spec, prefix: str = "") -> None:
         counts[name] = _bin_count(value, key)
 
     if mode == "binned":
-        n_energy = counts.get(
-            "energy_keV", DEFAULT_ENERGY_BINS if isinstance(energy, Shape) else 1
-        )
+        n_energy = counts.get("energy_keV", DEFAULT_ENERGY_BINS if isinstance(energy, Shape) else 1)
         n_angle = counts.get("angle_deg", DEFAULT_ANGLE_BINS if isinstance(angle, Shape) else 1)
         combined = n_energy * n_angle
         max_bins = DEFAULT_MAX_BINS if beam is None else beam.max_bins

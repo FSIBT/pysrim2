@@ -118,7 +118,8 @@ def test_histogram_file_is_read_relative_to_run_yaml(tmp_path):
     (folder / "hist.txt").write_text("1.0 2\n2.0 3\n3.0 5\n", encoding="utf-8")
     spec_path = folder / "run.yaml"
     spec_path.write_text(
-        "version: 1\nspec:\n  ion: {symbol: B, energy_keV: {histogram: {file: hist.txt}}, angle_deg: 7}\n"
+        "version: 1\nspec:\n"
+        "  ion: {symbol: B, energy_keV: {histogram: {file: hist.txt}}, angle_deg: 7}\n"
         "  number_ions: 200\n  seed: 1\n  settings: {description: d, ranges: 1}\n"
         "  target:\n    - {name: Au, thickness_nm: 500, density_g_cm3: 19.3,"
         " elements: [{symbol: Au, stoich: 1}]}\n",
@@ -166,9 +167,7 @@ def test_override_position_depth_of_uniform():
         position={"depth_nm": {"uniform": {"low": 0.0, "high": 100.0}}},
     )
     spec = RunSpec.from_dict(data).with_overrides(["ion.position.depth_nm.uniform.high=50"])
-    assert spec.to_dict()["ion"]["position"]["depth_nm"] == {
-        "uniform": {"low": 0.0, "high": 50.0}
-    }
+    assert spec.to_dict()["ion"]["position"]["depth_nm"] == {"uniform": {"low": 0.0, "high": 50.0}}
 
 
 def test_fixed_energy_cannot_take_a_distribution_parameter():
@@ -477,3 +476,50 @@ def test_inline_histogram_carries_its_content():
     assert spec.to_dict(inline=True)["ion"]["energy_keV"] == {
         "histogram": {"edges": [1.0, 2.0, 3.0], "counts": [1.0, 3.0]}
     }
+
+
+# --- overrides that make a distribution fixed (scans, --set) -----------------------------
+
+
+def binned_base(**ion):
+    """A binned spec whose energy is a Gaussian with bins; the angle is fixed unless given."""
+    data = distributed(**ion)
+    data["beam"] = {"mode": "binned", "bins": {"energy_keV": 10}}
+    return data
+
+
+def test_sigma_zero_drops_the_binned_beam_and_matches_the_fixed_spec():
+    overridden = RunSpec.from_dict(binned_base()).with_overrides(
+        ["ion.energy_keV.gaussian.sigma=0"]
+    )
+    fixed = RunSpec.from_dict(base()).with_overrides(["ion.energy_keV=20"])
+    assert not overridden.is_distributed
+    assert "beam" not in overridden.to_dict()
+    assert overridden.to_dict() == fixed.to_dict()
+
+
+def test_sigma_zero_keeps_bins_of_the_still_distributed_parameter():
+    data = distributed(angle_deg={"uniform": {"low": 0.0, "high": 10.0}})
+    data["beam"] = {"mode": "binned", "bins": {"energy_keV": 10, "angle_deg": 4}}
+    spec = RunSpec.from_dict(data).with_overrides(["ion.energy_keV.gaussian.sigma=0"])
+    assert spec.is_distributed
+    assert spec.to_dict()["beam"] == {"mode": "binned", "bins": {"angle_deg": 4}}
+
+
+def test_user_written_binned_spec_without_distribution_is_still_refused():
+    data = base()
+    data["beam"] = {"mode": "binned", "bins": {"energy_keV": 10}}
+    with pytest.raises(SpecError, match="beam"):
+        RunSpec.from_dict(data)
+
+
+def test_scan_over_sigma_with_zero_builds_all_points():
+    from srim.scan import Scan
+
+    scan = Scan(
+        RunSpec.from_dict(binned_base()),
+        grid={"ion.energy_keV.gaussian.sigma": [0, 2, 5]},
+    )
+    points = scan.points()
+    assert len(points) == 3
+    assert [p.spec.is_distributed for p in points] == [False, True, True]

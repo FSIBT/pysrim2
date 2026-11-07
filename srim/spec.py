@@ -370,10 +370,38 @@ class RunSpec:
         for node, names in touched.values():
             if "symbol" in names and "mass_amu" not in names:
                 node.pop("mass_amu", None)
+        _prune_beam(data)
         return RunSpec.from_dict(data)
 
 
 # --- parsing and validation ----------------------------------------------------------
+
+
+def _prune_beam(data):
+    """Drop what an override left meaningless in the plain ``data`` of a spec, in place.
+
+    A distribution that an override made a fixed value (``sigma=0``) no longer has bins, and a
+    ``beam`` with no distribution left is removed, as a scan point with a fixed parameter is
+    a plain run. This applies to overrides only: a run file that asks for a binned beam with
+    no distribution is still refused by :meth:`RunSpec.from_dict`.
+    """
+    beam = data.get("beam")
+    if beam is None:
+        return
+    # resolve the distributions (a zero-width one becomes its value) before deciding
+    probe = data.copy()
+    probe.pop("beam")
+    resolved = RunSpec.from_dict(probe)
+    if not resolved.is_distributed:
+        del data["beam"]
+        return
+    bins = beam.get("bins", {})
+    for name in list(bins):
+        value = resolved.ion.energy_keV if name == "energy_keV" else resolved.ion.angle_deg
+        if _is_number(value):
+            del bins[name]
+    if not bins:
+        beam.pop("bins", None)
 
 
 def _type_name(kind):
