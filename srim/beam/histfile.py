@@ -93,15 +93,19 @@ def read_histogram(path) -> tuple[np.ndarray, np.ndarray]:
         content = line.split("#", 1)[0].strip()
         if content:
             lines.append((lineno, content))
-    sep = _separator([content for _, content in lines])
+    # a first row with no digits is a header: it is skipped and takes no part in choosing
+    # the separator
+    header = bool(lines) and not re.search(r"[0-9]", lines[0][1])
+    data = lines[1:] if header else lines
+    sep = _separator([content for _, content in data])
 
     rows: list[tuple[int, list[float]]] = []
     ncol: int | None = None
     first_line = 0
-    for index, (lineno, content) in enumerate(lines):
-        if index == 0 and not re.search(r"[0-9]", content):
-            continue  # a header row
+    for lineno, content in data:
         fields = _fields(content, sep)
+        if not fields:
+            continue  # an empty row, as spreadsheets export them (";" or ",,")
         if ncol is None:
             if len(fields) not in (2, 3):
                 raise SpecError(

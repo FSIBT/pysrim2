@@ -265,3 +265,27 @@ def test_edges_and_counts_are_not_shared_with_sampling():
     assert h.counts == [1.0, 1.0]
     xs, F = h.nodes()
     assert np.allclose(xs, [0.0, 1.0, 3.0])
+
+
+# --- review fixes: header and empty rows ---------------------------------------------------------
+
+
+def test_spaced_header_does_not_change_comma_separator(tmp_path):
+    # the header has a space, so it must not be read when choosing the separator
+    path = write(tmp_path, "Energy (keV),Count\r\n1,10\r\n2,20\r\n")
+    assert edges_counts(path) == ([0.5, 1.5, 2.5], [10.0, 20.0])
+
+
+@pytest.mark.parametrize("empty_row", [";", ",,", " ; ", " , "])
+def test_all_empty_rows_are_skipped(tmp_path, empty_row):
+    if ";" in empty_row:  # decimal commas need a non-comma separator
+        sep, first, second = ";", "1,5", "2,5"
+        expected = [1.0, 2.0, 3.0]
+    else:
+        sep, first, second = ",", "1", "2"
+        expected = [0.5, 1.5, 2.5]
+    path = write(
+        tmp_path,
+        f"energy_keV{sep}count\r\n{first}{sep}10\r\n{empty_row}\r\n{second}{sep}20\r\n",
+    )
+    assert edges_counts(path) == (expected, [10.0, 20.0])
