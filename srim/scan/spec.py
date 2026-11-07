@@ -262,6 +262,10 @@ def _entry(extractor):
 class Scan:
     """A base run spec, the parameters to vary and what to extract from each run.
 
+    With neither ``grid`` nor ``points`` the scan has the single point ``base``. Keys
+    ``number_ions`` and ``seed`` cannot be parameters. Every error names the dotted key
+    (``scan.grid.ion.energy_keV``, ``scan.points[1]``) as a :class:`SpecError`.
+
     Parameters
     ----------
     base : :class:`srim.spec.RunSpec`
@@ -286,10 +290,6 @@ class Scan:
     seed : int, optional
         base seed of the batches (``None``: the scan draws a random base seed and records
         it in ``scan.yaml``)
-
-    With neither ``grid`` nor ``points`` the scan has the single point ``base``. Keys
-    ``number_ions`` and ``seed`` cannot be parameters. Every error names the dotted key
-    (``scan.grid.ion.energy_keV``, ``scan.points[1]``) as a :class:`SpecError`.
     """
 
     def __init__(
