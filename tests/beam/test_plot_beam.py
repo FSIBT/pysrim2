@@ -1,6 +1,5 @@
 """plot_beam: the sampled beam (a density histogram) or the bins (bars), with the density."""
 
-import os
 import sys
 
 import pytest
@@ -10,10 +9,10 @@ matplotlib.use("Agg")
 
 from matplotlib.lines import Line2D  # noqa: E402
 from matplotlib.patches import Rectangle  # noqa: E402
-
-from srim.beam import plot_beam, run_beam  # noqa: E402
 from test_beam_scan import SPEC_DIR_VAR, beam_base, plain_runner  # noqa: E402
 from test_run_beam import dat_runner  # noqa: E402
+
+from srim.beam import plot_beam, run_beam  # noqa: E402
 
 
 @pytest.fixture(autouse=True)

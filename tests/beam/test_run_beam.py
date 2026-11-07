@@ -13,13 +13,13 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from test_beam_scan import FIXTURE, SPEC_DIR_VAR, beam_base, plain_runner
 
 from srim.beam import run_beam, sampled_ions
 from srim.beam.exact import sample_ions, write_trim_dat
 from srim.output import Results
 from srim.scan.batches import MergedResults
 from srim.scan.events import ScanStarted
-from test_beam_scan import FIXTURE, SPEC_DIR_VAR, beam_base, plain_runner
 
 
 def _work_dir() -> Path:
@@ -149,4 +149,3 @@ def test_sampled_ions_of_a_binned_run_is_refused(spec_dir):
     with run_beam(beam_base(mode="binned", bins={"energy_keV": 2}), runner=plain_runner) as r:
         with pytest.raises(ValueError, match="beam_bins"):
             sampled_ions(r)
-
