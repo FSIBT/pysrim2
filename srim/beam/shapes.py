@@ -13,13 +13,16 @@ A YAML distribution is a one-key mapping, ``{gaussian: {mean: 100, sigma: 5}}``;
 import copy
 import inspect
 import math
+import os
 from collections.abc import Callable, Mapping
+from pathlib import Path
 from typing import Any, ClassVar
 
 import numpy as np
 
 from ..scan.extract import PYTHON_PREFIX, _import_reference, reference
 from ..spec import SpecError
+from .histfile import edges_from_centres, read_histogram
 
 #: number of tabulation points of a continuous shape's support
 GRID_POINTS = 4097
@@ -70,9 +73,10 @@ def _range_arg(value: Any) -> tuple[float, float] | None:
 
 
 def _array(values: Any, name: str) -> np.ndarray:
-    """A one-dimensional array of finite numbers."""
+    """A one-dimensional array of finite numbers (a copy, so later changes to the input
+    do not change the shape)."""
     try:
-        arr = np.asarray(values, dtype=float)
+        arr = np.array(values, dtype=float)
     except (TypeError, ValueError):
         raise SpecError(f"{name} must be a list of numbers, got {values!r}") from None
     if arr.ndim != 1 or not np.all(np.isfinite(arr)):
@@ -319,7 +323,7 @@ class Shape:
         return {self.kind: params}
 
     @classmethod
-    def _from_params(cls, params: Mapping[str, Any]) -> "Shape":
+    def _from_params(cls, params: Mapping[str, Any], base_dir: Any = None) -> "Shape":
         return cls(**dict(params))
 
 
@@ -466,12 +470,16 @@ class Histogram(Shape):
     """Piecewise-constant density: bin ``i`` spans ``edges[i]`` to ``edges[i+1]``.
 
     ``counts`` are weights (they need not be normalised); the density in a bin is its share of
-    the total divided by the bin width.
+    the total divided by the bin width. ``file`` is the path a histogram was read from (see
+    :meth:`from_file`); it is None for an inline histogram.
+
+    YAML takes exactly one of ``file``; ``edges`` with ``counts``; or ``centres`` with
+    ``counts`` (see :func:`shape_from_dict`).
     """
 
     kind: ClassVar[str] = "histogram"
-    _fields: ClassVar[tuple[str, ...]] = ("edges", "counts")
-    _required: ClassVar[tuple[str, ...]] = ("edges", "counts")
+    _fields: ClassVar[tuple[str, ...]] = ("file", "edges", "counts", "centres")
+    _required: ClassVar[tuple[str, ...]] = ()
 
     def __init__(self, edges: Any, counts: Any, file: Any = None, range: Any = None):
         e = _array(edges, "edges")
@@ -484,12 +492,24 @@ class Histogram(Shape):
             raise SpecError("histogram edges must be strictly increasing")
         if np.any(c < 0) or not c.sum() > 0:
             raise SpecError("histogram counts must not be negative and must have a positive sum")
-        self.edges = [float(v) for v in e]
-        self.counts = [float(v) for v in c]
+        self._edge_list = [float(v) for v in e]
+        self._count_list = [float(v) for v in c]
         self._edges = e
         self._masses = c / c.sum()
+        self._edges.flags.writeable = False
+        self._masses.flags.writeable = False
         self.file = file
         super().__init__(range)
+
+    @property
+    def edges(self) -> list[float]:
+        """The bin edges (a copy; the sampled distribution is fixed at construction)."""
+        return list(self._edge_list)
+
+    @property
+    def counts(self) -> list[float]:
+        """The bin counts (a copy; the sampled distribution is fixed at construction)."""
+        return list(self._count_list)
 
     @classmethod
     def from_centres(cls, centres: Any, counts: Any, file: Any = None, range: Any = None):
@@ -501,11 +521,46 @@ class Histogram(Shape):
             raise SpecError("a histogram from centres needs at least two centres")
         if np.any(np.diff(c) <= 0):
             raise SpecError("histogram centres must be strictly increasing")
-        mids = (c[:-1] + c[1:]) / 2.0
-        first = c[0] - (c[1] - c[0]) / 2.0
-        last = c[-1] + (c[-1] - c[-2]) / 2.0
-        edges = np.concatenate([[first], mids, [last]])
-        return cls(edges, counts, file=file, range=range)
+        return cls(edges_from_centres(c), counts, file=file, range=range)
+
+    @classmethod
+    def from_file(cls, path: Any, base_dir: Any = None, range: Any = None) -> "Histogram":
+        """A histogram read from a text file (see :mod:`srim.beam.histfile` for the layout).
+
+        A relative ``path`` is taken from ``base_dir`` (the working directory when None). The
+        histogram's ``file`` is the absolute, resolved path.
+
+        Raises
+        ------
+        SpecError
+            naming the file, and the line for a bad row
+        """
+        if not isinstance(path, (str, os.PathLike)) or str(path) == "":
+            raise SpecError(f"a histogram file must be a path, got {path!r}")
+        resolved = Path(path)
+        if not resolved.is_absolute() and base_dir is not None:
+            resolved = Path(base_dir) / resolved
+        resolved = resolved.resolve()
+        edges, counts = read_histogram(resolved)
+        return cls(edges, counts, file=str(resolved), range=range)
+
+    @classmethod
+    def _from_params(cls, params, base_dir=None):
+        rng = params.get("range")
+        given = [name for name in cls._fields if name in params]
+        if "file" in params:
+            if given != ["file"]:
+                raise SpecError(_histogram_forms(given))
+            return cls.from_file(params["file"], base_dir=base_dir, range=rng)
+        if "edges" in params and "centres" not in params:
+            if "counts" not in params:
+                raise SpecError(_histogram_forms(given))
+            return cls(params["edges"], params["counts"], range=rng)
+        if "centres" in params and "edges" not in params:
+            if "counts" not in params:
+                raise SpecError(_histogram_forms(given))
+            return cls.from_centres(params["centres"], params["counts"], range=rng)
+        raise SpecError(_histogram_forms(given))
 
     def _default_support(self):
         return float(self._edges[0]), float(self._edges[-1])
@@ -516,7 +571,14 @@ class Histogram(Shape):
     def _params_dict(self, inline):
         if self.file is not None and not inline:
             return {"file": str(self.file)}
-        return {"edges": list(self.edges), "counts": list(self.counts)}
+        return {"edges": self.edges, "counts": self.counts}
+
+
+def _histogram_forms(given: list[str]) -> str:
+    return (
+        "a histogram needs exactly one of: file; edges with counts; centres with counts "
+        f"(got {', '.join(given) if given else 'none of them'})"
+    )
 
 
 class Function(Shape):
@@ -555,7 +617,7 @@ class Function(Shape):
             raise SpecError("a function distribution needs a callable or a reference string")
 
     @classmethod
-    def _from_params(cls, params):
+    def _from_params(cls, params, base_dir=None):
         return cls(params["ref"], params["range"])
 
     def _label(self):
@@ -600,7 +662,8 @@ def shape_from_dict(value: Any, key: str, base_dir: Any = None) -> float | Shape
     A number, or a mapping ``{fixed: {value: v}}``, gives a float. A one-key mapping
     ``{kind: {params...}}`` gives a :class:`Shape`; a zero-width shape gives its float.
     The shape is validated here (a function's density too), so a bad distribution fails when the
-    spec is read. ``base_dir`` is for relative histogram files (see Task 2).
+    spec is read. A relative histogram ``file`` is taken from ``base_dir`` (the working directory
+    when None).
 
     Raises
     ------
@@ -636,7 +699,7 @@ def shape_from_dict(value: Any, key: str, base_dir: Any = None) -> float | Shape
         if name not in params:
             raise SpecError(f"{key}.{kind}: missing {name!r} (needs {', '.join(cls._required)})")
     try:
-        shape = cls._from_params(params)
+        shape = cls._from_params(params, base_dir)
         point = shape.degenerate()
         if point is not None:
             return point
