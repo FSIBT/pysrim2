@@ -364,9 +364,10 @@ def _remove_beam(directory):
     path = os.path.join(directory, BEAM_FOLDER)
     if not os.path.isdir(path):
         return
-    for entry in os.scandir(path):
-        if entry.is_file(follow_symlinks=False) and _BEAM_COPY.fullmatch(entry.name):
-            os.remove(entry.path)
+    with os.scandir(path) as entries:
+        for entry in entries:
+            if entry.is_file(follow_symlinks=False) and _BEAM_COPY.fullmatch(entry.name):
+                os.remove(entry.path)
     with contextlib.suppress(OSError):
         os.rmdir(path)  # fails, and is kept, when something else is in it
 
@@ -378,7 +379,8 @@ def _copy_beam(src_directory, dest_directory):
     _remove_beam(dest_directory)
     source = os.path.join(src_directory, BEAM_FOLDER)
     if os.path.isdir(source):
-        shutil.copytree(source, os.path.join(dest_directory, BEAM_FOLDER))
+        # dirs_exist_ok: a beam folder with files pysrim2 did not write is kept
+        shutil.copytree(source, os.path.join(dest_directory, BEAM_FOLDER), dirs_exist_ok=True)
 
 
 def _with_beam_files(spec, directory):

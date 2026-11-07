@@ -303,3 +303,12 @@ def test_in_place_runs_replace_and_remove_their_own_trim_dat(fake_srim, tmp_path
     assert (fake_srim / "TRIM.DAT").read_bytes() != first
     TRIM.from_spec(RunSpec.from_dict(base())).run(srim_directory=str(fake_srim))
     assert not (fake_srim / "TRIM.DAT").exists()
+
+
+def test_output_dir_with_a_foreign_beam_file_takes_the_copies(fake_srim, tmp_path):
+    out = tmp_path / "out"
+    (out / "beam").mkdir(parents=True)
+    (out / "beam" / "notes.txt").write_text("mine\n")
+    TRIM.from_spec(histogram_spec(tmp_path)).run(srim_directory=str(fake_srim), output_dir=out)
+    assert (out / "beam" / "notes.txt").is_file()
+    assert len(list((out / "beam").glob("*-h.txt"))) == 1
