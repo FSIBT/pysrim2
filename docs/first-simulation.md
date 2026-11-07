@@ -1,8 +1,8 @@
 # First simulation
 
 This page runs one SRIM calculation from Python: the boron reference case, where 200
-boron ions go into 100 nm of gold on silicon. It takes a few seconds on Linux or Windows
-and about a minute in the container on macOS.
+boron ions go into 100 nm of gold on silicon. The reference run is short: 200 ions with
+a quick Kinchin-Pease calculation.
 
 ## Install
 
