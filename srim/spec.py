@@ -37,6 +37,7 @@ import math
 import numbers
 import random
 import re
+from copy import deepcopy
 from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
@@ -382,26 +383,30 @@ def _prune_beam(data):
 
     A distribution that an override made a fixed value (``sigma=0``) no longer has bins, and a
     ``beam`` with no distribution left is removed, as a scan point with a fixed parameter is
-    a plain run. This applies to overrides only: a run file that asks for a binned beam with
-    no distribution is still refused by :meth:`RunSpec.from_dict`.
+    a plain run. Only the ion's numbers are resolved (a zero-width distribution becomes its
+    value); the rest of the spec is not validated here, so the modes and calculation rules
+    apply only in the final :meth:`RunSpec.from_dict`. This applies to overrides only: a run
+    file that asks for a binned beam with no distribution is still refused.
     """
     beam = data.get("beam")
     if beam is None:
         return
-    # resolve the distributions (a zero-width one becomes its value) before deciding
-    probe = data.copy()
-    probe.pop("beam")
-    resolved = RunSpec.from_dict(probe)
-    if not resolved.is_distributed:
+    ion = data["ion"]
+    energy = _quantity(deepcopy(ion["energy_keV"]), "ion.energy_keV", None)
+    angle = _quantity(deepcopy(ion.get("angle_deg", 0.0)), "ion.angle_deg", None)
+    # the same rule as RunSpec.is_distributed, on the plain data
+    distributed = (
+        not _is_number(energy) or not _is_number(angle) or "azimuth_deg" in ion or "position" in ion
+    )
+    if not distributed:
         del data["beam"]
         return
     bins = beam.get("bins", {})
-    for name in list(bins):
-        value = resolved.ion.energy_keV if name == "energy_keV" else resolved.ion.angle_deg
-        if _is_number(value):
+    for name, value in (("energy_keV", energy), ("angle_deg", angle)):
+        if name in bins and _is_number(value):
             del bins[name]
-    if not bins:
-        beam.pop("bins", None)
+    if "bins" in beam and not bins:
+        del beam["bins"]
 
 
 def _type_name(kind):

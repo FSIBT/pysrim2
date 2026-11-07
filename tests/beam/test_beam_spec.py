@@ -523,3 +523,26 @@ def test_scan_over_sigma_with_zero_builds_all_points():
     points = scan.points()
     assert len(points) == 3
     assert [p.spec.is_distributed for p in points] == [False, True, True]
+
+
+def test_override_on_binned_spec_with_calculation_3_still_builds():
+    data = binned_base()
+    data["calculation"] = 3
+    spec = RunSpec.from_dict(data).with_overrides(["number_ions=50"])
+    assert spec.number_ions == 50 and spec.beam.mode == "binned"
+    assert spec.calculation == 3
+
+
+def test_sigma_override_keeps_binned_calculation_3():
+    data = binned_base()
+    data["calculation"] = 3
+    spec = RunSpec.from_dict(data).with_overrides(["ion.energy_keV.gaussian.sigma=2"])
+    assert spec.is_distributed and spec.beam.mode == "binned"
+    assert spec.calculation == 3 and spec.beam.bins == {"energy_keV": 10}
+
+
+def test_sigma_zero_on_calculation_3_binned_spec_prunes():
+    data = binned_base()
+    data["calculation"] = 3
+    spec = RunSpec.from_dict(data).with_overrides(["ion.energy_keV.gaussian.sigma=0"])
+    assert not spec.is_distributed and spec.beam is None
