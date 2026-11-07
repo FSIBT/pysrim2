@@ -9,8 +9,6 @@ import copy
 import math
 from pathlib import Path
 
-import pytest
-
 import srim.beam.shapes as shapes_module
 from srim.beam import fingerprint
 from srim.scan.backends import read_job, write_job
