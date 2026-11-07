@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Beam distributions in `run.yaml` and `RunSpec`: `ion.energy_keV`, `ion.angle_deg` and `ion.azimuth_deg` take a number or a distribution (Gaussian, uniform, triangular, log-normal, histogram file or inline, or a Python function), `ion.position` sets the start position, and `beam:` chooses exact or binned mode; `--set` and scan keys reach into the distributions. Runs without distributions are unchanged.
+
 ## [0.9.0] - 2026-11-06
 
 ### Changed

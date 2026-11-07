@@ -48,6 +48,7 @@ from .spec import (
     IonSpec,
     LayerSpec,
     RunSpec,
+    SpecError,
     eV_to_keV,
     keV_to_eV,
     nm_to_A,
@@ -532,6 +533,12 @@ class TRIM:
             spec = RunSpec.from_dict(spec)
         else:
             spec.validate()
+        if spec.is_distributed:
+            # a single TRIM run has one energy and angle; writing one would run a different beam
+            raise SpecError(
+                "this run spec has a beam distribution (ion.energy_keV, ion.angle_deg, "
+                "ion.azimuth_deg or ion.position), which a single TRIM run cannot represent"
+            )
         layers = []
         for layer_spec in spec.target:
             elements = {}

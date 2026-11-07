@@ -34,13 +34,19 @@ run ignores it.
 """
 
 import math
+import numbers
 import random
 import re
 from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import yaml
+
+if TYPE_CHECKING:  # srim.beam imports this module, so its types are only named here
+    from .beam.shapes import Shape
+    from .beam.spec import BeamOptions, PositionSpec
 
 SCHEMA_VERSION = 1
 
@@ -75,7 +81,16 @@ _SETTING_HINTS = {
 }
 ALWAYS_SETTINGS = ("description", "ranges")
 
-_ION = {"symbol": str, "mass_amu": float, "energy_keV": float, "angle_deg": float}
+_ION = {
+    "symbol": str,
+    "mass_amu": float,
+    "energy_keV": float,
+    "angle_deg": float,
+    "azimuth_deg": float,
+    "position": dict,
+}
+#: beam numbers that may be a distribution (a YAML mapping) instead of a number
+_SHAPED = ("energy_keV", "angle_deg", "azimuth_deg")
 _ELEMENT = {
     "symbol": str,
     "stoich": float,
@@ -99,6 +114,7 @@ _TOP = {
     "number_ions": int,
     "calculation": int,
     "seed": int,
+    "beam": dict,
 }
 _REQUIRED = {
     "": ("ion", "target"),
@@ -107,6 +123,21 @@ _REQUIRED = {
     "element": ("symbol", "stoich"),
 }
 _MAX_ANGLE = 90.0
+_BEAM = {"mode": str, "bins": dict, "max_bins": int}
+_BINS = {"energy_keV": int, "angle_deg": int}
+_POSITION = {"y_nm": float, "z_nm": float, "depth_nm": float}
+#: the parameters of each distribution kind as --set sees them (float, str, or list for YAML only)
+_SHAPE_PARAMS = {
+    "fixed": {"value": float, "range": list},
+    "gaussian": {"mean": float, "sigma": float, "range": list},
+    "uniform": {"low": float, "high": float, "range": list},
+    "triangular": {"low": float, "mode": float, "high": float, "range": list},
+    "lognormal": {"mu": float, "sigma": float, "range": list},
+    "histogram": {"file": str, "edges": list, "counts": list, "centres": list, "range": list},
+    "function": {"ref": str, "range": list},
+}
+#: beam numbers that --set can reach into, by the mapping they live in
+_QUANTITIES = {"ion": _SHAPED, "position": ("y_nm", "z_nm", "depth_nm")}
 
 
 class SpecError(ValueError):
@@ -138,6 +169,16 @@ def A_to_nm(value):
     return _exact(value, 10, "/")
 
 
+def _is_number(value):
+    """A plain number: a beam parameter that is not a distribution."""
+    return isinstance(value, numbers.Real) and not isinstance(value, bool)
+
+
+def _quantity_dict(value, inline):
+    """A beam number as itself, a distribution as its YAML mapping (``{gaussian: {...}}``)."""
+    return value if _is_number(value) else value.to_dict(inline)
+
+
 # --- dataclasses -----------------------------------------------------------------
 
 
@@ -165,10 +206,16 @@ class LayerSpec:
 
 @dataclass
 class IonSpec:
+    """The ion. ``energy_keV``, ``angle_deg`` and ``azimuth_deg`` are numbers or distributions;
+    ``azimuth_deg`` (None when not given) and ``position`` (None when not given) make the beam
+    distributed, see :attr:`RunSpec.is_distributed`."""
+
     symbol: str
     mass_amu: float
-    energy_keV: float
-    angle_deg: float = 0.0
+    energy_keV: "float | Shape"
+    angle_deg: "float | Shape" = 0.0
+    azimuth_deg: "float | Shape | None" = None
+    position: "PositionSpec | None" = None
 
 
 @dataclass
@@ -182,11 +229,33 @@ class RunSpec:
     number_ions: int = 1000
     calculation: int = 1
     seed: int = 0
+    beam: "BeamOptions | None" = None
+
+    @property
+    def is_distributed(self) -> bool:
+        """True when a beam parameter is a distribution, or azimuth or position is given.
+
+        Such a beam needs the beam runner (exact or binned mode); a plain spec is a single
+        beam, as before distributions existed.
+        """
+        ion = self.ion
+        return (
+            not _is_number(ion.energy_keV)
+            or not _is_number(ion.angle_deg)
+            or ion.azimuth_deg is not None
+            or ion.position is not None
+        )
 
     # -- dict / yaml ------------------------------------------------------------
 
-    def to_dict(self):
-        """The spec as plain Python data (what is stored under ``spec:``, plus ``version``)."""
+    def to_dict(self, inline: bool = False):
+        """The spec as plain Python data (what is stored under ``spec:``, plus ``version``).
+
+        Distributions are written as their YAML mappings. A histogram read from a file is
+        written as its path; ``inline=True`` writes its content (and a Python function's
+        source) instead, for hashing. The ``azimuth_deg``, ``position`` and ``beam`` keys
+        appear only when they are set, so a plain spec has the same dict as before.
+        """
         layers = []
         for layer in self.target:
             elements = []
@@ -213,9 +282,16 @@ class RunSpec:
         ion = {"symbol": self.ion.symbol}
         if self.ion.mass_amu != _db_mass(self.ion.symbol):
             ion["mass_amu"] = self.ion.mass_amu
-        ion["energy_keV"] = self.ion.energy_keV
-        ion["angle_deg"] = self.ion.angle_deg
-        return {
+        ion["energy_keV"] = _quantity_dict(self.ion.energy_keV, inline)
+        ion["angle_deg"] = _quantity_dict(self.ion.angle_deg, inline)
+        if self.ion.azimuth_deg is not None:
+            ion["azimuth_deg"] = _quantity_dict(self.ion.azimuth_deg, inline)
+        if self.ion.position is not None:
+            ion["position"] = {
+                name: _quantity_dict(getattr(self.ion.position, name), inline)
+                for name in ("y_nm", "z_nm", "depth_nm")
+            }
+        out = {
             "version": self.version,
             "ion": ion,
             "number_ions": self.number_ions,
@@ -224,11 +300,18 @@ class RunSpec:
             "settings": dict(self.settings),
             "target": layers,
         }
+        if self.beam is not None:
+            out["beam"] = self.beam.to_dict()
+        return out
 
     @classmethod
-    def from_dict(cls, data, _prefix=""):
-        """Build and validate a spec from plain data. Raises :class:`SpecError`."""
-        spec = _build(data, _prefix)
+    def from_dict(cls, data, _prefix="", base_dir=None):
+        """Build and validate a spec from plain data. Raises :class:`SpecError`.
+
+        ``base_dir`` is the folder a relative histogram ``file`` is read from (the working
+        directory when None); :meth:`from_yaml` passes the folder of the run file.
+        """
+        spec = _build(data, _prefix, base_dir)
         _check_values(spec, _prefix)
         return spec
 
@@ -266,7 +349,7 @@ class RunSpec:
             raise SpecError("'spec' must be a mapping")
         if "version" in document:
             spec = {"version": document["version"], **spec}
-        return cls.from_dict(spec, "spec.")
+        return cls.from_dict(spec, "spec.", base_dir=Path(path).parent)
 
     def with_overrides(self, assignments):
         """A new spec with ``dotted.key=value`` assignments applied.
@@ -366,24 +449,49 @@ def _typed(data, schema, prefix):
     return out
 
 
-def _build(data, prefix=""):
+def _quantity(value, key, base_dir):
+    """A beam number (a finite float) or a distribution mapping read from a run file."""
+    if isinstance(value, dict):
+        from .beam.spec import quantity_from_value  # srim.beam imports this module
+
+        return quantity_from_value(value, key, base_dir)
+    return _check_type(value, float, key)
+
+
+def _build(data, prefix="", base_dir=None):
     data = _mapping(data, prefix.rstrip(".") or "spec")
     _check_keys(data, _TOP, prefix)
     _require(data, "", prefix)
-    top = {k: v for k, v in data.items() if k not in ("ion", "target", "settings")}
+    top = {k: v for k, v in data.items() if k not in ("ion", "target", "settings", "beam")}
     top = _typed(top, _TOP, prefix)
     version = top.get("version", SCHEMA_VERSION)
     if version != SCHEMA_VERSION:
         raise SpecError(f"{prefix}version {version} is not supported (this is version 1)")
 
     p = f"{prefix}ion."
-    ion = _mapping(data["ion"], f"{prefix}ion")
-    _check_keys(ion, _ION, p)
-    ion = _typed(ion, _ION, p)
-    _require(ion, "ion", p)
+    ion_raw = dict(_mapping(data["ion"], f"{prefix}ion"))
+    _check_keys(ion_raw, _ION, p)
+    _require(ion_raw, "ion", p)
+    shaped = {}
+    for name in _SHAPED:
+        if name in ion_raw:
+            shaped[name] = _quantity(ion_raw.pop(name), p + name, base_dir)
+    position = None
+    if "position" in ion_raw:
+        from .beam.spec import position_from_dict
+
+        position = position_from_dict(ion_raw.pop("position"), p + "position", base_dir)
+    ion = _typed(ion_raw, _ION, p)
     mass = _symbol_mass(ion["symbol"], f"{p}symbol")
     mass = ion.get("mass_amu", mass)
-    ion_spec = IonSpec(ion["symbol"], mass, ion["energy_keV"], ion.get("angle_deg", 0.0))
+    ion_spec = IonSpec(
+        ion["symbol"],
+        mass,
+        shaped["energy_keV"],
+        shaped.get("angle_deg", 0.0),
+        shaped.get("azimuth_deg"),
+        position,
+    )
 
     raw_settings = data.get("settings", {})
     p = f"{prefix}settings."
@@ -402,6 +510,11 @@ def _build(data, prefix=""):
     for i, raw in enumerate(layers_raw):
         layers.append(_build_layer(raw, f"{prefix}target[{i}]."))
 
+    beam = None
+    if "beam" in data:
+        from .beam.spec import beam_from_dict
+
+        beam = beam_from_dict(data["beam"], f"{prefix}beam")
     if "seed" in top:
         seed = top["seed"]
     else:
@@ -414,6 +527,7 @@ def _build(data, prefix=""):
         number_ions=top.get("number_ions", 1000),
         calculation=top.get("calculation", 1),
         seed=seed,
+        beam=beam,
     )
 
 
@@ -458,9 +572,11 @@ def _check_values(spec, prefix=""):
             raise SpecError(f"{key} must be >= 0, got {value!r}")
 
     p = f"{prefix}ion."
-    positive(spec.ion.energy_keV, p + "energy_keV")
+    # distributions are checked by srim.beam.spec.check_beam (called at the end)
+    if _is_number(spec.ion.energy_keV):
+        positive(spec.ion.energy_keV, p + "energy_keV")
     positive(spec.ion.mass_amu, p + "mass_amu")
-    if not 0.0 <= spec.ion.angle_deg < _MAX_ANGLE:
+    if _is_number(spec.ion.angle_deg) and not 0.0 <= spec.ion.angle_deg < _MAX_ANGLE:
         raise SpecError(f"{p}angle_deg must be in [0, 90), got {spec.ion.angle_deg!r}")
     positive(spec.number_ions, f"{prefix}number_ions")
     if spec.calculation not in range(1, 8):
@@ -500,6 +616,10 @@ def _check_values(spec, prefix=""):
                 f"{prefix}settings.{key} has an invalid value {value!r}"
                 + _SETTING_HINTS.get(key, "")
             ) from None
+    if spec.is_distributed or spec.beam is not None:
+        from .beam.spec import check_beam
+
+        check_beam(spec, prefix)
 
 
 # --- --set support ---------------------------------------------------------------
@@ -512,7 +632,15 @@ def _assign(data, dotted, raw):
     mapping that was changed and the key."""
     parts = re.sub(r"\[(\d+)\]", r".\1", dotted).replace("..", ".").split(".")
     node, kind = data, "root"
-    schema = {"root": _TOP, "ion": _ION, "layer": _LAYER, "element": _ELEMENT}
+    schema = {
+        "root": _TOP,
+        "ion": _ION,
+        "layer": _LAYER,
+        "element": _ELEMENT,
+        "beam": _BEAM,
+        "bins": _BINS,
+        "position": _POSITION,
+    }
     for depth, part in enumerate(parts):
         where = ".".join(parts[: depth + 1])
         last = depth == len(parts) - 1
@@ -531,6 +659,8 @@ def _assign(data, dotted, raw):
         if part not in allowed:
             raise SpecError(f"unknown key '{where}' (allowed: {', '.join(sorted(allowed))})")
         target_type = allowed[part]
+        if not last and part in _QUANTITIES.get(kind, ()):
+            return _assign_quantity(node, part, parts[depth + 1 :], raw, dotted, where)
         if not last:
             if target_type not in (dict, list):
                 raise SpecError(f"{where} has no sub-keys")
@@ -541,6 +671,56 @@ def _assign(data, dotted, raw):
             continue
         node[part] = _convert(raw, target_type, dotted)
         return node, part
+
+
+def _assign_quantity(container, key, rest, raw, dotted, where):
+    """Set ``container[key]``, a beam number or distribution, from what follows it in the key.
+
+    ``rest`` is empty (the value is replaced by the number ``raw``) or a distribution kind and
+    one of its parameters (``gaussian.sigma``). The kind must be the one the value has now; a
+    number is ``fixed``. Returns the changed mapping and the key, like :func:`_assign`.
+    """
+    current = container.get(key)
+    if isinstance(current, dict) and len(current) == 1:
+        ((cur_kind, cur_params),) = current.items()
+    else:
+        cur_kind, cur_params = "fixed", {}
+    if not rest:
+        container[key] = _convert(raw, float, dotted)
+        return container, key
+    want = rest[0]
+    if want not in _SHAPE_PARAMS:
+        raise SpecError(
+            f"{where} has no sub-keys named {want!r} "
+            f"(distribution kinds: {', '.join(sorted(_SHAPE_PARAMS))})"
+        )
+    if want != cur_kind:
+        described = "a fixed value" if cur_kind == "fixed" else f"a {cur_kind} distribution"
+        raise SpecError(
+            f"{where} is {described}, not a {want} distribution "
+            f"(set {where}=<number> to make it a fixed value)"
+        )
+    params = _SHAPE_PARAMS[want]
+    names = rest[1:]
+    if not names:
+        raise SpecError(
+            f"{where}.{want} is a distribution: set one of its parameters, "
+            f"e.g. {where}.{want}.{next(iter(params))}"
+        )
+    if len(names) > 1:
+        raise SpecError(f"{where}.{want}.{names[0]} has no sub-keys")
+    name = names[0]
+    full = f"{where}.{want}.{name}"
+    if name not in params:
+        raise SpecError(f"unknown key '{full}' (allowed: {', '.join(params)})")
+    leaf = params[name]
+    if leaf is list:
+        raise SpecError(f"{full} is a list; set it in the YAML file")
+    value = raw if leaf is str else _convert(raw, float, full)
+    updated = dict(cur_params)
+    updated[name] = value
+    container[key] = {want: updated}
+    return container, key
 
 
 def _convert(raw, kind, key):
