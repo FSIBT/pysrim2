@@ -39,6 +39,19 @@ def test_angle_energy_scan(tmp_path):
     assert (tmp_path / "scan" / "result" / "scan.csv").is_file()
 
 
+def test_beam_energy_spread(tmp_path):
+    table = load("beam_energy_spread").run(tmp_path / "output")
+    assert list(table["mode"]) == ["exact", "binned"]
+    assert (table["n_ions"] > 0.9 * 200).all()
+    assert (table["mean_depth_A"] > 0).all()
+    assert (table["straggle_depth_A"] > 0).all()
+    # the same beam both ways. With 200 ions the mean depth changes by several per cent from seed
+    # to seed, so the check is loose: it catches a units or energy mistake, not the statistics.
+    exact, binned = table["mean_depth_A"]
+    assert abs(exact - binned) < 0.25 * exact
+    assert (tmp_path / "output" / "beam_energy_spread.csv").is_file()
+
+
 def test_scan_yaml_from_the_command_line(tmp_path):
     folder = tmp_path / "scan"
     completed = subprocess.run(

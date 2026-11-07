@@ -11,6 +11,7 @@ to a local `output` folder, so it works the same natively and in the container.
 | `run_yaml_example/` | The boron case as a `run.yaml` for `pysrim2 run run.yaml --set ion.energy_keV=30`; see its README. |
 | `angle_energy_scan.py [folder]` | A scan (see the [scans page](https://pysrim2.readthedocs.io/en/latest/scans.html)): B into 1000 nm of Si at 20 and 40 keV, each at 0 and 30 degrees, 50 ions per point, two worker processes. Prints one row per point and writes `result/scan.csv` in the folder (default `output/scan`). |
 | `scan.yaml` | The same scan as a file: `pysrim2 scan run scan.yaml --ui plain` (a new `scan-<UTC time>` folder, or `--output DIR`). |
+| `beam_energy_spread.py [folder]` | A beam with a 1 keV Gaussian energy spread (20 keV boron, 200 ions), run in exact mode and in binned mode (4 bins). Prints the projected range and straggling of both and writes `beam_energy_spread.csv`. See the [beam page](https://pysrim2.readthedocs.io/en/latest/beam.html). |
 
 `boron_in_gold_on_silicon.py` is also the example of the
 [agent skill](../../skills/pysrim2/SKILL.md); a test keeps the two copies identical.
@@ -29,6 +30,7 @@ python multilayer_damage.py 20
 python stopping_table.py
 python angle_energy_scan.py
 pysrim2 scan run scan.yaml --ui plain
+python beam_energy_spread.py
 ```
 
 ## Run in the container
