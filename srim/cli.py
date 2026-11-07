@@ -422,6 +422,8 @@ def _run(args) -> int:
         return EXIT_BAD_INPUT
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     output = Path(args.output or f"srim-output-{stamp}")
+    if spec.is_distributed:
+        return _run_beam(path, spec, output)
     try:
         # an isolated run directory, so several `pysrim2 run` can be active at once
         TRIM.from_spec(spec).run(output_dir=output)
@@ -432,6 +434,36 @@ def _run(args) -> int:
         print(f"run failed: {exc}", file=sys.stderr)
         return EXIT_FAILED
     print(f"outputs and run.yaml: {output}")
+    return EXIT_OK
+
+
+def _run_beam(path, spec, output) -> int:
+    """``pysrim2 run`` of a distributed spec: :func:`srim.beam.run_beam` into ``output``.
+
+    Prints the folder with the results (``output``, or ``output/points/<id>`` for a scan).
+    A spec that is invalid for a run is exit 2; the other errors are as for a plain run.
+    """
+    from srim.beam import run_beam
+    from srim.beam.run import result_folder
+    from srim.spec import SpecError
+
+    try:
+        runner = _runner_from_env()
+    except ValueError as exc:
+        print(exc, file=sys.stderr)
+        return EXIT_BAD_INPUT
+    try:
+        run_beam(spec, output_dir=output, runner=runner)
+    except SpecError as exc:
+        print(f"{path}: {exc}", file=sys.stderr)
+        return EXIT_BAD_INPUT
+    except KeyboardInterrupt:
+        print("cancelled", file=sys.stderr)
+        return EXIT_INTERRUPTED
+    except (RuntimeError, subprocess.SubprocessError, OSError, ValueError) as exc:
+        print(f"run failed: {exc}", file=sys.stderr)
+        return EXIT_FAILED
+    print(f"outputs and run.yaml: {result_folder(spec, output)}")
     return EXIT_OK
 
 

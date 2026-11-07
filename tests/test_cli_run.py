@@ -8,6 +8,8 @@ import pytest
 import yaml
 
 from srim import cli
+from srim.beam.exact import read_trim_dat
+from srim.scan.spec import spec_hash
 from srim.spec import RunSpec
 
 TEST_FILES = Path(__file__).resolve().parent.parent / "test_files"
@@ -206,3 +208,89 @@ def test_spec_path_rules(value, overrides, expected):
 def test_run_without_a_path_says_to_put_it_before_set(srim_install, capsys):
     assert cli.main(["run", "--set", "ion.energy_keV=30"]) == 2
     assert "put the path before --set" in capsys.readouterr().err
+
+
+# --- distributed specs (beams) ----------------------------------------------------
+
+BEAM_RUNNER_MODULE = "fake_beam_for_run_cli"
+BEAM_RUNNER_REF = f"{BEAM_RUNNER_MODULE}:run"
+BEAM_RUNNER_SOURCE = f'''"""Stands in for SRIM in the ``pysrim2 run`` tests of beams."""
+
+from pathlib import Path
+
+from srim.output import Results
+
+FIXTURE = Path({str(TEST_FILES / "1")!r})
+
+
+def run(spec):
+    return Results(str(FIXTURE))
+'''
+
+
+def beam_yaml(tmp_path, *, beam=None, number_ions=200, name="beam.yaml"):
+    """A run file whose energy is a uniform distribution (10 to 20 keV)."""
+    data = yaml.safe_load(yaml.safe_dump(SPEC))
+    data["spec"]["ion"]["energy_keV"] = {"uniform": {"low": 10.0, "high": 20.0}}
+    data["spec"]["number_ions"] = number_ions
+    if beam is not None:
+        data["spec"]["beam"] = beam
+    path = tmp_path / name
+    path.write_text(yaml.safe_dump(data, sort_keys=False))
+    return path
+
+
+@pytest.fixture
+def beam_runner(tmp_path, monkeypatch):
+    (tmp_path / f"{BEAM_RUNNER_MODULE}.py").write_text(BEAM_RUNNER_SOURCE, encoding="utf-8")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.setenv(cli.SCAN_RUNNER_VAR, BEAM_RUNNER_REF)
+    monkeypatch.delenv("PYSRIM2_CACHE", raising=False)
+    return tmp_path
+
+
+def test_beam_exact_small_run_writes_trim_dat(srim_install, tmp_path, capsys):
+    path = beam_yaml(tmp_path, number_ions=200)
+    out = tmp_path / "out"
+    assert cli.main(["run", str(path), "-o", str(out)]) == 0
+    assert len(read_trim_dat(out / "TRIM.DAT")) == 200
+    assert f"outputs and run.yaml: {out}" in capsys.readouterr().out
+
+
+def test_beam_binned_run_prints_the_point_folder(beam_runner, tmp_path, capsys):
+    path = beam_yaml(tmp_path, beam={"mode": "binned", "bins": {"energy_keV": 2}}, number_ions=10)
+    out = tmp_path / "out"
+    assert cli.main(["run", str(path), "-o", str(out)]) == 0
+    point = out / "points" / spec_hash(RunSpec.from_yaml(path))[:16]
+    assert (point / "units.csv").is_file() and (point / "beam_bins.csv").is_file()
+    captured = capsys.readouterr()
+    assert f"outputs and run.yaml: {point}" in captured.out
+    assert f"using test runner {BEAM_RUNNER_REF}" in captured.err
+
+
+def test_beam_exact_large_run_is_split_into_units(beam_runner, tmp_path, capsys):
+    path = beam_yaml(tmp_path, number_ions=100_000)
+    out = tmp_path / "out"
+    assert cli.main(["run", str(path), "-o", str(out)]) == 0
+    point = out / "points" / spec_hash(RunSpec.from_yaml(path))[:16]
+    assert (point / "units.csv").is_file()
+    assert f"outputs and run.yaml: {point}" in capsys.readouterr().out
+
+
+def test_beam_invalid_spec_exits_2(tmp_path, capsys):
+    path = beam_yaml(tmp_path)
+    data = yaml.safe_load(path.read_text())
+    data["spec"]["calculation"] = 3  # a distributed exact beam needs calculation 1 or 2
+    path.write_text(yaml.safe_dump(data, sort_keys=False))
+    assert cli.main(["run", str(path), "-o", str(tmp_path / "out")]) == 2
+    assert "calculation" in capsys.readouterr().err
+
+
+def test_beam_run_failure_exits_1(beam_runner, tmp_path, monkeypatch, capsys):
+    def boom(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("srim.beam.run_beam", boom)
+    path = beam_yaml(tmp_path, beam={"mode": "binned", "bins": {"energy_keV": 2}}, number_ions=10)
+    assert cli.main(["run", str(path), "-o", str(tmp_path / "out")]) == 1
+    assert "run failed: boom" in capsys.readouterr().err
