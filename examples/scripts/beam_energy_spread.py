@@ -26,14 +26,15 @@ SUMMARY = ("n_ions", "mean_depth_A", "straggle_depth_A", "lateral_straggle_A")
 def beam_spec(mode: str, ions: int = IONS) -> RunSpec:
     """The run spec: B into 1000 nm of Si, energy 20 keV with a 1 keV Gaussian spread."""
     target = Target([Layer.from_formula("Si", density=2.33, width=10000.0)])  # 1000 nm
-    data = TRIM(
+    trim = TRIM(
         target,
         Ion("B", energy=20e3),  # eV; replaced by the distribution below
         number_ions=ions,
         calculation=1,  # quick Kinchin-Pease
         ranges=1,  # RANGE_3D.txt, needed by implant_summary
         random_seed=12345,
-    ).to_spec().to_dict()
+    )
+    data = trim.to_spec().to_dict()
     data["ion"]["energy_keV"] = Gaussian(20.0, 1.0).to_dict()
     if mode == "binned":
         data["beam"] = {"mode": "binned", "bins": {"energy_keV": 4}}
