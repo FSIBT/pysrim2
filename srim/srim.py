@@ -1,7 +1,9 @@
 """Module for automating srim calculations"""
 
 import contextlib
+import copy
 import errno
+import hashlib
 import os
 import random
 import re
@@ -11,10 +13,19 @@ import subprocess
 import sys
 import tempfile
 import warnings
+from dataclasses import replace
 from datetime import UTC, datetime
 
 from . import _xvfb
 from ._lock import FileLock
+from .beam.exact import (
+    max_energy_eV,
+    sample_ions,
+    trim_in_energy_keV,
+    write_trim_dat,
+)
+from .beam.shapes import Histogram, Shape
+from .beam.spec import MAX_TRIM_DAT_IONS, POSITION_KEYS, effective
 from .core import Element, Ion, Layer, Target
 from .core.utils import (
     check_input,
@@ -300,7 +311,11 @@ TRIM_OUTPUT_FILES = (
     "TRIMOUT.txt",
     "TDATA.txt",
     "EXYZ.txt",
+    "TRIM.DAT",
 )
+
+#: the folder (next to run.yaml) holding copies of the histogram files of a distributed run
+BEAM_FOLDER = "beam"
 
 
 class SRIMRunError(RuntimeError):
@@ -316,6 +331,61 @@ def _remove_stale(directory, names, subdirectory=None):
         for path in paths:
             if os.path.isfile(path):
                 os.remove(path)
+
+
+def _remove_beam(directory):
+    """Delete the histogram copies of an earlier distributed run."""
+    path = os.path.join(directory, BEAM_FOLDER)
+    if os.path.isdir(path):
+        shutil.rmtree(path)
+
+
+def _copy_beam(src_directory, dest_directory):
+    """Copy the ``beam`` folder (histogram copies) of a run, replacing an earlier one."""
+    if os.path.abspath(src_directory) == os.path.abspath(dest_directory):
+        return
+    _remove_beam(dest_directory)
+    source = os.path.join(src_directory, BEAM_FOLDER)
+    if os.path.isdir(source):
+        shutil.copytree(source, os.path.join(dest_directory, BEAM_FOLDER))
+
+
+def _with_beam_files(spec, directory):
+    """Copy the histogram files of a distributed spec into ``directory/beam`` and return the
+    spec that refers to the copies by their path relative to ``directory``.
+
+    A copy is named ``<sha256 of its content[:8]>-<basename>``, so a changed file never
+    overwrites an older copy.
+    """
+
+    def relocate(value):
+        if not isinstance(value, Histogram) or value.file is None:
+            return value
+        with open(value.file, "rb") as f:
+            content = f.read()
+        name = f"{hashlib.sha256(content).hexdigest()[:8]}-{os.path.basename(value.file)}"
+        folder = os.path.join(directory, BEAM_FOLDER)
+        os.makedirs(folder, exist_ok=True)
+        with open(os.path.join(folder, name), "wb") as f:
+            f.write(content)
+        copied = copy.copy(value)
+        copied.file = f"{BEAM_FOLDER}/{name}"
+        return copied
+
+    ion = spec.ion
+    position = ion.position
+    if position is not None:
+        position = replace(
+            position, **{name: relocate(getattr(position, name)) for name in POSITION_KEYS}
+        )
+    ion = replace(
+        ion,
+        energy_keV=relocate(ion.energy_keV),
+        angle_deg=relocate(ion.angle_deg),
+        azimuth_deg=relocate(ion.azimuth_deg),
+        position=position,
+    )
+    return replace(spec, ion=ion)
 
 
 def _require_output(directory, name):
@@ -474,10 +544,30 @@ class TRIM:
         self.number_ions = check_input(int, is_positive, number_ions)
         self.target = target
         self.ion = ion
+        #: exact mode of a distributed spec: the sampled ions (``srim.beam.exact.sample_ions``)
+        self.beam = None
+        #: the distributed spec this TRIM was made from (``to_spec`` returns it)
+        self._spec = None
+        #: exact mode: the TRIM.IN ion energy (keV), the largest energy of the TRIM.DAT file
+        self._energy_keV_in = None
+
+    def _in_energy_keV(self):
+        """The ion energy written to TRIM.IN (keV)."""
+        if self._energy_keV_in is not None:
+            return self._energy_keV_in
+        return self.ion.energy / 1000.0
 
     def _write_input_files(self, directory="."):
         """Write necissary TRIM input files for calculation into ``directory``"""
         AutoTRIM().write(directory)
+        if self.beam is not None:
+            write_trim_dat(
+                self.beam,
+                os.path.join(directory, "TRIM.DAT"),
+                atomic_number=self.ion.atomic_number,
+                description=self.settings.description,
+                seed=self.settings.random_seed,
+            )
         TRIMInput(self).write(directory)
 
     def to_spec(self):
@@ -488,6 +578,8 @@ class TRIM:
         ``TRIM.IN``. ``settings`` only holds values that differ from the defaults, plus
         ``description`` and ``ranges``.
         """
+        if self._spec is not None:
+            return copy.deepcopy(self._spec)
         st = self.settings
         settings = {}
         for key, (_, default) in SETTINGS_SCHEMA.items():
@@ -534,11 +626,7 @@ class TRIM:
         else:
             spec.validate()
         if spec.is_distributed:
-            # a single TRIM run has one energy and angle; writing one would run a different beam
-            raise SpecError(
-                "this run spec has a beam distribution (ion.energy_keV, ion.angle_deg, "
-                "ion.azimuth_deg or ion.position), which a single TRIM run cannot represent"
-            )
+            return cls._from_exact_spec(spec)
         layers = []
         for layer_spec in spec.target:
             elements = {}
@@ -572,6 +660,63 @@ class TRIM:
             **spec.settings,
         )
 
+    @classmethod
+    def _from_exact_spec(cls, spec):
+        """A TRIM whose ions are the sampled beam of a distributed exact-mode spec.
+
+        The ions go into TRIM.DAT (see :meth:`_write_input_files`); TRIM.IN has their count,
+        the largest energy and calculation 4 (for ``calculation`` 1) or 5 (for 2).
+        """
+        mode = "exact" if spec.beam is None else spec.beam.mode
+        if mode == "binned":
+            raise SpecError(
+                "this run spec has a binned beam (beam.mode: binned), which one TRIM run cannot "
+                "represent: run it with srim.beam.run_beam, which runs SRIM once per bin"
+            )
+        if spec.number_ions > MAX_TRIM_DAT_IONS:
+            raise SpecError(
+                f"number_ions = {spec.number_ions} is more than {MAX_TRIM_DAT_IONS}, the most "
+                "one TRIM.DAT file holds: run it with srim.beam.run_beam, which splits the beam"
+            )
+        ions = sample_ions(spec)
+        max_eV = max_energy_eV(ions)
+        tilt = effective(spec)["angle_deg"]
+        angle = tilt.mean() if isinstance(tilt, Shape) else tilt
+        layers = []
+        for layer_spec in spec.target:
+            elements = {}
+            for e in layer_spec.elements:
+                elements[Element(e.symbol, e.mass_amu)] = {
+                    "stoich": e.stoich,
+                    "E_d": e.displacement_eV,
+                    "lattice": e.lattice_eV,
+                    "surface": e.surface_eV,
+                }
+            layer = Layer(
+                elements,
+                layer_spec.density_g_cm3,
+                nm_to_A(layer_spec.thickness_nm),
+                layer_spec.phase,
+                layer_spec.name,
+            )
+            for element, e in zip(layer.elements, layer_spec.elements, strict=True):
+                layer.elements[element]["stoich"] = e.stoich
+            layers.append(layer)
+        ion = Ion(spec.ion.symbol, max_eV, spec.ion.mass_amu)
+        trim = cls(
+            Target(layers),
+            ion,
+            calculation=4 if spec.calculation == 1 else 5,
+            number_ions=len(ions),
+            angle_ions=float(angle),
+            random_seed=spec.seed,
+            **spec.settings,
+        )
+        trim.beam = ions
+        trim._spec = copy.deepcopy(spec)
+        trim._energy_keV_in = trim_in_energy_keV(max_eV)
+        return trim
+
     def to_yaml(self, path, provenance=None):
         """Write this calculation as a ``run.yaml`` (see :meth:`srim.spec.RunSpec.to_yaml`)."""
         self.to_spec().to_yaml(path, provenance)
@@ -598,6 +743,7 @@ class TRIM:
         """
         known_files = {
             "run.yaml",
+            "TRIM.DAT",
             "TRIM.IN",
             "PHONON.txt",
             "E2RECOIL.txt",
@@ -632,6 +778,7 @@ class TRIM:
                 and check_srim_output
             ):
                 shutil.copy(os.path.join(src_directory, "SRIM Outputs", known_file), dest_directory)
+        _copy_beam(src_directory, dest_directory)
 
     def run(
         self,
@@ -704,6 +851,7 @@ class TRIM:
 
         def collect(where, destination):
             _copy_outputs(where, destination, TRIM_OUTPUT_FILES + ("run.yaml",), "SRIM Outputs")
+            _copy_beam(where, destination)
 
         def finish(spec, where):
             results = Results(where)
@@ -728,6 +876,7 @@ class TRIM:
         srim_directory = os.path.abspath(srim_directory)
         # The process's working directory is never changed (runs may happen in threads).
         _remove_stale(srim_directory, TRIM_OUTPUT_FILES + ("run.yaml",), "SRIM Outputs")
+        _remove_beam(srim_directory)
         self._write_input_files(srim_directory)
         started = datetime.now(UTC)
         # Make sure compatible with Windows, OSX, and Linux
@@ -735,6 +884,9 @@ class TRIM:
         finished = datetime.now(UTC)
         _require_output(srim_directory, "RANGE.txt")
         spec = self.to_spec()
+        if spec.is_distributed:
+            # the run folder holds its own copies of the histograms; run.yaml refers to them
+            spec = _with_beam_files(spec, srim_directory)
         if write_spec:
             try:
                 spec.to_yaml(

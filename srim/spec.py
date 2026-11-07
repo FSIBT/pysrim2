@@ -316,13 +316,20 @@ class RunSpec:
         _check_values(spec, _prefix)
         return spec
 
-    def validate(self):
-        """Raise :class:`SpecError` (naming the dotted key) if the spec is invalid."""
-        RunSpec.from_dict(self.to_dict())
+    def validate(self, base_dir=None):
+        """Raise :class:`SpecError` (naming the dotted key) if the spec is invalid.
+
+        A relative histogram ``file`` is read from ``base_dir`` (the working directory when
+        None).
+        """
+        RunSpec.from_dict(self.to_dict(), base_dir=base_dir)
 
     def to_yaml(self, path, provenance=None):
-        """Write ``run.yaml``: ``version``, ``spec`` and ``provenance`` (a dict, may be empty)."""
-        self.validate()
+        """Write ``run.yaml``: ``version``, ``spec`` and ``provenance`` (a dict, may be empty).
+
+        Relative histogram files are checked against the folder of ``path``.
+        """
+        self.validate(base_dir=Path(path).parent)
         spec = self.to_dict()
         document = {
             "version": spec.pop("version"),

@@ -56,7 +56,7 @@ class TRIMInput:
             + "{} {} {} {} {} {} {}".format(
                 self._trim.ion.atomic_number,
                 self._trim.ion.mass,
-                self._trim.ion.energy / 1000.0,  # eV -> keV
+                self._trim._in_energy_keV(),  # eV -> keV (the largest energy of TRIM.DAT if exact)
                 self._trim.settings.angle_ions,
                 self._trim.number_ions,
                 self._trim.settings.bragg_correction,

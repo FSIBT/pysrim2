@@ -450,11 +450,11 @@ def test_copy_is_not_shared_between_specs():
 # --- TRIM.from_spec and inline (hashing) form ---------------------------------------------
 
 
-def test_trim_from_spec_refuses_a_distributed_spec():
+def test_trim_from_spec_refuses_a_binned_spec():
     from srim import TRIM
 
-    with pytest.raises(SpecError, match="beam distribution"):
-        TRIM.from_spec(RunSpec.from_dict(distributed()))
+    with pytest.raises(SpecError, match="srim.beam.run_beam"):
+        TRIM.from_spec(RunSpec.from_dict({**distributed(), "beam": {"mode": "binned"}}))
 
 
 def test_python_function_distribution_round_trips_and_inlines_its_source(tmp_path):
