@@ -44,6 +44,8 @@ pysrim2 install           # sets up SRIM (pysrim2 install --dry-run shows the st
 pysrim2 doctor            # checks the result
 ```
 
+`uv tool install pysrim2` installs only the `pysrim2` command, which sets SRIM up; it does not make `import srim` available to your own Python, so also install the library into your project or environment (`uv add pysrim2` or `pip install pysrim2`).
+
 The boron reference case (200 ions, 20 keV, 7 degrees, 100 nm of gold on silicon):
 
 ```python
