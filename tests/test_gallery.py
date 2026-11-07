@@ -1,6 +1,7 @@
 """Tests for the documentation gallery runner (docs/gallery/make.py)."""
 
 import importlib.util
+import re
 import types
 from pathlib import Path
 
@@ -8,7 +9,8 @@ import pytest
 
 pytest.importorskip("matplotlib")
 
-GALLERY = Path(__file__).resolve().parents[1] / "docs" / "gallery"
+DOCS = Path(__file__).resolve().parents[1] / "docs"
+GALLERY = DOCS / "gallery"
 IMAGES = GALLERY / "images"
 
 _spec = importlib.util.spec_from_file_location("gallery_make_for_tests", GALLERY / "make.py")
@@ -114,3 +116,20 @@ def test_a_failing_entry_makes_the_exit_code_1(tmp_path, monkeypatch, capsys):
 def test_unknown_entry_is_an_error(capsys):
     assert make.main(["nope"]) == 2
     assert "nope" in capsys.readouterr().err
+
+
+def test_gallery_page_shows_every_entry():
+    text = (DOCS / "gallery.md").read_text(encoding="utf-8")
+    for name in NAMES:
+        output = make.load(name).OUTPUT
+        assert f"gallery/images/{output}" in text, f"gallery.md has no picture of {name}"
+        assert re.search(rf"\{{literalinclude\}}\s+gallery/{re.escape(name)}\.py", text), (
+            f"gallery.md does not include the script of {name}"
+        )
+
+
+def test_doc_pages_use_only_existing_gallery_images():
+    for page in ("gallery.md", "index.md"):
+        text = (DOCS / page).read_text(encoding="utf-8")
+        for rel in re.findall(r"gallery/images/[A-Za-z0-9_.-]+", text):
+            assert (IMAGES / Path(rel).name).is_file(), f"{page} uses the missing {rel}"
