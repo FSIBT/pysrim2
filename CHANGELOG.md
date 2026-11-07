@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `CITATION.cff`: cite the original pysrim paper (Ostrouchov, Zhang, Weber 2018, JOSS); every git author and co-author is listed in `CITATION.cff` and the package metadata.
+
 ## [0.10.0] - 2026-11-06
 
 ### Added

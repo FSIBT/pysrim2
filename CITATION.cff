@@ -1,0 +1,47 @@
+cff-version: 1.2.0
+message: "If you use pysrim2, please cite the paper about the original pysrim (below), on which pysrim2 is based."
+title: pysrim2
+version: 0.10.0
+type: software
+repository-code: "https://github.com/FSIBT/pysrim2"
+url: "https://pysrim2.readthedocs.io"
+license: MIT
+authors:
+  - given-names: Chris
+    family-names: Ostrouchov
+  - given-names: Arun
+    family-names: Persaud
+  - alias: Allentro
+  - given-names: Angus
+    family-names: Hollands
+  - given-names: Anton
+    family-names: Såmark-Roth
+  - given-names: George
+    family-names: Apostolopoulos
+  - given-names: Jan
+    family-names: Mayer
+  - given-names: Jesse
+    family-names: Carter
+  - alias: lievcm
+  - alias: Mirochill
+  - alias: MrRobot2211
+  - given-names: Peter
+    family-names: Sun
+  - alias: philis-johan
+  - alias: SimonF24
+preferred-citation:
+  type: article
+  title: "pysrim: Automation, Analysis, and Plotting of SRIM Calculations"
+  authors:
+    - given-names: Christopher
+      family-names: Ostrouchov
+    - given-names: Yanwen
+      family-names: Zhang
+    - given-names: William J.
+      family-names: Weber
+  journal: Journal of Open Source Software
+  volume: 3
+  issue: 28
+  start: 829
+  year: 2018
+  doi: 10.21105/joss.00829
