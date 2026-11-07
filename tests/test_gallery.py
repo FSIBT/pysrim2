@@ -76,6 +76,8 @@ def test_list_reports_a_broken_entry_and_exits_1(monkeypatch, capsys):
     assert "depth_profiles  " in out
 
 
+# the SiC-C fixture of `tracks` has stray recoil lines, which Collision reports with a warning
+@pytest.mark.filterwarnings("ignore:COLLISON.txt:UserWarning")
 @pytest.mark.parametrize("name", NO_SRIM_NAMES)
 def test_entries_without_srim_run(name, tmp_path, capsys):
     if name.startswith("tui_"):  # the live-view pictures need the tui extra
