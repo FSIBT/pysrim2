@@ -12,7 +12,14 @@ from .shapes import (
     Uniform,
     shape_from_dict,
 )
-from .spec import MAX_TRIM_DAT_IONS, BeamOptions, PositionSpec, check_beam, effective
+from .spec import (
+    MAX_TRIM_DAT_IONS,
+    BeamOptions,
+    PositionSpec,
+    check_beam,
+    effective,
+    fingerprint,
+)
 
 __all__ = [
     "GRID_POINTS",
@@ -29,5 +36,6 @@ __all__ = [
     "Uniform",
     "check_beam",
     "effective",
+    "fingerprint",
     "shape_from_dict",
 ]

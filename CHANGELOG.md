@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Beam distributions in `run.yaml` and `RunSpec`: `ion.energy_keV`, `ion.angle_deg` and `ion.azimuth_deg` take a number or a distribution (Gaussian, uniform, triangular, log-normal, histogram file or inline, or a Python function), `ion.position` sets the start position, and `beam:` chooses exact or binned mode; `--set` and scan keys reach into the distributions. Runs without distributions are unchanged.
 - Exact mode of a distributed run (`beam.mode: exact`, the default) samples every ion from the distributions and writes SRIM's `TRIM.DAT`, so one `TRIM.run()` runs exactly that beam (calculation 1 and 2 become SRIM 4 and 5); the histogram files it used are copied to the run folder's `beam/` folder. Up to 99 999 ions per run.
 
+### Changed
+
+- The scan cache key and point id cover beam distributions: their definitions, histogram content (not only the file path) and the source of Python-function distributions, so a changed distribution never reuses an old run. Specs without distributions keep their keys.
+
 ## [0.9.0] - 2026-11-06
 
 ### Changed

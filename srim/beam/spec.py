@@ -11,6 +11,7 @@ A spec without distributions has none of these: :func:`check_beam` does nothing 
 its ``TRIM.IN`` is unchanged.
 """
 
+import hashlib
 import math
 import warnings
 from collections.abc import Mapping
@@ -19,6 +20,7 @@ from typing import Any
 
 from ..scan.extract import PYTHON_PREFIX
 from ..spec import SpecError, _check_type
+from . import shapes as _shapes_module
 from .shapes import Function, Shape, Uniform, shape_from_dict
 
 #: most ions a TRIM.DAT file can hold (SRIM's limit); a distributed exact run splits above it
@@ -348,6 +350,24 @@ def check_beam(spec, prefix: str = "") -> None:
                 UserWarning,
                 stacklevel=2,
             )
+
+
+def fingerprint(spec) -> str | None:
+    """SHA-256 hex digest of the source text of every Python-function distribution in ``spec``.
+
+    The energy, angle, azimuth and position distributions are taken in that order; each
+    function contributes its dotted key and the text
+    :func:`srim.beam.shapes._source_of` gives it. None when the spec has no function, so the
+    digest of a spec without one is not affected. Histogram content is not part of it (it
+    is in the spec's inline dict).
+    """
+    parts = []
+    for key, shape in _shapes(spec, ""):
+        if isinstance(shape, Function):
+            parts.append(f"{key}\n{_shapes_module._source_of(shape._resolve())}")
+    if not parts:
+        return None
+    return hashlib.sha256("\x00".join(parts).encode("utf-8")).hexdigest()
 
 
 def effective(spec) -> dict[str, "float | Shape"]:

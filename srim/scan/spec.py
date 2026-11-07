@@ -59,11 +59,17 @@ def spec_hash(spec: RunSpec) -> str:
     """SHA-256 hex digest of the canonical YAML of ``spec``, without ``seed`` and ``number_ions``.
 
     Two specs with the same digest produce the same ``TRIM.IN`` apart from the seed and the
-    ion count, so the digest (with a seed and an ion count) is a cache key.
+    ion count, so the digest (with a seed and an ion count) is a cache key. Beam distributions
+    are covered as in :func:`srim.scan.cache.cache_key` (inline histograms, function source).
     """
-    data = spec.to_dict()
+    from ..beam.spec import fingerprint  # lazy: srim.beam imports srim.scan.extract
+
+    data = spec.to_dict(inline=True)
     for key in RESERVED_KEYS:
         data.pop(key, None)
+    digest = fingerprint(spec)
+    if digest is not None:  # only with functions, so plain specs keep their ids
+        data["function_sources"] = digest
     text = yaml.safe_dump(data, sort_keys=True, default_flow_style=False)
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 

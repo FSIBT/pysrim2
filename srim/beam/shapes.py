@@ -592,6 +592,9 @@ class Function(Shape):
     kind: ClassVar[str] = "function"
     _fields: ClassVar[tuple[str, ...]] = ("ref",)
     _required: ClassVar[tuple[str, ...]] = ("ref", "range")
+    #: written by ``to_dict(inline=True)`` (the source, for hashing); accepted on read, and
+    #: ignored there: the function is always the one ``ref`` names
+    _written_only: ClassVar[tuple[str, ...]] = ("source",)
 
     def __init__(self, fn_or_ref: Any, range: Any = None):
         if range is None:
@@ -691,7 +694,7 @@ def shape_from_dict(value: Any, key: str, base_dir: Any = None) -> float | Shape
         raise SpecError(f"{key}.{kind}: expected a mapping of parameters, got {params!r}")
     allowed = cls._fields + ("range",)
     for name in params:
-        if name not in allowed:
+        if name not in allowed and name not in cls._written_only:
             raise SpecError(
                 f"{key}.{kind}: unknown parameter {name!r}; allowed: {', '.join(allowed)}"
             )

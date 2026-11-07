@@ -700,7 +700,7 @@ class _ScanRun:
         out.mkdir(parents=True, exist_ok=True)
         worker.current = (index, batch, attempt, time.monotonic())
         spec = self._unit_spec(index, batch)
-        worker.tasks.put((index, batch, attempt, spec.to_dict(), str(out)))
+        worker.tasks.put((index, batch, attempt, spec.to_dict(inline=True), str(out)))
         if attempt > 1 or index not in self.started:
             self.started.add(index)
             self._emit(PointStarted(index, point.id, worker.ident, attempt))

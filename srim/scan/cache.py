@@ -91,12 +91,19 @@ def _canonical(value):
 def cache_key(spec: RunSpec, seed: int) -> str:
     """SHA-256 hex digest that identifies one SRIM run: its spec and its seed.
 
-    The digest covers the canonical YAML of ``spec.to_dict()``, ``number_ions`` included, with
-    its ``seed`` set to the given one, after a schema tag line. Provenance (host, times,
-    versions) is not part of it.
+    The digest covers the canonical YAML of ``spec.to_dict(inline=True)``, ``number_ions``
+    included, with its ``seed`` set to the given one, after a schema tag line. Beam
+    distributions are covered in full: their definitions, histogram content (inline) and the
+    source of Python-function distributions (:func:`srim.beam.spec.fingerprint`). Provenance
+    (host, times, versions) is not part of it.
     """
-    data = _canonical(spec.to_dict())
+    from ..beam.spec import fingerprint  # lazy: srim.beam imports srim.scan.extract
+
+    data = _canonical(spec.to_dict(inline=True))
     data["seed"] = _canonical(seed)
+    digest = fingerprint(spec)
+    if digest is not None:  # only with functions, so plain specs keep their keys
+        data["function_sources"] = digest
     text = SCHEMA_TAG + "\n" + yaml.safe_dump(data, sort_keys=True, default_flow_style=False)
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 

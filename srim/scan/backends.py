@@ -83,7 +83,8 @@ def write_job(job_dir, units) -> Path:
     job.mkdir(parents=True, exist_ok=True)
     document = {
         "version": JOB_VERSION,
-        "units": [{"name": name, "spec": spec.to_dict()} for name, spec in units],
+        # inline: a job folder is read by another process, so it carries its histograms
+        "units": [{"name": name, "spec": spec.to_dict(inline=True)} for name, spec in units],
     }
     text = yaml.safe_dump(document, sort_keys=False, default_flow_style=False)
     (job / JOB_FILE).write_text(text, encoding="utf-8")

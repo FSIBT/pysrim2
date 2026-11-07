@@ -392,7 +392,7 @@ def run_batches(
             dirs = [f"{tmpdir}/batch-{i}" for i in range(count)]
             with ProcessPoolExecutor(workers) as executor:
                 futures = [
-                    executor.submit(_run_to_directory, one.to_dict(), d, runner)
+                    executor.submit(_run_to_directory, one.to_dict(inline=True), d, runner)
                     for one, d in zip(specs, dirs, strict=True)
                 ]
                 results.extend(_collect(executor, futures, annotate, Results))
