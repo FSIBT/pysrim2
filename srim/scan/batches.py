@@ -18,6 +18,7 @@ from concurrent.futures import (
     wait,
 )
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -25,6 +26,13 @@ import pandas as pd
 #: largest seed handed to SRIM (a signed 32-bit integer; pysrim2 itself accepts any
 #: non-negative integer, but SRIM's own limit is undocumented, so this stays conservative)
 MAX_SEED = 2**31 - 1
+
+#: the files of a batched point's folder (see :func:`write_point_record`)
+RUN_FILE = "run.yaml"
+UNITS_FILE = "units.csv"
+BINS_FILE = "beam_bins.csv"
+BATCHES_DIR = "batches"
+UNIT_COLUMNS = ("unit", "beam_batch", "bin", "n_ions", "seed")
 
 _PER_ION = ("range3d", "exyz", "backscat", "transmit", "sputter")
 _PROFILES = ("ioniz", "vacancy", "novac", "e2recoil", "phonon", "range")
@@ -61,6 +69,25 @@ class BatchInfo:
     summary: dict | None = None
     directory: str | None = field(default=None, repr=False)
     columns: dict | None = field(default=None, repr=False)
+
+
+def write_point_record(folder, spec, units, beam_bins=None, provenance=None):
+    """Record a batched point in its folder, so that :func:`srim.beam.open_results` can merge it.
+
+    Writes ``run.yaml`` (``spec``: the point's run spec with the total ions and the point's
+    seed), ``units.csv`` and, with ``beam_bins`` (the table of
+    :func:`srim.beam.binned.bins_frame`), ``beam_bins.csv``. ``units`` lists the finished units
+    as ``(unit, beam_batch, bin, n_ions, seed)``; ``bin`` is None for a plain batch (an empty
+    cell), and a plain batch is its own beam batch.
+    """
+    folder = Path(folder)
+    folder.mkdir(parents=True, exist_ok=True)
+    spec.to_yaml(folder / RUN_FILE, provenance=provenance)
+    frame = pd.DataFrame(list(units), columns=list(UNIT_COLUMNS))
+    frame = frame.astype("Int64")
+    frame.to_csv(folder / UNITS_FILE, index=False)
+    if beam_bins is not None:
+        beam_bins.to_csv(folder / BINS_FILE, index=False)
 
 
 def _check_same_bins(frames, name):

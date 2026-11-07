@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Beam distributions in `run.yaml` and `RunSpec`: `ion.energy_keV`, `ion.angle_deg` and `ion.azimuth_deg` take a number or a distribution (Gaussian, uniform, triangular, log-normal, histogram file or inline, or a Python function), `ion.position` sets the start position, and `beam:` chooses exact or binned mode; `--set` and scan keys reach into the distributions. Runs without distributions are unchanged.
 - Exact mode of a distributed run (`beam.mode: exact`, the default) samples every ion from the distributions and writes SRIM's `TRIM.DAT`, so one `TRIM.run()` runs exactly that beam (calculation 1 and 2 become SRIM 4 and 5); the histogram files it used are copied to the run folder's `beam/` folder. Up to 99 999 ions per run.
+- Binned beams in scans (`beam.mode: binned`): each scan point with a binned beam runs as one SRIM run per bin, the ions split over the bins by apportionment, in beam batches for precision targets and `batch_ions`; the bins' results are merged back into one result per point. Exact distributed points with more than 99 999 ions need `batch_ions: 99999`.
+- Point folders of batched scan points record their units (`run.yaml`, `units.csv`, and `beam_bins.csv` for binned beams), and `srim.beam.open_results(point_dir)` re-opens a finished batched point as one merged result.
 
 ### Changed
 

@@ -215,6 +215,15 @@ def _seed(seed):
     return int(seed)
 
 
+def is_binned(spec: RunSpec) -> bool:
+    """True for a point whose beam runs as bins: ``beam.mode: binned`` with a distribution.
+
+    Such a point is run as one SRIM run per bin (the bin units of the executor), so the
+    point's ions are split over them; the other points of a scan are not affected.
+    """
+    return spec.beam is not None and spec.beam.mode == "binned" and spec.is_distributed
+
+
 def _entry(extractor):
     if not callable(extractor):
         return extractor

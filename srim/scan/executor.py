@@ -20,6 +20,17 @@ seed when points are added or reordered. Batch ``b`` of a point with batches
 runs with ``derive_seed(point_seed, b)``. A failed unit (a point, or a batch) is retried
 ``retries`` times with the same seed, then the point gets status ``failed``; the scan goes on.
 
+Binned beams (``beam.mode: binned``, :mod:`srim.beam.binned`): a binned point runs as one unit
+per bin that gets ions. Its ions are planned in beam batches (one batch of all its ions, or
+batches of ``batch_ions`` or ``precision.batch_ions``), and each beam batch splits its ions
+over the bins by apportionment. A beam batch's values are the extractors on its units merged;
+its errors and decisions are on the beam batches. Each unit runs
+``bin_spec(point.spec, bin, ions, derive_seed(point_seed, unit))`` in ``batches/<unit>/``.
+
+A batched point (binned, or with ``batch_ions`` or a precision target) records its units when it
+finishes: ``run.yaml``, ``units.csv`` and (binned) ``beam_bins.csv``; see
+:func:`srim.beam.open_results`, which merges them back.
+
 Batches (:mod:`srim.scan.precision`): a point with a precision target runs as batches of
 ``batch_ions`` ions, and the unit of work is one batch. A fixed ion count with
 ``batch_ions`` (``Scan(batch_ions=)``) runs the same way, with all its batches planned at
@@ -83,7 +94,13 @@ from ..output import Results
 from ..paths import srim_dir
 from ..rundir import RunDir
 from ..spec import RunSpec, SpecError
-from .batches import MAX_SEED, BatchInfo, MergedResults, derive_seed
+from .batches import (
+    MAX_SEED,
+    BatchInfo,
+    MergedResults,
+    derive_seed,
+    write_point_record,
+)
 from .cache import RunCache, cache_key, cache_root, current_srim_sha, materialise
 from .events import (
     BatchFinished,
@@ -110,7 +127,7 @@ from .precision import (
     is_met,
 )
 from .result import ScanResult
-from .spec import Scan
+from .spec import Scan, is_binned
 
 log = logging.getLogger(__name__)
 
@@ -553,8 +570,16 @@ class _ScanRun:
         self.finished: dict[int, dict[int, float]] = {p.index: {} for p in self.points}
         self.batch_values: dict[tuple[int, int], dict] = {}
         self.batch_ions = scan.batch_ions
-        #: a point runs as batches: a precision target, or batch_ions with a fixed count
-        self.batched = self.precision is not None or self.batch_ions is not None
+        #: binned points: point index -> the bins of its beam (srim.beam.binned.BeamBin)
+        self.bins: dict[int, list] = {}
+        for p in self.points:
+            if is_binned(p.spec):
+                from ..beam.binned import make_bins  # lazy: srim.beam imports srim.scan
+
+                self.bins[p.index] = make_bins(p.spec)
+        #: the units of a binned point: unit -> (beam batch, bin index); beam batch -> units
+        self.units: dict[int, list[tuple[int, int]]] = {p.index: [] for p in self.points}
+        self.beam_units: dict[int, list[list[int]]] = {p.index: [] for p in self.points}
         self.pending: deque = deque()
         self.rows: dict[int, dict] = {}
         self.workers: dict[int, _Worker] = {}
@@ -564,18 +589,19 @@ class _ScanRun:
         self.n_failed = 0
         self.last_error: dict[int, str] = {}
         self.deaths = 0
-        if not self.batched:
-            self.pending.extend((p.index, 0, 1) for p in self.points)
-            capacity = len(self.points)
-        elif self.precision is None:
-            for p in self.points:
-                self._plan_fixed(p.index)
-            capacity = sum(len(self.plan[p.index]) for p in self.points)
-        else:
-            for p in self.points:
-                self._schedule(p.index, initial_batches(self.precision))
-            per_point = math.ceil(self.precision.max_ions / self.precision.batch_ions)
-            capacity = per_point * len(self.points)
+        capacity = 0
+        for p in self.points:  # a point's units are planned in point order
+            index = p.index
+            if not self._batched(index):
+                self.pending.append((index, 0, 1))
+                capacity += 1
+            elif self.precision is None:
+                self._plan_fixed(index)
+                capacity += len(self.plan[index])
+            else:
+                self._schedule(index, initial_batches(self.precision))
+                per_point = math.ceil(self.precision.max_ions / self.precision.batch_ions)
+                capacity += per_point * (len(self.bins[index]) if self._binned(index) else 1)
         self.n_workers = min(workers, capacity)
         self.ctx = multiprocessing.get_context("spawn")
         self.results = self.ctx.Queue()
@@ -738,7 +764,7 @@ class _ScanRun:
 
     def _complete(self, worker, index, batch, attempt, seconds):
         """A unit's outputs are in its folder (run by ``worker``, or taken from the cache)."""
-        if not self.batched:
+        if not self._batched(index):
             self._finished(worker, index, attempt, seconds)
         else:
             self._batch_finished(worker, index, batch, attempt, seconds)
@@ -812,43 +838,139 @@ class _ScanRun:
 
     # -- units of work ----------------------------------------------------------------
 
+    def _batched(self, index) -> bool:
+        """A point runs as units of batches: a binned beam, a precision target, or batch_ions."""
+        return index in self.bins or self.precision is not None or self.batch_ions is not None
+
+    def _binned(self, index) -> bool:
+        """The units of this point are the bins of its beam (see :meth:`_add_beam`)."""
+        return index in self.bins
+
     def _plan_fixed(self, index):
-        """Plan all batches of a fixed-count point with ``batch_ions`` (their count is known,
-        so none is added later)."""
-        for batch, size in enumerate(
-            fixed_batch_sizes(self.points[index].spec.number_ions, self.batch_ions)
-        ):
+        """Plan all units of a fixed-count point (their count is known, so none is added
+        later): the batches of ``batch_ions``, or for a binned beam one beam batch per batch of
+        ions (a single beam batch without ``batch_ions``)."""
+        total = self.points[index].spec.number_ions
+        if self._binned(index):
+            size = total if self.batch_ions is None else self.batch_ions
+            for ions in fixed_batch_sizes(total, size):
+                self._add_beam(index, ions)
+            return
+        for batch, size in enumerate(fixed_batch_sizes(total, self.batch_ions)):
             self.plan[index].append(size)
             self.pending.append((index, batch, 1))
 
+    def _add_beam(self, index, size):
+        """Plan one beam batch of ``size`` ions of a binned point and queue its units.
+
+        The ions of the batch are split over the bins by Webster apportionment of the ions
+        planned so far (:func:`srim.beam.binned.beam_batch_allocation`): a bin with no ion gets
+        no unit. Each unit is one bin's run; ``plan`` holds the ions of every unit.
+        """
+        from ..beam.binned import beam_batch_allocation  # lazy: srim.beam imports srim.scan
+
+        beam = len(self.beam_units[index])
+        probabilities = [b.probability for b in self.bins[index]]
+        counts = beam_batch_allocation(probabilities, sum(self.plan[index]), size)
+        units = []
+        for k, ions in enumerate(int(n) for n in counts):
+            if ions > 0:
+                unit = len(self.plan[index])
+                self.plan[index].append(ions)
+                self.units[index].append((beam, k))
+                self.pending.append((index, unit, 1))
+                units.append(unit)
+        self.beam_units[index].append(units)
+
     def _schedule(self, index, count):
         """Plan up to ``count`` more batches of a precision point (never beyond
-        ``max_ions``) and queue them. Each batch has the ions the maximum still allows."""
+        ``max_ions``) and queue them. Each batch has the ions the maximum still allows.
+        A binned point gets whole beam batches (their units are queued with them)."""
         precision = self.precision
         for _ in range(count):
             planned = sum(self.plan[index])
             if planned >= precision.max_ions:
                 return
+            size = min(precision.batch_ions, precision.max_ions - planned)
+            if self._binned(index):
+                self._add_beam(index, size)
+                continue
             batch = len(self.plan[index])
-            self.plan[index].append(min(precision.batch_ions, precision.max_ions - planned))
+            self.plan[index].append(size)
             self.pending.append((index, batch, 1))
 
     def _unit_dir(self, index, batch):
-        if not self.batched:
+        if not self._batched(index):
             return self.dirs[index]
         return self.dirs[index] / "batches" / str(batch)
 
     def _unit_spec(self, index, batch):
-        if not self.batched:
+        if not self._batched(index):
             return self.specs[index]
         seed = derive_seed(self.seeds[index], batch)
         ions = self.plan[index][batch]
+        if self._binned(index):
+            from ..beam.binned import bin_spec  # lazy: srim.beam imports srim.scan
+
+            _beam, k = self.units[index][batch]
+            return bin_spec(self.points[index].spec, self.bins[index][k], ions, seed)
         return self.points[index].spec.with_overrides([f"number_ions={ions}", f"seed={seed}"])
 
     def _planned_ions(self, index):
-        if not self.batched:
+        if not self._batched(index):
             return self.points[index].spec.number_ions
         return sum(self.plan[index])
+
+    def _beam_units(self, index, beam) -> list[int]:
+        """The units of a beam batch (a plain batch of a point is its own beam)."""
+        if self._binned(index):
+            return self.beam_units[index][beam]
+        return [beam]
+
+    def _units_of(self, index, beams) -> list[int]:
+        return [unit for beam in beams for unit in self._beam_units(index, beam)]
+
+    def _beam_ions(self, index, beam) -> int:
+        return sum(self.plan[index][unit] for unit in self._beam_units(index, beam))
+
+    def _beam_done(self, index, beam) -> bool:
+        return all(unit in self.finished[index] for unit in self._beam_units(index, beam))
+
+    def _done_beams(self, index) -> list[int]:
+        """The beam batches whose units are all finished (for a plain batch, the finished
+        batches), in order."""
+        if not self._binned(index):
+            return sorted(self.finished[index])
+        return [b for b in range(len(self.beam_units[index])) if self._beam_done(index, b)]
+
+    def _done_units(self, index) -> list[int]:
+        """The units whose outputs are kept: those of the finished beam batches."""
+        return self._units_of(index, self._done_beams(index))
+
+    def _columns(self, index, unit):
+        """The per-ion columns of a binned unit (see :class:`srim.scan.BatchInfo`)."""
+        if not self._binned(index):
+            return None
+        beam, k = self.units[index][unit]
+        bin_ = self.bins[index][k]
+        return {
+            "beam_batch": beam,
+            "bin": k,
+            "bin_energy_keV": bin_.energy_keV,
+            "bin_angle_deg": bin_.angle_deg,
+        }
+
+    def _infos(self, index, units):
+        return [
+            BatchInfo(
+                unit,
+                derive_seed(self.seeds[index], unit),
+                self.plan[index][unit],
+                directory=str(self._unit_dir(index, unit)),
+                columns=self._columns(index, unit),
+            )
+            for unit in units
+        ]
 
     def _done_ions(self, index):
         """Ions of the finished batches of a precision point (0 for a fixed count)."""
@@ -856,9 +978,9 @@ class _ScanRun:
 
     def _row_seeds(self, index):
         """The seeds column: the point's seed, or the seeds of the finished batches."""
-        if not self.batched:
+        if not self._batched(index):
             return str(self.seeds[index])
-        done = sorted(self.finished[index])
+        done = self._done_units(index)
         return ",".join(str(derive_seed(self.seeds[index], b)) for b in done) or None
 
     # -- the result cache --------------------------------------------------------------
@@ -994,6 +1116,8 @@ class _ScanRun:
     def _batch_finished(self, worker, index, batch, attempt, seconds):
         """One batch of a precision point is done: extract its values, and when all the
         batches planned so far are done, take the decision for the point."""
+        if self._binned(index):
+            return self._unit_finished(worker, index, batch, attempt, seconds)
         point = self.points[index]
         size = self.plan[index][batch]
         try:
@@ -1017,11 +1141,37 @@ class _ScanRun:
             else:
                 self._decide(index, batch, attempt)
 
+    def _unit_finished(self, worker, index, unit, attempt, seconds):
+        """One unit of a binned point is done. When all units of its beam batch are done,
+        the beam batch's values are the extractors on those units merged. When all planned
+        units are done, the point is finished (fixed count) or decided (precision), on the
+        beam batches."""
+        beam = self.units[index][unit][0]
+        size = self.plan[index][unit]
+        self.finished[index][unit] = seconds
+        self._emit(PointProgress(index, self._done_ions(index), self._planned_ions(index)))
+        if worker is not None:
+            self._emit(WorkerStats(worker.ident, size / seconds if seconds > 0 else None))
+        if self._beam_done(index, beam):
+            try:
+                values = self._merged_values(index, self._beam_units(index, beam))
+            except Exception as exc:
+                summary = _summary(exc)
+                self._log_error(index, attempt, summary, traceback.format_exc())
+                self._give_up(index, attempt, summary, n_ions=self._done_ions(index) or None)
+                return
+            self.batch_values[(index, beam)] = values
+        if len(self.finished[index]) == len(self.plan[index]):
+            if self.precision is None:
+                self._finish_batched(index, attempt)
+            else:
+                self._decide(index, beam, attempt)
+
     def _finish_batched(self, index, attempt):
         """All batches of a fixed-count point are done: its values are the estimate of the
         merged batches, and the point is ``done`` (no batch is added)."""
         try:
-            values, errs = self._estimate(index, sorted(self.finished[index]))
+            values, errs = self._estimate(index, self._done_beams(index))
         except Exception as exc:
             summary = _summary(exc)
             self._log_error(index, attempt, summary, traceback.format_exc())
@@ -1035,8 +1185,9 @@ class _ScanRun:
         precision = self.precision
         point = self.points[index]
         ions = sum(self.plan[index])
+        beams = self._done_beams(index)
         try:
-            values, errs = self._estimate(index, sorted(self.finished[index]))
+            values, errs = self._estimate(index, beams)
             target = precision.target
             if target not in values:
                 raise SpecError(
@@ -1050,7 +1201,7 @@ class _ScanRun:
             self._log_error(index, attempt, summary, traceback.format_exc())
             self._give_up(index, attempt, summary, n_ions=ions)
             return
-        value, err = values[target], errs[target]
+        value, err = values[target], errs.get(target, math.nan)
         goal = goal_of(precision, value)
         self._emit(
             BatchFinished(
@@ -1074,14 +1225,48 @@ class _ScanRun:
             return
         if self.stopping:  # the point is stopped: its partial estimate is kept
             return
-        count = batches_to_add(precision, ions, err, goal, len(self.plan[index]))
+        count = batches_to_add(precision, ions, err, goal, len(beams))
         self._schedule(index, count)
+
+    def _record(self, index, beams):
+        """Record the finished beam batches of a batched point in its folder (see
+        :func:`srim.scan.batches.write_point_record`): the units, the point's spec with the
+        total ions and the point seed, and for a binned beam the bins with their ions."""
+        units = self._units_of(index, beams)
+        rows = []
+        for unit in units:
+            beam, k = self.units[index][unit] if self._binned(index) else (unit, None)
+            seed = derive_seed(self.seeds[index], unit)
+            rows.append((unit, beam, k, self.plan[index][unit], seed))
+        ions = sum(self.plan[index][unit] for unit in units)
+        spec = self.points[index].spec.with_overrides(
+            [f"number_ions={ions}", f"seed={self.seeds[index]}"]
+        )
+        beam_bins = None
+        if self._binned(index):
+            from ..beam.binned import bins_frame  # lazy: srim.beam imports srim.scan
+
+            counts = [0] * len(self.bins[index])
+            for unit in units:
+                counts[self.units[index][unit][1]] += self.plan[index][unit]
+            beam_bins = bins_frame(self.bins[index], counts)
+        try:
+            write_point_record(
+                self.dirs[index],
+                spec,
+                rows,
+                beam_bins,
+                provenance={"pysrim2_version": __version__},
+            )
+        except OSError as exc:
+            log.warning("scan point %d: its record could not be written (%s)", index, exc)
 
     def _finish_precision(self, index, status, values, errs):
         """A precision point is done (``done``, or ``max_ions``): its row and event."""
         point = self.points[index]
         ions = sum(self.plan[index])
         row_values = {**values, **{f"{name}_err": err for name, err in errs.items()}}
+        self._record(index, self._done_beams(index))
         self.rows[index] = {
             "index": index,
             "status": self._status(index, status),
@@ -1095,34 +1280,47 @@ class _ScanRun:
         seconds = sum(self.finished[index].values())
         self._emit(PointFinished(index, point.id, row_values, ions, seconds))
 
-    def _estimate(self, index, batches):
-        """Values and errors of a precision point from the given finished batches.
+    def _merged_values(self, index, units):
+        """The extractors' values on the given units merged (their ions in order)."""
+        point = self.points[index]
+        ions = sum(self.plan[index][unit] for unit in units)
+        spec = point.spec.with_overrides([f"number_ions={ions}"]).to_dict()
+        values = merged_values(
+            self.extract,
+            point,
+            [self._unit_dir(index, unit) for unit in units],
+            self._infos(index, units),
+            spec,
+            self.seeds[index],
+        )
+        self._check_names(values)
+        return values
 
-        The values are the extractors applied to the merged batches; each error is the
-        batch-means error of the batch values (:func:`~srim.scan.precision.batch_error`).
+    def _estimate(self, index, beams):
+        """Values and errors of a point from its finished beam batches (a plain batch is one).
+
+        The values are the extractors applied to the merged units of the beam batches; each
+        error is the batch-means error of the beam batches' values, weighted by their ions
+        (:func:`~srim.scan.precision.batch_error`). A binned point with a single beam batch
+        has no errors (there is nothing to take a spread of).
         """
         point = self.points[index]
-        batches = list(batches)
-        ions = sum(self.plan[index][b] for b in batches)
-        infos = [
-            BatchInfo(
-                b,
-                derive_seed(self.seeds[index], b),
-                self.plan[index][b],
-                directory=str(self._unit_dir(index, b)),
-            )
-            for b in batches
-        ]
+        beams = list(beams)
+        units = self._units_of(index, beams)
+        ions = sum(self.plan[index][unit] for unit in units)
         spec = point.spec.with_overrides([f"number_ions={ions}"]).to_dict()
         values, errs = estimate_batches(
             self.extract,
             point,
-            [self._unit_dir(index, b) for b in batches],
-            infos,
+            [self._unit_dir(index, unit) for unit in units],
+            self._infos(index, units),
             spec,
             self.seeds[index],
-            [self.batch_values[(index, b)] for b in batches],
+            [self.batch_values[(index, beam)] for beam in beams],
+            weights=[self._beam_ions(index, beam) for beam in beams],
         )
+        if self._binned(index) and len(beams) < 2:
+            errs = {}
         self._check_names(values)
         return values, errs
 
@@ -1165,7 +1363,7 @@ class _ScanRun:
             if index in self.rows:
                 continue
             error = self.last_error.get(index)
-            done = sorted(self.finished[index])
+            done = self._done_beams(index)
             if done:
                 self.rows[index] = self._partial_row(index, done, error)
             else:
@@ -1181,14 +1379,17 @@ class _ScanRun:
             self._emit(PointStopped(index, point.id, error))
 
     def _partial_row(self, index, done, error):
-        """The row of a precision point stopped with some finished batches."""
+        """The row of a precision point stopped with some finished batches (``done``: its
+        finished beam batches)."""
         try:
             values, errs = self._estimate(index, done)
         except Exception as exc:
             log.warning("scan point %d: no partial estimate (%s)", index, _summary(exc))
             values, errs = {}, {}
-        self._clear_outputs(index, keep_log=error is not None, keep_batches=done)
-        ions = sum(self.plan[index][b] for b in done)
+        units = self._units_of(index, done)
+        self._clear_outputs(index, keep_log=error is not None, keep_batches=units)
+        self._record(index, done)
+        ions = sum(self._beam_ions(index, beam) for beam in done)
         return {
             "index": index,
             "status": "stopped",
@@ -1289,13 +1490,9 @@ def fixed_batch_sizes(total: int, batch_ions: int) -> list[int]:
     return [min(batch_ions, total - i * batch_ions) for i in range(math.ceil(total / batch_ions))]
 
 
-def estimate_batches(extract, point, directories, infos, spec, base_seed, batch_values):
-    """Values and errors of a point from its batches (the batch-means estimator of
-    :mod:`srim.scan.precision`).
-
-    ``extract`` is applied to the batches merged (:class:`~srim.scan.MergedResults`, built
-    from ``directories`` and ``infos``, the :class:`BatchInfo` of each batch, in order);
-    each error is the batch-means error of ``batch_values``, the values of each batch alone.
+def merged_values(extract, point, directories, infos, spec, base_seed):
+    """The values of ``extract`` on the batches merged (:class:`~srim.scan.MergedResults`,
+    built from ``directories`` and ``infos``, the :class:`BatchInfo` of each batch, in order).
     """
     parts, merged = [], None
     try:
@@ -1309,7 +1506,22 @@ def estimate_batches(extract, point, directories, infos, spec, base_seed, batch_
         else:
             for part in parts:
                 part.close()
-    weights = [info.n_ions for info in infos]
+    return values
+
+
+def estimate_batches(
+    extract, point, directories, infos, spec, base_seed, batch_values, weights=None
+):
+    """Values and errors of a point from its batches (the batch-means estimator of
+    :mod:`srim.scan.precision`).
+
+    ``extract`` is applied to the batches merged (see :func:`merged_values`); each error is
+    the batch-means error of ``batch_values``, the values of each batch alone, weighted by
+    ``weights`` (default: the ions of each of ``infos``).
+    """
+    values = merged_values(extract, point, directories, infos, spec, base_seed)
+    if weights is None:
+        weights = [info.n_ions for info in infos]
     errs = {}
     for name, value in values.items():
         if _is_number(value):

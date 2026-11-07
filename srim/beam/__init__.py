@@ -1,5 +1,6 @@
 """Beam distributions: probability shapes for the beam parameters of a run."""
 
+from .run import open_results
 from .shapes import (
     GRID_POINTS,
     Fixed,
@@ -37,5 +38,6 @@ __all__ = [
     "check_beam",
     "effective",
     "fingerprint",
+    "open_results",
     "shape_from_dict",
 ]
