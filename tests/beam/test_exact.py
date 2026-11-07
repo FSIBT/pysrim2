@@ -273,3 +273,33 @@ def test_copy_output_files_onto_the_same_folder_keeps_the_beam(tmp_path):
     (folder / "beam" / "abc-h.txt").write_text("1 1\n")
     TRIM.copy_output_files(str(folder), str(folder))
     assert (folder / "beam" / "abc-h.txt").is_file()
+
+
+def test_in_place_runs_keep_files_pysrim2_did_not_write(fake_srim, tmp_path):
+    own = b"a user's own TRIM.DAT\r\n"
+    (fake_srim / "TRIM.DAT").write_bytes(own)
+    (fake_srim / "beam").mkdir()
+    (fake_srim / "beam" / "notes.txt").write_text("not a histogram copy\n")
+    (fake_srim / "beam" / "0123abcd-h.txt").write_text("19.0 1\n")  # a copy pysrim2 made
+    TRIM.from_spec(RunSpec.from_dict(base())).run(srim_directory=str(fake_srim))
+    assert (fake_srim / "TRIM.DAT").read_bytes() == own
+    assert (fake_srim / "beam" / "notes.txt").is_file()
+    assert not (fake_srim / "beam" / "0123abcd-h.txt").exists()
+
+
+def test_in_place_exact_run_refuses_to_overwrite_a_foreign_trim_dat(fake_srim):
+    own = b"a user's own TRIM.DAT\r\n"
+    (fake_srim / "TRIM.DAT").write_bytes(own)
+    with pytest.raises(FileExistsError, match="not written by pysrim2"):
+        TRIM.from_spec(RunSpec.from_dict(distributed())).run(srim_directory=str(fake_srim))
+    assert (fake_srim / "TRIM.DAT").read_bytes() == own
+
+
+def test_in_place_runs_replace_and_remove_their_own_trim_dat(fake_srim, tmp_path):
+    TRIM.from_spec(RunSpec.from_dict(distributed())).run(srim_directory=str(fake_srim))
+    first = (fake_srim / "TRIM.DAT").read_bytes()
+    spec = RunSpec.from_dict({**distributed(), "seed": 7})
+    TRIM.from_spec(spec).run(srim_directory=str(fake_srim))  # ours: replaced, not refused
+    assert (fake_srim / "TRIM.DAT").read_bytes() != first
+    TRIM.from_spec(RunSpec.from_dict(base())).run(srim_directory=str(fake_srim))
+    assert not (fake_srim / "TRIM.DAT").exists()

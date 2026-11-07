@@ -47,6 +47,9 @@ COLUMNS = (
 #: direction cosines of a written ion must satisfy |1 - sum of squares| below this
 _NORMALISATION_TOLERANCE = 1e-6
 
+#: the start of the first line of every TRIM.DAT written here (how pysrim2 knows its own file)
+TRIM_DAT_MARKER = "pysrim2 exact beam:"
+
 _COLUMN_HEADERS = (
     "Name  Z  Energy_eV  X_depth_A  Y_A  Z_A  cosX  cosY  cosZ",
     "(one ion per line; the file ends with 0x1A)",
@@ -150,7 +153,7 @@ def write_trim_dat(ions: pd.DataFrame, path, *, atomic_number: int, description:
         raise ValueError("the description of a TRIM.DAT file must be one line")
 
     header = [
-        "pysrim2 exact beam: TRIM.DAT sampled from the run spec",
+        f"{TRIM_DAT_MARKER} TRIM.DAT sampled from the run spec",
         "Written by pysrim2; do not edit by hand.",
         f"Seed: {seed}",
         f"Ions: {n}",

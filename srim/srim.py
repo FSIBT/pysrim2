@@ -19,6 +19,7 @@ from datetime import UTC, datetime
 from . import _xvfb
 from ._lock import FileLock
 from .beam.exact import (
+    TRIM_DAT_MARKER,
     max_energy_eV,
     sample_ions,
     trim_in_energy_keV,
@@ -322,22 +323,52 @@ class SRIMRunError(RuntimeError):
     """SRIM exited without writing its main output file."""
 
 
+#: the name of a histogram copy in a run's ``beam`` folder (see :func:`_with_beam_files`)
+_BEAM_COPY = re.compile(r"[0-9a-f]{8}-.+")
+
+
+def _written_by_pysrim2(path):
+    """True if ``path`` is a TRIM.DAT file that pysrim2 wrote."""
+    try:
+        with open(path, "rb") as f:
+            marker = TRIM_DAT_MARKER.encode("ascii")
+            return f.read(len(marker)) == marker
+    except OSError:
+        return False
+
+
 def _remove_stale(directory, names, subdirectory=None):
-    """Delete output files of an earlier run so a crash cannot return old results."""
+    """Delete output files of an earlier run so a crash cannot return old results.
+
+    A TRIM.DAT is only deleted when pysrim2 wrote it: SRIM ships an example TRIM.dat, and a
+    user's own file in a SRIM folder must survive an in-place run.
+    """
     for name in names:
         paths = [os.path.join(directory, name)]
         if subdirectory:
             paths.append(os.path.join(directory, subdirectory, name))
         for path in paths:
-            if os.path.isfile(path):
-                os.remove(path)
+            if not os.path.isfile(path):
+                continue
+            if name == "TRIM.DAT" and not _written_by_pysrim2(path):
+                continue
+            os.remove(path)
 
 
 def _remove_beam(directory):
-    """Delete the histogram copies of an earlier distributed run."""
+    """Delete the histogram copies of an earlier distributed run.
+
+    Only the copies pysrim2 made (``<8 hex digits>-<name>``) are deleted, and the folder only
+    when that leaves it empty; anything else in a ``beam`` folder is kept.
+    """
     path = os.path.join(directory, BEAM_FOLDER)
-    if os.path.isdir(path):
-        shutil.rmtree(path)
+    if not os.path.isdir(path):
+        return
+    for entry in os.scandir(path):
+        if entry.is_file(follow_symlinks=False) and _BEAM_COPY.fullmatch(entry.name):
+            os.remove(entry.path)
+    with contextlib.suppress(OSError):
+        os.rmdir(path)  # fails, and is kept, when something else is in it
 
 
 def _copy_beam(src_directory, dest_directory):
@@ -847,7 +878,7 @@ class TRIM:
         """
 
         def execute(directory, prefix):
-            return self._execute(directory, prefix, write_spec)
+            return self._execute(directory, prefix, write_spec, in_place=srim_directory is not None)
 
         def collect(where, destination):
             _copy_outputs(where, destination, TRIM_OUTPUT_FILES + ("run.yaml",), "SRIM Outputs")
@@ -871,12 +902,24 @@ class TRIM:
             finish,
         )
 
-    def _execute(self, srim_directory, prefix, write_spec):
-        """Write the inputs, run ``TRIM.exe`` in ``srim_directory`` and return the spec."""
+    def _execute(self, srim_directory, prefix, write_spec, in_place=False):
+        """Write the inputs, run ``TRIM.exe`` in ``srim_directory`` and return the spec.
+
+        ``in_place`` is True for a run in the user's own SRIM folder (``srim_directory=``):
+        an exact run there is refused when a TRIM.DAT that pysrim2 did not write is in the way.
+        """
         srim_directory = os.path.abspath(srim_directory)
         # The process's working directory is never changed (runs may happen in threads).
         _remove_stale(srim_directory, TRIM_OUTPUT_FILES + ("run.yaml",), "SRIM Outputs")
         _remove_beam(srim_directory)
+        trim_dat = os.path.join(srim_directory, "TRIM.DAT")
+        if in_place and self.beam is not None and os.path.isfile(trim_dat):
+            # not ours (_remove_stale deleted ours); on Windows and macOS this is also SRIM's
+            # own example TRIM.dat, since file names there ignore case
+            raise FileExistsError(
+                f"{trim_dat} was not written by pysrim2 and an exact run would overwrite it: "
+                "omit srim_directory= to run in an isolated copy (the default), or move the file"
+            )
         self._write_input_files(srim_directory)
         started = datetime.now(UTC)
         # Make sure compatible with Windows, OSX, and Linux

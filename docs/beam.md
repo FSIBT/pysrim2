@@ -427,8 +427,12 @@ their energy, start position and direction) and runs SRIM on that file:
 - More than 99 999 ions do not fit one `TRIM.DAT` file. `run_beam` splits the beam into
   units of 99 999 ions and merges them. `TRIM.from_spec(spec).run()` refuses such a spec, so
   use `run_beam`.
-- Limitation: `settings.description` must be ASCII. `TRIM.DAT` is written as ASCII, and a
-  run with another character fails.
+- `settings.description` must be ASCII: it goes into `TRIM.DAT`, which SRIM reads as
+  ASCII. A spec with another character is refused when it is read.
+- An in-place run (`srim_directory=`) only deletes the `TRIM.DAT` and the `beam/` copies
+  that pysrim2 wrote. An exact run there is refused if a `TRIM.DAT` that pysrim2 did not
+  write is in the way (on Windows and macOS that includes SRIM's own example `TRIM.dat`);
+  run in an isolated copy (the default) instead.
 
 ## Plotting
 
