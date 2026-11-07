@@ -85,9 +85,7 @@ def test_trim_dat_bytes(tmp_path):
     spec = RunSpec.from_dict(distributed(angle_deg={"uniform": {"low": 0.0, "high": 10.0}}))
     ions = sample_ions(spec)
     path = tmp_path / "TRIM.DAT"
-    max_eV = write_trim_dat(
-        ions, path, atomic_number=5, description="beam test", seed=spec.seed
-    )
+    max_eV = write_trim_dat(ions, path, atomic_number=5, description="beam test", seed=spec.seed)
     raw = path.read_bytes()
     assert raw.endswith(b"\x1a")
     assert b"\n" not in raw.replace(b"\r\n", b"")  # CRLF only
