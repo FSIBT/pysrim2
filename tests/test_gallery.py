@@ -76,6 +76,9 @@ def test_list_reports_a_broken_entry_and_exits_1(monkeypatch, capsys):
 
 @pytest.mark.parametrize("name", NO_SRIM_NAMES)
 def test_entries_without_srim_run(name, tmp_path, capsys):
+    if name.startswith("tui_"):  # the live-view pictures need the tui extra
+        pytest.importorskip("textual")
+        pytest.importorskip("textual_plotext")
     assert make.main(["--out", str(tmp_path), name]) == 0
     output = tmp_path / make.load(name).OUTPUT
     assert output.is_file() and output.stat().st_size > 0
