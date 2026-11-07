@@ -13,7 +13,9 @@ unchanged. Source: SRIM docs `SRIMHelp/helpTR18.rtf`, `SRIM Tools/TRIMdat HELP.r
 ## File: TRIM.DAT in the SRIM root (same dir as TRIM.exe, i.e. the run dir copy)
 - 10 comment lines. Line 8 is copied into all TRIM output files as the run description.
   Lines 9-10 are the column headers (still comments).
-- Then one line per ion, fields separated by spaces or commas:
+- Then one line per ion, fields separated by spaces or commas. The name is exactly 5 characters:
+  SRIM reads the first 5 characters of the line as the name (found in 0.10.0: `I001 5 ...` with one
+  space ran into the Z field and TRIM stopped with a division-by-zero dialog).
   `Name(5 chars)  Z  Energy_eV  X_depth_A  Y_A  Z_A  cosX  cosY  cosZ`
   e.g. `I001   5   40000   0   0   0   0.5  0.866025  0.0`
 - Any numeric style OK (1.31E4, .123, -.0). cosX > 0 = into target, X is depth (Ang, must be > 0
@@ -61,6 +63,6 @@ A 20-ion pre-run showed the same behaviour. Raw outputs: out/, out2/ (RANGE_3D.t
 ## Recommendation
 Implement `Source`/incident distribution sampling in pysrim2 by writing TRIM.DAT into the run dir
 and setting calculation 4/5 (reject 1-3). Writer: CRLF, 10 header lines, row per ion
-(`f"I{n%1000:03d}"` style name), terminate with `\x1a`, set TRIM.IN energy = max(E)/1000 keV,
+(a 5-character name such as `f"I{n%10000:04d}"`), terminate with `\x1a`, set TRIM.IN energy = max(E)/1000 keV,
 number_ions = N, assert normalised cosines and X < layer stack depth, single Z. Add a
 direction-normalisation check and a test using the depth-vs-energy ordering above.

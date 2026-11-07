@@ -40,7 +40,7 @@ def beam_spec(*, energy=20.0, angle=7.0, thickness_nm=TARGET_NM, number_ions, se
 
 
 def stopped_depths_nm(range3d_df, thickness_nm):
-    """Final depths (nm) of the ions that stopped inside the layer, and their count."""
+    """Final depths (nm) of the ions that stopped inside the layer."""
     depth = range3d_df["depth_A"].to_numpy() / 10.0
     return depth[(depth > 0) & (depth < thickness_nm)]
 
