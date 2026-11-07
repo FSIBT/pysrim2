@@ -300,6 +300,12 @@ def check_beam(spec, prefix: str = "") -> None:
             raise SpecError(f"{key} must lie inside the target, [0, {total}) nm; got {described}")
 
     if mode == "exact":
+        description = spec.settings.get("description", "")
+        if isinstance(description, str) and not description.isascii():
+            raise SpecError(
+                f"{prefix}settings.description must be ASCII in exact mode (it is written to "
+                f"TRIM.DAT, which SRIM reads as ASCII), got {description!r}"
+            )
         if spec.calculation not in (1, 2):
             raise SpecError(
                 f"{prefix}calculation {spec.calculation} cannot be used with a distributed "

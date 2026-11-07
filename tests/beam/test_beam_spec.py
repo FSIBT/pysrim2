@@ -546,3 +546,12 @@ def test_sigma_zero_on_calculation_3_binned_spec_prunes():
     data["calculation"] = 3
     spec = RunSpec.from_dict(data).with_overrides(["ion.energy_keV.gaussian.sigma=0"])
     assert not spec.is_distributed and spec.beam is None
+
+
+def test_exact_spec_with_a_non_ascii_description_is_refused():
+    data = distributed()
+    data["settings"]["description"] = "B in Au, 20 keV ± 1 keV"
+    with pytest.raises(SpecError, match="settings.description must be ASCII"):
+        RunSpec.from_dict(data)
+    data["ion"]["energy_keV"] = 20.0  # a plain spec keeps its description as it is
+    assert RunSpec.from_dict(data).settings["description"].endswith("± 1 keV")
