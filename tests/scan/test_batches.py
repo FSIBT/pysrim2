@@ -232,3 +232,32 @@ def test_process_pool_with_picklable_runner(tmp_path):
     assert len(merged.range3d.df) > 0
     assert merged.ioniz.metadata["num_ions"] == 20
     merged.close()
+
+
+def test_bin_columns_follow_the_batch_column_in_per_ion_tables():
+    from srim.scan.batches import BatchInfo, MergedResults
+
+    columns = {"beam_batch": 0, "bin": 1, "bin_energy_keV": 12.5, "bin_angle_deg": 7.0}
+    parts = [FakeResults(SPEC, 1.0), FakeResults(SPEC, 1.0)]
+    infos = [
+        BatchInfo(0, 1, 10, columns=columns),
+        BatchInfo(1, 2, 10, columns={**columns, "bin": 2, "bin_energy_keV": 17.0}),
+    ]
+    beam_bins = pd.DataFrame({"bin": [0, 1, 2]})
+    merged = MergedResults(parts, infos, spec=SPEC.to_dict(), base_seed=1, beam_bins=beam_bins)
+    df = merged.range3d.df
+    assert list(df.columns)[:6] == [
+        "ion",
+        "batch",
+        "beam_batch",
+        "bin",
+        "bin_energy_keV",
+        "bin_angle_deg",
+    ]
+    assert set(df["bin"]) == {1, 2}
+    assert df["bin_energy_keV"].iloc[-1] == 17.0
+    assert merged.beam_bins is beam_bins
+
+    plain = MergedResults([FakeResults(SPEC, 1.0)], [BatchInfo(0, 1, 10)], spec=SPEC.to_dict())
+    assert list(plain.range3d.df.columns)[:3] == ["ion", "batch", "depth_A"]
+    assert plain.beam_bins is None

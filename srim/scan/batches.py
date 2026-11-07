@@ -50,13 +50,17 @@ def derive_seed(base_seed, batch_index):
 @dataclass
 class BatchInfo:
     """One batch: its ``index``, ``seed``, number of ions and ``summary``
-    (:func:`srim.analysis.implant_summary` of its ``RANGE_3D.txt``; ``None`` without)."""
+    (:func:`srim.analysis.implant_summary` of its ``RANGE_3D.txt``; ``None`` without).
+
+    ``columns`` are extra columns of the merged per-ion tables, put right after ``batch`` in
+    the order given (a binned beam's unit has its beam batch, bin and bin value)."""
 
     index: int
     seed: int
     n_ions: int
     summary: dict | None = None
     directory: str | None = field(default=None, repr=False)
+    columns: dict | None = field(default=None, repr=False)
 
 
 def _check_same_bins(frames, name):
@@ -107,6 +111,8 @@ class _MergedTable:
             frame = frame.copy()
             frame["ion"] = frame["ion"] + offset
             frame.insert(1, "batch", info.index)
+            for position, (name, value) in enumerate((info.columns or {}).items(), start=2):
+                frame.insert(position, name, value)
             offset += info.n_ions
             out.append(frame)
         return pd.concat(out, ignore_index=True)
@@ -142,6 +148,7 @@ class _MergedCollision:
                 event = dict(event)
                 event["ion"] += offset
                 event["batch"] = info.index
+                event.update(info.columns or {})
                 yield event
             offset += info.n_ions
 
@@ -175,11 +182,22 @@ class MergedResults:
     release the underlying results (and delete their run directories).
     """
 
-    def __init__(self, parts, batches, spec=None, base_seed=None, keep_per_ion=True, tmpdir=None):
+    def __init__(
+        self,
+        parts,
+        batches,
+        spec=None,
+        base_seed=None,
+        keep_per_ion=True,
+        tmpdir=None,
+        beam_bins=None,
+    ):
         self._parts = list(parts)
         self.batches = list(batches)
         self.spec = spec
         self.base_seed = base_seed
+        #: the bins of a binned beam (:func:`srim.beam.binned.bins_frame`), None otherwise
+        self.beam_bins = beam_bins
         self._tmpdir = tmpdir
         self._tables = {}
         for name in _PROFILES + _PER_ION:
