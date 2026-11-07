@@ -32,7 +32,7 @@ def make(outdir):
     fig, ax = plt.subplots(figsize=(6, 4), dpi=100)
     with tempfile.TemporaryDirectory() as tmp:
         with run_beam(spec, output_dir=Path(tmp) / "exact") as results:
-            plot_beam(results, "energy_keV", ax=ax)
+            plot_beam(results, "energy_keV", ax=ax, bins=25)
     ax.set_xlabel("ion energy (keV)")
     ax.set_ylabel("probability density (1/keV)")
     ax.set_title("B at 20 keV into 1000 nm of Si")

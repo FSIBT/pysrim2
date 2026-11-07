@@ -1,7 +1,8 @@
 """Mean depth of B ions in Si against the energy, one line per angle: a parameter scan.
 
-The scan is the one of ``examples/scripts/angle_energy_scan.py`` (four points on two worker
-processes, a quick Kinchin-Pease run each). Needs SRIM.
+The base run and the seed are those of ``examples/scripts/angle_energy_scan.py``; this entry
+scans more energies (10 to 50 keV) at two angles (0 and 45 degrees), ten points on two worker
+processes, a quick Kinchin-Pease run each. Needs SRIM.
 """
 
 import importlib.util
@@ -10,7 +11,7 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 
-from srim.scan import run_scan
+from srim.scan import Scan, run_scan
 
 TITLE = "A parameter scan: mean depth against energy, one line per angle"
 NEEDS_SRIM = True
@@ -28,11 +29,21 @@ def _example(name):
 
 
 def make(outdir):
-    scan = _example("angle_energy_scan").make_scan()
+    example = _example("angle_energy_scan")
+    scan = Scan(
+        example.base_spec(),
+        grid={"ion.energy_keV": [10.0, 20.0, 30.0, 40.0, 50.0], "ion.angle_deg": [0.0, 45.0]},
+        extract=["implant_summary"],
+        ions=example.IONS,
+        seed=example.SEED,
+    )
     fig, ax = plt.subplots(figsize=(6, 4), dpi=100)
     with tempfile.TemporaryDirectory() as tmp:
         result = run_scan(scan, workers=2, scan_dir=Path(tmp) / "scan")
         result.plot(x="ion.energy_keV", y="mean_depth_A", ax=ax)
+    handles, labels = ax.get_legend_handles_labels()
+    angles = [f"{float(label.split('=')[1]):g}°" for label in labels]
+    ax.legend(handles, angles, title="angle")
     ax.set_xlabel("ion energy (keV)")
     ax.set_ylabel("mean depth (Å)")
     ax.set_title("B into 1000 nm of Si")
