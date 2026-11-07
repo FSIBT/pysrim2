@@ -96,6 +96,8 @@ def test_trim_dat_bytes(tmp_path):
     assert b"Ions: %d" % len(ions) in lines[3]
     for line in lines[10:]:
         assert len(line.split()) == 9  # name, Z, energy, x, y, z, cosX, cosY, cosZ
+        # SRIM reads the first 5 characters as the name: they must not run into the Z
+        assert len(line.split()[0]) == 5 and line[5:7] == b"  "
         assert line.split()[1] == b"5"
     assert max_eV == max(float(line.split()[2]) for line in lines[10:])
 

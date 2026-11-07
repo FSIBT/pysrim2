@@ -8,9 +8,11 @@ reads such a file back.
 
 Layout of a TRIM.DAT data line (SRIM reads the fields in this order)::
 
-    I001 5 20000 0 0 0 0.5000000 0.8660254 0.0000000
+    I0001  5  20000  0  0  0  0.5000000  0.8660254  0.0000000
 
-The name, the ion's Z, the energy (eV), the start position x (depth, Angstrom), y and z
+The name (exactly 5 characters: SRIM reads the first 5 characters of the line as the name,
+so a shorter name followed by a single space makes TRIM fail with a division-by-zero
+dialog), the ion's Z, the energy (eV), the start position x (depth, Angstrom), y and z
 (Angstrom) and the direction cosines (cos x along the depth axis, cos y, cos z).
 """
 
@@ -112,8 +114,8 @@ def trim_in_energy_keV(max_eV: float) -> float:
 
 def _line(ion, atomic_number, energy, x, y, z, cos_x, cos_y, cos_z) -> str:
     return (
-        f"I{int(ion) % 1000:03d} {atomic_number} {energy:.7g} {x:.7g} {y:.7g} {z:.7g} "
-        f"{cos_x:.7f} {cos_y:.7f} {cos_z:.7f}"
+        f"I{int(ion) % 10000:04d}  {atomic_number}  {energy:.7g}  {x:.7g}  {y:.7g}  {z:.7g}  "
+        f"{cos_x:.7f}  {cos_y:.7f}  {cos_z:.7f}"
     )
 
 
