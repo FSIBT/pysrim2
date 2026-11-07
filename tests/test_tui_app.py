@@ -349,6 +349,30 @@ def test_a_finished_point_updates_its_table_cells_in_place(tmp_path):
     run(scenario())
 
 
+def test_a_tick_before_the_dashboard_has_mounted_draws_nothing(tmp_path, monkeypatch):
+    # the refresh timer can fire while the dashboard's children exist but its on_mount (which
+    # adds the workers columns) has not run yet; such a tick must wait for the next one
+    scan = scan_of()
+    app, events, _, _ = make_app(scan, tmp_path, view="dashboard")
+    feed_start(events, scan, tmp_path)
+    events.put(PointStarted(0, scan.points()[0].id, 0, 1))  # a worker row to draw
+    mount = DashboardScreen.on_mount
+
+    def tick_first(screen):
+        screen.app.tick()
+        mount(screen)
+
+    monkeypatch.setattr(DashboardScreen, "on_mount", tick_first)
+
+    async def scenario():
+        async with app.run_test() as pilot:
+            await until(lambda: app.screen.query_one("#workers").row_count == 1)
+            events.put(None)
+            await pilot.pause()
+
+    run(scenario())
+
+
 def finish(events, scan, stopped=False):
     events.put(ScanFinished(n_done=3, n_failed=0, seconds=1.0, stopped=stopped))
     events.put(None)

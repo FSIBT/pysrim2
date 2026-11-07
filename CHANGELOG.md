@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The scan dashboard (`--ui dashboard`) no longer crashes with "More values provided than there are columns" when it is redrawn before it has finished opening.
+
 ## [0.11.0] - 2026-11-07
 
 ### Added

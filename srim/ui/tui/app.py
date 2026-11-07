@@ -109,7 +109,8 @@ class ScanApp(App):
             return
         if not self.screen_stack:  # starting up or shutting down: nothing to draw yet
             return
-        if isinstance(self.screen, PlotScreen | DashboardScreen):
+        # a screen whose on_mount has not run yet (its tables have no columns) waits a tick
+        if isinstance(self.screen, PlotScreen | DashboardScreen) and self.screen.is_mounted:
             self.screen.update_from(self)
 
     def scan_over(self) -> bool:
