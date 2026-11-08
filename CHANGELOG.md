@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `pysrim2 install app` installs the desktop app: the new `app` extra (PySide6 and matplotlib) goes into the running pysrim2 (`uv tool`, pip or a source checkout, which is told the command). The library and the command line still never import Qt.
-- `pysrim2 app` opens the desktop window: a welcome screen and a guided setup (it opens by itself the first time a check finds something missing, and Setup > Run setup… reopens it) that chooses native, wine or container (the recommended one is preselected), installs what is missing and checks the result. The app never runs a command that needs admin rights; it shows those for you to run in a terminal and then press Check again.
+- `pysrim2 app` opens the desktop window: a welcome screen and a guided setup (it opens by itself on the first check if no route is chosen yet or a check is not ready, and Setup > Run setup… reopens it) that chooses native, wine (Linux only) or container (the recommended one is preselected; macOS offers only the container), installs what is missing and checks the result. The app never runs a command that needs admin rights; it shows those for you to run in a terminal and then press Check again.
 - The app's status bar says what to do next, with a click through to the setup, and View > Theme switches between the system, light and dark colours.
 
 ### Fixed

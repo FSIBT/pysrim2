@@ -10,9 +10,7 @@ they work without it.
 
 ## Install
 
-The app needs the `app` extra (PySide6, the Qt bindings, and matplotlib). PySide6 is about
-100 MB, so it is an extra rather than part of the default install, and the container image
-stays small. Install it into the pysrim2 you already use:
+The app needs the `app` extra (PySide6, the Qt bindings, and matplotlib). PySide6 is a download of over 100 MB (about 340 MB installed), so it is an extra rather than part of the default install, and the container image stays small. Install it into the pysrim2 you already use:
 
 ```shell
 pysrim2 install app
@@ -42,8 +40,10 @@ If the app is not installed, the command says so and asks you to run `pysrim2 in
 
 ## Setup
 
-The setup opens by itself the first time the checks find something missing after the app
-starts. You can reopen it at any time from the **Setup** menu (**Run setup…**), or by
+The setup opens by itself on the first check if no route is chosen yet or a check is not
+ready. A route saved on another machine, or one this platform does not offer, counts as no
+route until you choose one; the settings file keeps it until the wizard finishes. You can
+reopen it at any time from the **Setup** menu (**Run setup…**), or by
 clicking the setup link in the status bar.
 
 The setup has four pages: **Welcome to pysrim2**, **Choose how SRIM runs**, **Install what
@@ -58,7 +58,8 @@ SRIM runs in one of three routes:
 | Container (Podman or Docker) | Runs SRIM inside the pysrim2 container image | Every platform |
 
 The route that is recommended on your machine is marked "(recommended)" and selected
-first. A route you chose before is preselected instead.
+first. A route you chose before is preselected instead. On macOS only the container route is
+offered, with a note that native SRIM is not supported there.
 
 On the install page each step is listed as installed, to install, or needs admin rights.
 **Install** runs the steps that need no administrator rights. **Check again** plans the

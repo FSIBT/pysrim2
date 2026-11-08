@@ -98,8 +98,8 @@ Desktop app
 -----------
 
 The optional desktop app (``pysrim2 app``) guides the SRIM setup in a window. It
-needs the ``app`` extra (PySide6 and matplotlib, about 100 MB, so it is not part of the
-default install). Install it into the pysrim2 you already use with
+needs the ``app`` extra (PySide6 and matplotlib; PySide6 alone is a download of over 100 MB,
+so the app is not part of the default install). Install it into the pysrim2 you already use with
 ``pysrim2 install app``, which needs no administrator rights, then start it with
 ``pysrim2 app``. See :doc:`app` for the setup, the status bar and the settings.
 
