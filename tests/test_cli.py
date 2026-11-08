@@ -401,3 +401,44 @@ def test_doctor_linux_podman_without_wine_passes(monkeypatch, tmp_path, capsys):
     assert checks["wine"]["detail"] == "not needed (container route)"
     assert checks["wine-prefix"]["ok"]
     assert checks["container-runtime"]["ok"]
+
+
+def _route_checks(monkeypatch, tmp_path, system, route, status=None, runtime=None):
+    monkeypatch.setenv("PYSRIM2_SRIM_DIR", str(tmp_path / "srim"))
+    monkeypatch.setattr(steps, "current_platform", lambda: system)
+    status = status or WineStatus(None, None, None, None, None, False)
+    monkeypatch.setattr(cli, "wine_status", lambda: status)
+    monkeypatch.setattr(cli.container, "find_runtime", lambda: runtime)
+    monkeypatch.setattr(cli.container, "image_present", lambda rt, tag: True)
+    return {c["name"]: c for c in cli.collect_checks(route)}
+
+
+def test_doctor_container_route_on_linux_with_wine(monkeypatch, tmp_path):
+    wine = WineStatus("/usr/bin/wine", "/usr/bin/xvfb-run", "7z", "wt", "curl", True)
+    checks = _route_checks(monkeypatch, tmp_path, "linux", "container", wine, "podman")
+    assert checks["srim-dir"]["detail"] == "not needed (container route)"
+    assert checks["wine"]["detail"] == "not needed (container route)"
+    assert checks["wine-prefix"]["ok"]
+    assert checks["container-runtime"]["ok"]
+    assert checks["image"]["ok"]
+
+
+def test_doctor_wine_route_on_macos_checks_wine(monkeypatch, tmp_path):
+    wine = WineStatus(None, None, None, None, None, False)
+    checks = _route_checks(monkeypatch, tmp_path, "macos", "wine", wine)
+    assert not checks["wine"]["ok"]
+    assert not checks["srim-dir"]["ok"]
+    assert "image" not in checks
+
+
+def test_doctor_native_route_on_windows_checks_vb5_only(monkeypatch, tmp_path):
+    monkeypatch.setattr(cli, "vb5_ready", lambda directory: False)
+    checks = _route_checks(monkeypatch, tmp_path, "windows", "native")
+    assert not checks["vb5"]["ok"]
+    assert "wine" not in checks
+    assert "container-runtime" not in checks
+
+
+def test_doctor_unknown_route_is_an_error(monkeypatch, tmp_path):
+    with pytest.raises(ValueError):
+        _route_checks(monkeypatch, tmp_path, "linux", "vm")

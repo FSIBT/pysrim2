@@ -30,6 +30,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import srim
+from srim.app.routes import ROUTES
 from srim.installer import app as app_install
 from srim.installer import container, skill
 from srim.installer import steps as steps_module
@@ -1082,7 +1083,56 @@ def _container_checks() -> list[dict]:
     ]
 
 
-def collect_checks() -> list[dict]:
+_SRIM_CHECKS = ("srim-dir", "trim-exe", "srim-legal-notice")
+_WINE_CHECKS = ("wine", "xvfb-run", "extractor", "downloader", "wine-prefix")
+_SKIP = "not needed (container route)"
+
+
+def _srim_checks(directory: Path) -> list[dict]:
+    trim = directory / "TRIM.exe"
+    legal = next(
+        (p for p in (directory / "Data" / "LEGAL.rtf", directory / "LEGAL.rtf") if p.is_file()),
+        None,
+    )
+    return [
+        _check("srim-dir", directory.is_dir(), str(directory), "run: pysrim2 install srim"),
+        _check("trim-exe", trim.is_file(), str(trim), "run: pysrim2 install srim"),
+        _check(
+            "srim-legal-notice",
+            legal is not None,
+            str(legal) if legal else "LEGAL.rtf not found",
+            "run: pysrim2 install srim",
+        ),
+    ]
+
+
+def _wine_checks(status) -> list[dict]:
+    fix = "run: pysrim2 install wine"
+    # On a distribution we have no package commands for, "install wine" cannot help.
+    pkg_fix = fix if distro_wine_commands() else WINE_MANUAL_HINT
+    return [
+        _check("wine", status.wine, status.wine or "not found", pkg_fix),
+        _check("xvfb-run", status.xvfb_run, status.xvfb_run or "not found", pkg_fix),
+        _check("extractor", status.extractor, status.extractor or "not found", pkg_fix),
+        _check("downloader", status.downloader, status.downloader or "not found", pkg_fix),
+        _check(
+            "wine-prefix",
+            status.prefix_ready,
+            "ready" if status.prefix_ready else "not set up",
+            pkg_fix if not (status.wine and status.xvfb_run) else fix,
+        ),
+    ]
+
+
+def collect_checks(route: str | None = None) -> list[dict]:
+    """Return the doctor checks.
+
+    With no ``route`` the checks are for the install that ``pysrim2 install`` would make here.
+    With ``native``, ``wine`` or ``container`` the checks of that route are real; the SRIM and
+    wine checks a container route does not need say "not needed (container route)".
+    """
+    if route is not None and route not in ROUTES:
+        raise ValueError(f"unknown route {route!r}; expected one of {', '.join(ROUTES)}")
     system = steps_module.current_platform()
     checks = [
         _check(
@@ -1093,38 +1143,29 @@ def collect_checks() -> list[dict]:
         ),
         _check("pysrim2", True, srim.__version__),
     ]
-    directory = srim_dir()
-    status = wine_status() if system == "linux" else None
-    if system == "windows":
-        native = True
-    elif system == "linux":
-        # Same rule as the default install plan: wine, or no container runtime at all.
-        native = bool(status.wine) or not steps_module.container_runtime()
+    if route is None:
+        # The default install's rule: native on Windows, wine on Linux when wine is there or
+        # no container runtime is, the container everywhere else.
+        status = wine_status() if system == "linux" else None
+        if system == "windows":
+            effective = "native"
+        elif system == "linux" and (status.wine or not steps_module.container_runtime()):
+            effective = "wine"
+        else:
+            effective = "container"
+        # Without a route, wine checks appear only where wine is looked for (Linux).
+        show_wine = status is not None
     else:
-        native = False
-    skip = "not needed (container route)"
-    if native:
-        trim = directory / "TRIM.exe"
-        checks.append(
-            _check("srim-dir", directory.is_dir(), str(directory), "run: pysrim2 install srim")
-        )
-        checks.append(_check("trim-exe", trim.is_file(), str(trim), "run: pysrim2 install srim"))
-        legal = next(
-            (p for p in (directory / "Data" / "LEGAL.rtf", directory / "LEGAL.rtf") if p.is_file()),
-            None,
-        )
-        checks.append(
-            _check(
-                "srim-legal-notice",
-                legal is not None,
-                str(legal) if legal else "LEGAL.rtf not found",
-                "run: pysrim2 install srim",
-            )
-        )
-    else:
-        checks += [_check(n, True, skip) for n in ("srim-dir", "trim-exe", "srim-legal-notice")]
+        effective = route
+        status = wine_status() if route == "wine" else None
+        show_wine = route in ("wine", "container")
 
-    if system == "windows":
+    directory = srim_dir()
+    if effective == "container":
+        checks += [_check(n, True, _SKIP) for n in _SRIM_CHECKS]
+    else:
+        checks += _srim_checks(directory)
+    if system == "windows" and effective != "container":
         ready = vb5_ready(directory)
         checks.append(
             _check(
@@ -1134,27 +1175,10 @@ def collect_checks() -> list[dict]:
                 "run: pysrim2 install vb5 (run from an elevated terminal)",
             )
         )
-    if status is not None and not native:
-        checks += [
-            _check(n, True, skip)
-            for n in ("wine", "xvfb-run", "extractor", "downloader", "wine-prefix")
-        ]
-    elif status is not None:
-        fix = "run: pysrim2 install wine"
-        # On a distribution we have no package commands for, "install wine" cannot help.
-        pkg_fix = fix if distro_wine_commands() else WINE_MANUAL_HINT
-        checks += [
-            _check("wine", status.wine, status.wine or "not found", pkg_fix),
-            _check("xvfb-run", status.xvfb_run, status.xvfb_run or "not found", pkg_fix),
-            _check("extractor", status.extractor, status.extractor or "not found", pkg_fix),
-            _check("downloader", status.downloader, status.downloader or "not found", pkg_fix),
-            _check(
-                "wine-prefix",
-                status.prefix_ready,
-                "ready" if status.prefix_ready else "not set up",
-                pkg_fix if not (status.wine and status.xvfb_run) else fix,
-            ),
-        ]
+    if effective == "wine":
+        checks += _wine_checks(status)
+    elif show_wine:
+        checks += [_check(n, True, _SKIP) for n in _WINE_CHECKS]
     # The skill is optional: only an installed copy that is out of date is a problem.
     candidates = skill.skill_targets("all", "user", Path.cwd()) + skill.skill_targets(
         "claude", "project", Path.cwd()
@@ -1184,7 +1208,7 @@ def collect_checks() -> list[dict]:
             else f"{count} in {runs_base()}, {size / 1e6:.1f} MB (kept: retention is off)",
         )
     )
-    if not native:
+    if effective == "container":
         checks += _container_checks()
     return checks
 
