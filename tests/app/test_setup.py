@@ -313,6 +313,9 @@ def test_a_stale_done_page_check_is_ignored(qtbot, plan_for):
     wiz.next()  # install
     wiz.next()  # done: the first check starts and blocks
     try:
+        # The second check must not start before the first has: on a slow machine it could
+        # otherwise be the call that blocks, and the first (stale) one would answer instead.
+        qtbot.waitUntil(lambda: len(calls) == 1, timeout=5000)
         wiz.back()  # back to install (allowed: nothing is installing)
         wiz.next()  # done again: the second check runs at once
         qtbot.waitUntil(lambda: "SRIM is ready." in wiz.done_page.result_text(), timeout=5000)
