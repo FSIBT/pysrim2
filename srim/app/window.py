@@ -12,13 +12,12 @@ from srim.app.guidance import Guidance, setup_guidance
 from srim.app.settings import AppSettings, save_settings
 from srim.app.statusbar import GuidanceBar
 from srim.app.theme import THEMES, apply_theme
-from srim.app.workers import run_in_thread, wait_for_threads
+from srim.app.workers import run_in_thread
 from srim.cli import collect_checks
 
 TAB_NAMES = ("Geometry", "Beam", "Run settings", "Progress", "Results")
 THEME_LABELS = {"system": "&System", "light": "&Light", "dark": "&Dark"}
 SETUP_TARGET = "setup"
-CLOSE_WAIT_MS = 5000
 
 
 class MainWindow(QMainWindow):
@@ -35,6 +34,7 @@ class MainWindow(QMainWindow):
         self.settings = settings
         self._checks_fn = checks_fn
         self._closing = False
+        self._generation = 0
         self.setWindowTitle("pysrim2")
 
         self.tabs = QTabWidget(self)
@@ -115,27 +115,33 @@ class MainWindow(QMainWindow):
         """Run the installation checks in a thread and show what is not ready."""
         self.status.set_messages([Guidance("Checking the installation…")])
         route = self.settings.route
+        self._generation += 1
+        generation = self._generation
         run_in_thread(
-            self,
             lambda: self._checks_fn(route),
-            self._checks_done,
-            self._checks_failed,
+            lambda checks: self._checks_done(generation, checks),
+            lambda error: self._checks_failed(generation, error),
         )
 
-    def _checks_done(self, checks: list[dict]) -> None:
-        if self._closing:
+    def _is_current(self, generation: int) -> bool:
+        # A result is ignored once the window closes, or when a newer refresh has started.
+        return not self._closing and generation == self._generation
+
+    def _checks_done(self, generation: int, checks: list[dict]) -> None:
+        if not self._is_current(generation):
             return
         self.status.set_messages(setup_guidance(checks, self.settings.route))
         self.checked.emit(checks)
 
-    def _checks_failed(self, error: BaseException) -> None:
-        if self._closing:
+    def _checks_failed(self, generation: int, error: BaseException) -> None:
+        if not self._is_current(generation):
             return
         self.status.set_messages(
             [Guidance(f"Could not check the installation: {error}", SETUP_TARGET)]
         )
 
     def closeEvent(self, event):  # noqa: N802 (Qt's name)
+        # No wait here: a slow check keeps running in the background and its result is ignored.
+        # The application waits for stragglers once, at exit (see srim.app.main).
         self._closing = True
-        wait_for_threads(CLOSE_WAIT_MS)
         super().closeEvent(event)

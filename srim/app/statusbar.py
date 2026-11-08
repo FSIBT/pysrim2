@@ -38,7 +38,10 @@ class GuidanceBar(QStatusBar):
         if len(messages) > 1:
             text += f" (+{len(messages) - 1} more)"
         self._label.setText(text)
-        self._label.setToolTip("\n".join(message.text for message in messages))
+        # Qt reads a tooltip as rich text only when it looks like markup, so the <qt> wrapper
+        # keeps escaped text (for example "&amp;") from showing its entities.
+        tip = "<br>".join(html.escape(message.text) for message in messages)
+        self._label.setToolTip(f"<qt>{tip}</qt>")
 
     def shown_text(self) -> str:
         """The visible text, without markup (for tests)."""

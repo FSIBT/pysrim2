@@ -1,4 +1,5 @@
 import threading
+import time
 
 import pytest
 
@@ -10,7 +11,10 @@ from PySide6.QtGui import QPalette  # noqa: E402
 from PySide6.QtWidgets import QMessageBox  # noqa: E402
 
 import srim  # noqa: E402
-from srim.app import DOCS_URL  # noqa: E402
+from srim.app import (
+    DOCS_URL,  # noqa: E402
+    workers,  # noqa: E402
+)
 from srim.app import window as window_module  # noqa: E402
 from srim.app.settings import AppSettings, load_settings  # noqa: E402
 from srim.app.theme import apply_theme  # noqa: E402
@@ -87,22 +91,91 @@ def test_the_checks_run_off_the_gui_thread(qtbot):
     assert seen and seen[0] != main_thread
 
 
-def test_closing_while_a_check_runs_waits_for_it(qtbot):
+def test_closing_does_not_wait_for_a_slow_check(qtbot):
     started = threading.Event()
-    finished = threading.Event()
+    release = threading.Event()
 
-    def slow(route):
+    def blocked(route):
         started.set()
-        threading.Event().wait(0.3)
-        finished.set()
+        release.wait(5)
         return []
 
-    win = MainWindow(AppSettings(route="wine"), checks_fn=slow)
+    win = MainWindow(AppSettings(route="wine"), checks_fn=blocked)
     qtbot.addWidget(win)
-    win.refresh_checks()
-    assert started.wait(5)
-    win.close()
-    assert finished.is_set()
+    try:
+        win.refresh_checks()
+        assert started.wait(5)
+        begin = time.monotonic()
+        win.close()
+        assert time.monotonic() - begin < 1.0
+    finally:
+        release.set()
+
+
+def test_a_check_that_outlives_the_window_is_ignored_and_forgotten(qtbot):
+    started = threading.Event()
+    release = threading.Event()
+    checked = []
+
+    def blocked(route):
+        started.set()
+        release.wait(5)
+        return [{"name": "late", "ok": False, "detail": "x", "fix": "y"}]
+
+    win = MainWindow(AppSettings(route="wine"), checks_fn=blocked)
+    qtbot.addWidget(win)
+    win.checked.connect(checked.append)
+    try:
+        win.refresh_checks()
+        assert started.wait(5)
+        win.close()
+    finally:
+        release.set()
+    qtbot.waitUntil(lambda: not workers._live, timeout=5000)
+    assert checked == []
+    assert win.status.shown_text() == "Checking the installation…"
+
+
+def test_an_older_refresh_that_finishes_last_is_ignored(qtbot):
+    first_started = threading.Event()
+    release_first = threading.Event()
+    calls = []
+
+    def checks(route):
+        calls.append(route)
+        if len(calls) == 1:
+            first_started.set()
+            release_first.wait(5)
+            return [{"name": "old", "ok": False, "detail": "stale", "fix": "x"}]
+        return [{"name": "new", "ok": False, "detail": "fresh", "fix": "y"}]
+
+    win = MainWindow(AppSettings(route="wine"), checks_fn=checks)
+    qtbot.addWidget(win)
+    try:
+        win.refresh_checks()
+        assert first_started.wait(5)
+        with qtbot.waitSignal(win.checked, timeout=5000):
+            win.refresh_checks()
+        assert "new" in win.status.shown_text()
+    finally:
+        release_first.set()
+    qtbot.waitUntil(lambda: not workers._live, timeout=5000)
+    assert "old" not in win.status.shown_text()
+    assert "new" in win.status.shown_text()
+
+
+def test_the_tooltip_shows_guidance_text_literally(qtbot):
+    from PySide6.QtGui import QTextDocument
+
+    from srim.app.guidance import Guidance
+
+    win = MainWindow(AppSettings(route="wine"), checks_fn=lambda route: [])
+    qtbot.addWidget(win)
+    win.status.set_messages([Guidance("path <b>bold</b> & more", "setup")])
+    tip = win.status._label.toolTip()
+    document = QTextDocument()
+    document.setHtml(tip)
+    assert document.toPlainText() == "path <b>bold</b> & more"
 
 
 def test_choosing_dark_applies_and_saves_it(qtbot, reset_theme, app_home):

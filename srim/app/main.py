@@ -5,6 +5,9 @@ from PySide6.QtWidgets import QApplication
 from srim.app.settings import load_settings
 from srim.app.theme import apply_theme
 from srim.app.window import MainWindow
+from srim.app.workers import wait_for_threads
+
+EXIT_WAIT_MS = 5000
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -16,4 +19,6 @@ def main(argv: list[str] | None = None) -> int:
     window = MainWindow(settings)
     window.show()
     window.refresh_checks()
-    return app.exec()
+    code = app.exec()
+    wait_for_threads(EXIT_WAIT_MS)  # a check that is still running gets a short grace period
+    return code
