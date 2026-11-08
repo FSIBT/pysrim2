@@ -8,7 +8,7 @@ from srim.app.routes import (
     route_components,
 )
 from srim.installer import steps
-from srim.installer.steps import Step
+from srim.installer.steps import ComponentUnavailable, Step
 from srim.installer.wine import WineStatus
 
 
@@ -50,7 +50,15 @@ def test_recommended_route_follows_the_default_install(
 def test_available_routes_per_platform():
     assert available_routes("windows") == ["native", "container"]
     assert available_routes("linux") == ["wine", "container"]
-    assert available_routes("macos") == ["wine", "container"]
+    assert available_routes("macos") == ["container"]
+
+
+def test_macos_has_no_wine_route(monkeypatch):
+    # wine is a Linux component: on macOS its step is unavailable, so the route is not offered.
+    monkeypatch.setattr(steps, "current_platform", lambda: "macos")
+    assert "wine" not in available_routes("macos")
+    with pytest.raises(ComponentUnavailable):
+        steps.plan(route_components("wine"))
 
 
 def test_labels_cover_every_route():

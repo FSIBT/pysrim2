@@ -22,10 +22,15 @@ _COMPONENTS = {
 
 
 def available_routes(system: str) -> list[str]:
-    """Return the routes offered on ``system`` (``windows``, ``linux`` or ``macos``)."""
+    """Return the routes offered on ``system`` (``windows``, ``linux`` or ``macos``).
+
+    wine is a Linux component, so it is offered on Linux only; macOS runs SRIM in the container.
+    """
     if system == "windows":
         return ["native", "container"]
-    return ["wine", "container"]
+    if system == "linux":
+        return ["wine", "container"]
+    return ["container"]
 
 
 def recommended_route() -> str:

@@ -79,6 +79,10 @@ class RoutePage(QWizardPage):
         recommended = routes.recommended_route()
         offered = routes.available_routes(system)
         preselect = settings.route if settings.route in offered else recommended
+        if system == "macos":
+            note = QLabel("native SRIM is not supported on macOS; it runs in the container", self)
+            note.setWordWrap(True)
+            layout.addWidget(note)
         for route in offered:
             label = routes.ROUTE_LABELS[route]
             if route == recommended:

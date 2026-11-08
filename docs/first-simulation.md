@@ -17,7 +17,7 @@ Install the command line once, and let it set up SRIM:
 
 ```shell
 uv tool install pysrim2
-pysrim2 install       # SRIM, and on Linux or macOS wine or the container
+pysrim2 install       # SRIM: wine or the container on Linux, the container on macOS
 pysrim2 doctor        # every line should say [ok]
 ```
 

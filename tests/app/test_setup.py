@@ -8,7 +8,7 @@ pytest.importorskip("PySide6")
 pytest.importorskip("pytestqt")
 
 from PySide6.QtCore import Qt  # noqa: E402
-from PySide6.QtWidgets import QDialog, QWizard  # noqa: E402
+from PySide6.QtWidgets import QDialog, QLabel, QWizard  # noqa: E402
 
 from srim.app import main as app_main  # noqa: E402
 from srim.app import routes, workers  # noqa: E402
@@ -118,6 +118,15 @@ def test_the_route_page_offers_only_the_routes_of_the_system(qtbot, plan_for):
     wiz = SetupWizard(AppSettings(), checks_fn=ok_checks, plan_fn=plan_for, system="windows")
     qtbot.addWidget(wiz)
     assert wiz.route_page.routes() == ["native", "container"]
+
+
+def test_the_macos_route_page_offers_only_the_container_and_says_why(qtbot, plan_for):
+    wiz = SetupWizard(AppSettings(), checks_fn=ok_checks, plan_fn=plan_for, system="macos")
+    qtbot.addWidget(wiz)
+    assert wiz.route_page.routes() == ["container"]
+    assert wiz.route_page.selected_route() == "container"
+    texts = [label.text() for label in wiz.route_page.findChildren(QLabel)]
+    assert "native SRIM is not supported on macOS; it runs in the container" in texts
 
 
 def test_install_runs_plain_steps_and_only_shows_admin_commands(qtbot, rec, plan_for):

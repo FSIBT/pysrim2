@@ -54,7 +54,7 @@ SRIM runs in one of three routes:
 | Route | What it does | Offered on |
 |---|---|---|
 | Native TRIM.exe | Runs SRIM's own `TRIM.exe` (Windows only) | Windows |
-| Wine (pysrim2's own wine prefix) | Runs `TRIM.exe` under wine, in pysrim2's private prefix | Linux and macOS |
+| Wine (pysrim2's own wine prefix) | Runs `TRIM.exe` under wine, in pysrim2's private prefix | Linux only |
 | Container (Podman or Docker) | Runs SRIM inside the pysrim2 container image | Every platform |
 
 The route that is recommended on your machine is marked "(recommended)" and selected
