@@ -32,10 +32,15 @@ from pathlib import Path
 import srim
 from srim.installer import container, skill
 from srim.installer import steps as steps_module
-from srim.installer.srim_install import NOTICE, SrimInstallError
+from srim.installer.runner import INSTALL_ERRORS, NOTICE, run_steps  # noqa: F401
 from srim.installer.steps import COMPONENTS, ComponentUnavailable
-from srim.installer.vb5 import Vb5SetupError, vb5_ready
-from srim.installer.wine import WINE_MANUAL_HINT, WineSetupError, distro_wine_commands, wine_status
+from srim.installer.vb5 import Vb5SetupError, vb5_ready  # noqa: F401
+from srim.installer.wine import (  # noqa: F401
+    WINE_MANUAL_HINT,
+    WineSetupError,
+    distro_wine_commands,
+    wine_status,
+)
 from srim.paths import srim_dir
 from srim.ui import JsonLines, PlainProgress
 from srim.ui.web import WebView, port_problem
@@ -45,16 +50,6 @@ EXIT_FAILED = 1
 EXIT_ADMIN_SKIPPED = 2
 EXIT_BAD_INPUT = 2  # run / import: invalid run.yaml, unreadable TRIM.IN or --set
 EXIT_INTERRUPTED = 130
-INSTALL_ERRORS = (
-    SrimInstallError,
-    WineSetupError,
-    container.ContainerError,
-    Vb5SetupError,
-    skill.SkillInstallError,
-    ValueError,
-    subprocess.SubprocessError,
-    OSError,
-)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -300,10 +295,18 @@ def _confirm() -> bool:
         return False
 
 
+def _ask_admin(step, commands) -> bool:
+    """Ask on a terminal whether to run an admin step; never ask otherwise."""
+    if not sys.stdin.isatty():
+        return False
+    print(f"[ask] {step.name}: needs admin rights — run these commands? [y/N]")
+    _print_commands(commands)
+    return _confirm()
+
+
 def _install(args) -> int:
     components = list(args.components)
-    explicit = bool(components)
-    if not explicit:
+    if not components:
         components = steps_module.default_components()
     try:
         plan = steps_module.plan(components)
@@ -313,71 +316,14 @@ def _install(args) -> int:
     if not plan:
         print("nothing to install")
         return EXIT_OK
-
-    notice_shown = False
-    failed = False
-    admin_skipped = False
-    unmet: set[str] = set()
-    for step in plan:
-        if step.check():
-            print(f"[ok] {step.name}: already installed")
-            continue
-        if step.name == "srim" and not notice_shown:
-            print(NOTICE)
-            notice_shown = True
-        if any(dep in unmet for dep in step.requires):
-            print(f"[skip] {step.name}: waiting for {', '.join(step.requires)}")
-            unmet.add(step.name)
-            continue
-        commands = step.commands()
-        if args.dry_run:
-            print(f"[do] {step.name}: {step.summary}")
-            _print_commands(commands)
-            continue
-        if commands and all(c.lstrip().startswith("#") for c in commands):
-            print(f"[skip] {step.name}: cannot be installed automatically here:")
-            _print_commands(commands)
-            admin_skipped = True
-            unmet.add(step.name)
-            continue
-        if step.needs_admin and not args.yes:
-            confirmed = False
-            if sys.stdin.isatty():
-                print(f"[ask] {step.name}: needs admin rights — run these commands? [y/N]")
-                _print_commands(commands)
-                try:
-                    confirmed = _confirm()
-                except KeyboardInterrupt:
-                    print(f"\n[skip] {step.name}: cancelled")
-                    return EXIT_INTERRUPTED
-            if not confirmed:
-                print(f"[skip] {step.name}: needs admin rights — rerun with --yes or run:")
-                _print_commands(commands)
-                admin_skipped = True
-                unmet.add(step.name)
-                continue
-            print(f"[do] {step.name}: {step.summary}")
-        else:
-            print(f"[do] {step.name}: {step.summary}")
-            _print_commands(commands)
-        try:
-            if step.wants_progress:
-                step.run(lambda line: print(line, flush=True))
-            else:
-                step.run()
-            container.reset_cache()
-            where = f" in {srim_dir()}" if step.name == "srim" else ""
-            print(f"[ok] {step.name}: installed{where}")
-        except INSTALL_ERRORS as exc:
-            print(f"[fail] {step.name}: {exc}", file=sys.stderr)
-            failed = True
-            break
-        except KeyboardInterrupt:
-            print(f"\n[skip] {step.name}: cancelled")
-            return EXIT_INTERRUPTED
-    if failed:
-        return EXIT_FAILED
-    return EXIT_ADMIN_SKIPPED if admin_skipped else EXIT_OK
+    outcome = run_steps(
+        plan,
+        dry_run=args.dry_run,
+        yes=args.yes,
+        confirm=_ask_admin,
+        say=lambda line: print(line, flush=True),
+    )
+    return outcome.exit_code
 
 
 # --- run / import -----------------------------------------------------------
