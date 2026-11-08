@@ -49,7 +49,7 @@ plot = ["matplotlib"]
 # live views of `pysrim2 scan run --ui plot|dashboard|web` (plot: textual-plotext; web: textual-serve)
 tui = ["textual>=0.86.2", "textual-plotext>=1.0.1", "textual-serve>=1.1.3"]
 # the desktop app (`pysrim2 app`); installed by `pysrim2 install app`
-app = ["PySide6>=6.8", "matplotlib"]
+app = ["PySide6-Essentials>=6.8", "matplotlib"]
 all = ["pysrim2[parquet,hdf5,plot,tui]"]
 
 [project.scripts]
