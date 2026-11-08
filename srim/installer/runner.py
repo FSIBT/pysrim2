@@ -11,6 +11,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from srim.installer import container, skill
+from srim.installer.app import AppInstallError
 from srim.installer.srim_install import NOTICE, SrimInstallError
 from srim.installer.steps import Step
 from srim.installer.vb5 import Vb5SetupError
@@ -23,6 +24,7 @@ INSTALL_ERRORS = (
     container.ContainerError,
     Vb5SetupError,
     skill.SkillInstallError,
+    AppInstallError,
     ValueError,
     subprocess.SubprocessError,
     OSError,

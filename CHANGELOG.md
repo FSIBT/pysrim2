@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `pysrim2 install app` installs the desktop app (the new `app` extra: PySide6 and matplotlib) into the running pysrim2, and `pysrim2 app` opens it.
+
 ### Fixed
 
 - The scan dashboard (`--ui dashboard`) no longer crashes with "More values provided than there are columns" when it is redrawn before it has finished opening.

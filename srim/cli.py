@@ -1,5 +1,5 @@
-"""Command line interface: ``pysrim2 install``, ``doctor``, ``run``, ``run-job``, ``import``,
-``clean`` and ``scan``.
+"""Command line interface: ``pysrim2 install``, ``app``, ``doctor``, ``run``, ``run-job``,
+``import``, ``clean`` and ``scan``.
 
 Exit codes of the ``scan`` commands (also in their help):
 
@@ -30,6 +30,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import srim
+from srim.installer import app as app_install
 from srim.installer import container, skill
 from srim.installer import steps as steps_module
 from srim.installer.runner import INSTALL_ERRORS, NOTICE, run_steps  # noqa: F401
@@ -67,6 +68,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     install.add_argument("--agent", choices=("claude", "all"), default="claude")
     install.add_argument("--scope", choices=("user", "project"), default="user")
+
+    sub.add_parser("app", help="open the pysrim2 desktop app (needs pysrim2 install app)")
 
     doctor = sub.add_parser("doctor", help="check the installation")
     doctor.add_argument("--json", action="store_true", help="machine-readable output")
@@ -277,6 +280,8 @@ def main(argv: list[str] | None = None) -> int:
         return _clean(args)
     if args.command == "scan":
         return _scan(args)
+    if args.command == "app":
+        return _app(args)
     return _doctor(args)
 
 
@@ -324,6 +329,19 @@ def _install(args) -> int:
         say=lambda line: print(line, flush=True),
     )
     return outcome.exit_code
+
+
+# --- app --------------------------------------------------------------------
+
+
+def _app(args) -> int:
+    """Open the desktop app; the Qt code is imported only once the extra is known to be there."""
+    if not app_install.app_available():
+        print("the desktop app is not installed; run: pysrim2 install app", file=sys.stderr)
+        return EXIT_FAILED
+    from srim.app.main import main as app_main
+
+    return app_main([])
 
 
 # --- run / import -----------------------------------------------------------

@@ -23,7 +23,7 @@ from srim.installer.wine import (
 )
 from srim.paths import srim_dir, wine_prefix
 
-COMPONENTS = ("srim", "vb5", "wine", "image", "runtime", "skill")
+COMPONENTS = ("srim", "vb5", "wine", "image", "runtime", "skill", "app")
 PACKAGE_TIMEOUT_SECONDS = 1800
 
 
