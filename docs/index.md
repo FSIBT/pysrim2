@@ -22,6 +22,8 @@ pip install pysrim2
 pysrim2 install
 ```
 
+For the desktop app: `pysrim2 install app`, then `pysrim2 app`.
+
 The boron reference case (100 nm of gold on silicon, 200 ions):
 
 ```python
@@ -151,6 +153,7 @@ examples
 :caption: Guides
 :maxdepth: 1
 
+app
 dataframes
 run-spec
 export

@@ -20,7 +20,7 @@ pysrim2 is a maintained continuation of pysrim (distribution `pysrim2`, import `
 - Never commit SRIM binaries or large outputs.
 - Fixtures in `test_files/` are byte-exact SRIM output with CRLF line endings. Do not reformat them or let an editor change line endings.
 - Fork commits: bring them in with `git cherry-pick -x` so author and message are kept. Never squash or amend them. Put our own changes (tests, adjustments, credit for others who fixed the same thing via `Co-authored-by:`) in separate follow-up commits. Record the result in `docs/changes-from-pysrim.md`.
-- Python 3.11 or newer; runtime dependencies are numpy, pyyaml and pandas.
+- Python 3.11 or newer; runtime dependencies are numpy, pyyaml and pandas. The desktop app is the `[app]` extra (PySide6, matplotlib), not a runtime dependency.
 
 ## Installer, container and CI
 
@@ -78,3 +78,12 @@ pysrim2 is a maintained continuation of pysrim (distribution `pysrim2`, import `
 - Tests: `tests/test_gallery.py` (entry contract, committed images, gallery page), `tests/integration/test_gallery_srim.py` (`-m srim`, builds the SRIM entries), `tests/test_readme.py` (README images exist, README docs links resolve), `tests/test_citation.py` (`CITATION.cff` and `pyproject.toml` authors, every git author listed).
 - Ruff also formats the Python code fences inside the Markdown docs, so `uv run ruff format` covers them.
 - Authors: a new contributor goes into both `pyproject.toml` (`authors`) and `CITATION.cff` (`authors`), in the same order. A contributor with a second git identity goes into `.mailmap` too, so their commits count as one author.
+
+## Desktop app (0.12.0)
+
+- Layout: `srim/app/` holds `pysrim2 app`. Qt-free modules: `__init__.py` (`DOCS_URL`), `routes.py` (`ROUTES`, `ROUTE_LABELS`, `available_routes`, `recommended_route`, `route_components`), `settings.py` (`settings_path()` = `<data dir>/app/settings.json`, `THEMES`, `load_settings`, `save_settings`) and `guidance.py` (`setup_guidance`). Qt modules: `theme.py`, `workers.py`, `statusbar.py`, `window.py`, `setup.py` and `main.py` (`main` is the entry point that `_app` in `srim/cli.py` imports only once `app_available()` is true). `srim/installer/app.py` (the `app` install component) is Qt-free too.
+- No-Qt rule: only the Qt modules above import PySide6. `tests/test_no_qt.py` runs a fresh interpreter that imports `srim`, the CLI and the Qt-free app modules and fails if PySide6 gets imported. Keep Qt out of anything the library or the CLI imports.
+- One runner: the app and `pysrim2 install` both run steps through `run_steps` in `srim/installer/runner.py`. The app calls it with `yes=False, confirm=None` and its own `say`, `warn` and `admin_hint`, so an admin step is never run by the app: its commands are shown ("Copy commands") for the user to run in a terminal, then "Check again" plans the steps once more. Do not change that without a decision from the maintainer.
+- Threads: Qt work that may block (checks, installs) runs through `srim/app/workers.py` `run_in_thread`; results reach the GUI thread through queued signals. A window that closes while a thread runs ignores its late result.
+- Placeholders: in 0.12.0 the Geometry, Beam, Run settings, Progress and Results tabs only say that they arrive in a later release.
+- Tests: `tests/app/` runs the Qt tests on the offscreen platform (`tests/app/conftest.py` sets `QT_QPA_PLATFORM=offscreen` before Qt loads and gives every test its own `PYSRIM2_HOME`). The Qt tests use fake checks and fake steps: no install, network, wine or container. The Qt-free tests in that folder do not need the extra. `uv sync` installs the extra and `pytest-qt` (dev group); CI installs the libraries the offscreen platform needs on Linux.

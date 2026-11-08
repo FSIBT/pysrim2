@@ -7,6 +7,7 @@ package (also available as `python -m srim`).
 pysrim2 --version
 pysrim2 install [COMPONENT ...] [--dry-run] [--yes] [--agent claude|all] [--scope user|project]
 pysrim2 doctor [--json]
+pysrim2 app
 pysrim2 run run.yaml [--set KEY=VALUE ...] [--output DIR]
 pysrim2 run-job DIR
 pysrim2 import TRIM.IN [-o run.yaml]
@@ -34,7 +35,8 @@ Components: `srim` (download SRIM-2013, verify its checksum, keep
 `LEGAL.rtf` next to it), `vb5` (Windows: Visual Basic 5 runtime and OCX
 controls), `wine` (Linux: wine packages and the private prefix), `runtime`
 (Podman), `image` (pull `ghcr.io/fsibt/pysrim2`, see {doc}`container`) and
-`skill` (see {doc}`agents`). Steps already satisfied print `[ok] ...: already
+`skill` (see {doc}`agents`) and `app` (the desktop app's PySide6 and matplotlib into
+this pysrim2 install; see {doc}`app`). Steps already satisfied print `[ok] ...: already
 installed`.
 
 Options:
@@ -51,6 +53,14 @@ Options:
 
 Without `--yes`, a step that needs admin rights asks `[y/N]` on a terminal
 and is skipped (with its commands printed) otherwise.
+
+## `pysrim2 app`
+
+Opens the desktop app (see {doc}`app`): a window with a guided setup for the three routes
+(native, wine or container), a status bar that says what to do next, and a dark or light
+theme. It needs the `app` extra; without it the command prints
+`the desktop app is not installed; run: pysrim2 install app` and exits with 1. Install the
+extra with `pysrim2 install app`.
 
 ## `pysrim2 doctor`
 

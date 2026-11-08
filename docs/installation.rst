@@ -94,6 +94,15 @@ container runtime it installs Podman, starts a Podman machine and pulls the
 image. It never installs Docker Desktop, which needs a paid subscription for
 larger organisations and a GUI installation with administrator rights.
 
+Desktop app
+-----------
+
+The optional desktop app (``pysrim2 app``) guides the SRIM setup in a window. It
+needs the ``app`` extra (PySide6 and matplotlib, about 100 MB, so it is not part of the
+default install). Install it into the pysrim2 you already use with
+``pysrim2 install app``, which needs no administrator rights, then start it with
+``pysrim2 app``. See :doc:`app` for the setup, the status bar and the settings.
+
 Where things live
 -----------------
 
