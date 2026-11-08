@@ -42,6 +42,7 @@ class MainWindow(QMainWindow):
         self.settings = settings
         self._checks_fn = checks_fn
         self._closing = False
+        self._setup_open = False
         self._generation = 0
         self.setWindowTitle("pysrim2")
 
@@ -112,11 +113,22 @@ class MainWindow(QMainWindow):
     # --- setup and checks ----------------------------------------------------------
 
     def open_setup(self) -> None:
-        """Run the setup wizard; when it finishes, show the Geometry tab and check again."""
+        """Run the setup wizard (modal); when it finishes, show the Geometry tab and check again.
+
+        Nothing happens while the window is closing or while a wizard is already open.
+        """
+        if self._closing or self._setup_open:
+            return
         self.setup_requested.emit()
-        wizard = SetupWizard(self.settings, checks_fn=self._checks_fn, parent=self)
-        result = wizard.exec()
-        wizard.deleteLater()
+        self._setup_open = True
+        try:
+            wizard = SetupWizard(self.settings, checks_fn=self._checks_fn, parent=self)
+            result = wizard.exec()
+            wizard.deleteLater()
+        finally:
+            self._setup_open = False
+        if self._closing:
+            return
         if result == QDialog.DialogCode.Accepted:
             self.tabs.setCurrentIndex(0)
             self.refresh_checks()

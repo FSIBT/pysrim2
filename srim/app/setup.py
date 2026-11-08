@@ -9,6 +9,7 @@ the app's own modules.
 
 import html
 from collections.abc import Callable
+from functools import partial
 
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import (
@@ -116,6 +117,9 @@ class InstallPage(QWizardPage):
         self._wizard = wizard
         self._steps: list[Step] = []
         self._busy = False
+        self._generation = 0
+        self._pending_outcome: RunOutcome | None = None
+        self._install_note: str | None = None
         self._bridge = _LogBridge(self)
         self._bridge.line.connect(self._append_log)
 
@@ -163,35 +167,31 @@ class InstallPage(QWizardPage):
         return not self._busy
 
     def refresh(self) -> None:
-        """Plan the steps for the chosen route and show which of them are installed."""
+        """Plan the steps for the chosen route, then check each one in a thread.
+
+        Each check runs once per refresh. A refresh that is overtaken by a newer one (or by the
+        wizard going away) ignores its results.
+        """
+        self._generation += 1
+        generation = self._generation
         self.step_list.clear()
         self._steps = []
         self.commands_box.setPlainText("")
+        self.commands_label.setVisible(False)
+        self.install_button.setEnabled(False)
         try:
-            self._steps = self._wizard.plan_for_route(self._wizard.route_page.selected_route())
+            steps = self._wizard.plan_for_route(self._wizard.route_page.selected_route())
         except ComponentUnavailable as error:
             self.status_label.setText(error.reason)
-            self.install_button.setEnabled(False)
+            self._settle()
             return
-        unmet_admin: list[str] = []
-        for step in self._steps:
-            done = _check(step)
-            if done:
-                state = "installed"
-            elif step.needs_admin:
-                state = "needs admin rights"
-                unmet_admin.extend(step.commands())
-            else:
-                state = "to install"
-            self.step_list.addItem(f"{step.name}: {state} ({step.summary})")
-        self.commands_box.setPlainText("\n".join(unmet_admin))
-        self.commands_label.setVisible(bool(unmet_admin))
-        pending = [s for s in self._steps if not _check(s)]
-        self.install_button.setEnabled(bool(pending) and not self._busy)
-        if pending:
-            self.status_label.setText("Press Install to set up what is missing.")
-        else:
-            self.status_label.setText("Everything for this route is installed.")
+        self._steps = steps
+        self.status_label.setText("Checking the installation…")
+        run_in_thread(
+            partial(_inspect_all, steps),
+            partial(self._show_rows, generation),
+            partial(self._check_failed, generation),
+        )
 
     def install(self) -> None:
         """Run the plain steps in a thread; admin steps are only reported."""
@@ -225,31 +225,76 @@ class InstallPage(QWizardPage):
         self._busy = busy
         for button in (self.install_button, self.copy_button, self.check_button):
             button.setEnabled(not busy)
-        if busy:
-            self.install_button.setEnabled(False)
-        self._wizard.set_installing(busy)
+        # completeChanged makes QWizard recompute Back and Next, so the wizard's install
+        # state is applied after it, or Back would come back enabled.
         self.completeChanged.emit()
+        self._wizard.set_installing(busy)
 
     def _install_done(self, outcome: RunOutcome) -> None:
         self._set_busy(False)
+        self._pending_outcome = outcome
+        self._install_note = _outcome_note(outcome)
         self.refresh()
-        if outcome.interrupted:
-            self.status_label.setText("The install was cancelled.")
-        elif outcome.failed is not None:
-            self.status_label.setText(f"The install stopped at {outcome.failed}; see the log.")
-        elif outcome.admin_skipped:
-            self.status_label.setText(
-                "Some steps need admin rights: run the commands below in a terminal, "
-                "then press Check again."
-            )
-        self._wizard.install_finished.emit(outcome)
 
     def _install_failed(self, error: BaseException) -> None:
         self._set_busy(False)
-        self.refresh()
         self._append_log(f"[fail] install: {error}")
-        self.status_label.setText(f"The install stopped: {error}")
-        self._wizard.install_finished.emit(RunOutcome(failed="install"))
+        self._pending_outcome = RunOutcome(failed="install")
+        self._install_note = f"The install stopped: {error}"
+        self.refresh()
+
+    def _show_rows(self, generation: int, rows: list) -> None:
+        if generation != self._generation:
+            return
+        try:
+            self.step_list.clear()
+            unmet_admin: list[str] = []
+            plain_pending = 0
+            admin_pending = 0
+            for step, done, commands in rows:
+                if done:
+                    text = f"{step.name}: installed"
+                elif step.needs_admin:
+                    text = f"{step.name}: needs admin rights ({step.summary})"
+                    admin_pending += 1
+                    unmet_admin.extend(commands)
+                else:
+                    text = f"{step.name}: to install ({step.summary})"
+                    plain_pending += 1
+                self.step_list.addItem(text)
+            self.commands_box.setPlainText("\n".join(unmet_admin))
+            self.commands_label.setVisible(bool(unmet_admin))
+            self.install_button.setEnabled(plain_pending > 0 and not self._busy)
+            if self._install_note is not None:
+                status = self._install_note
+            elif plain_pending:
+                status = "Press Install to set up what is missing."
+            elif admin_pending:
+                status = "Run the commands below in a terminal, then press Check again."
+            elif rows:
+                status = "Everything for this route is installed."
+            else:
+                status = "Nothing to install for this route."
+            self.status_label.setText(status)
+        except RuntimeError:  # the wizard was deleted while the check ran
+            return
+        self._settle()
+
+    def _check_failed(self, generation: int, error: BaseException) -> None:
+        if generation != self._generation:
+            return
+        try:
+            self.status_label.setText(f"Could not check the installation: {error}")
+        except RuntimeError:
+            return
+        self._settle()
+
+    def _settle(self) -> None:
+        """Report a finished install (once) after the page shows its new state."""
+        outcome, self._pending_outcome = self._pending_outcome, None
+        self._install_note = None
+        if outcome is not None:
+            self._wizard.install_finished.emit(outcome)
 
 
 def _check(step: Step) -> bool:
@@ -259,11 +304,41 @@ def _check(step: Step) -> bool:
         return False
 
 
+def _commands(step: Step) -> list[str]:
+    try:
+        return list(step.commands())
+    except Exception:
+        return []
+
+
+def _inspect_all(steps: list[Step]) -> list[tuple[Step, bool, list[str]]]:
+    """Run in a thread: each step's check, once, and the commands of an admin step not done."""
+    rows = []
+    for step in steps:
+        done = _check(step)
+        rows.append((step, done, [] if done or not step.needs_admin else _commands(step)))
+    return rows
+
+
+def _outcome_note(outcome: RunOutcome) -> str | None:
+    if outcome.interrupted:
+        return "The install was cancelled."
+    if outcome.failed is not None:
+        return f"The install stopped at {outcome.failed}; see the log."
+    if outcome.admin_skipped:
+        return (
+            "Some steps need admin rights: run the commands below in a terminal, "
+            "then press Check again."
+        )
+    return None
+
+
 class DonePage(QWizardPage):
     def __init__(self, wizard: "SetupWizard"):
         super().__init__()
         self.setTitle("Check the installation")
         self._wizard = wizard
+        self._generation = 0
         self._result = QLabel(self)
         self._result.setWordWrap(True)
         layout = QVBoxLayout(self)
@@ -274,20 +349,41 @@ class DonePage(QWizardPage):
         return self._result.text()
 
     def initializePage(self):  # noqa: N802 (Qt's name)
+        self._generation += 1
         route = self._wizard.route_page.selected_route()
         self._result.setText("Checking the installation…")
         run_in_thread(
-            lambda: self._wizard.checks_fn(route),
-            lambda checks: self._show(route, checks),
-            lambda error: self._result.setText(f"Could not check the installation: {error}"),
+            partial(self._wizard.checks_fn, route),
+            partial(self._show, self._generation, route),
+            partial(self._show_error, self._generation),
         )
 
-    def _show(self, route: str, checks: list[dict]) -> None:
+    def _current(self, generation: int) -> bool:
+        """True while this check is the latest one and the wizard is still open."""
+        try:
+            return generation == self._generation and not self._wizard.is_closed()
+        except RuntimeError:  # the wizard was deleted
+            return False
+
+    def _show(self, generation: int, route: str, checks: list[dict]) -> None:
+        if not self._current(generation):
+            return
         problems = setup_guidance(checks, route)
-        if not problems:
-            self._result.setText("SRIM is ready.")
-        else:
-            self._result.setText("\n".join(["Still to do:", *(p.text for p in problems)]))
+        try:
+            if not problems:
+                self._result.setText("SRIM is ready.")
+            else:
+                self._result.setText("\n".join(["Still to do:", *(p.text for p in problems)]))
+        except RuntimeError:
+            return
+
+    def _show_error(self, generation: int, error: BaseException) -> None:
+        if not self._current(generation):
+            return
+        try:
+            self._result.setText(f"Could not check the installation: {error}")
+        except RuntimeError:
+            return
 
     def show_error(self, text: str) -> None:
         self._result.setText(text)
@@ -312,6 +408,7 @@ class SetupWizard(QWizard):
         self._plan_fn = plan_fn
         self.system = system or steps_module.current_platform()
         self._installing = False
+        self._closed = False
         self.setWindowTitle("Set up SRIM")
 
         self.welcome_page = WelcomePage()
@@ -334,6 +431,24 @@ class SetupWizard(QWizard):
     def is_installing(self) -> bool:
         return self._installing
 
+    def is_closed(self) -> bool:
+        """True once the wizard has finished (accepted or rejected)."""
+        return self._closed
+
+    # Button clicks reach QWizard's own slots, which the Python methods below do not intercept,
+    # so the Back and Cancel buttons are disabled too; these guards cover calls made from code.
+    def back(self):  # noqa: D102 (Qt's name)
+        if not self._installing:
+            super().back()
+
+    def next(self):  # noqa: D102 (Qt's name)
+        if not self._installing:
+            super().next()
+
+    def restart(self):  # noqa: D102 (Qt's name)
+        if not self._installing:
+            super().restart()
+
     def accept(self):  # noqa: D102 (Qt's name)
         if self._installing:
             return
@@ -346,15 +461,18 @@ class SetupWizard(QWizard):
             self.settings.route = previous
             self.done_page.show_error(f"Could not save the route: {error}")
             return
+        self._closed = True
         super().accept()
 
     def reject(self):  # noqa: D102 (Qt's name)
         if self._installing:
             return
+        self._closed = True
         super().reject()
 
     def closeEvent(self, event):  # noqa: N802 (Qt's name)
         if self._installing:
             event.ignore()
             return
+        self._closed = True
         super().closeEvent(event)

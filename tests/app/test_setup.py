@@ -12,9 +12,11 @@ from PySide6.QtWidgets import QDialog, QWizard  # noqa: E402
 
 from srim.app import main as app_main  # noqa: E402
 from srim.app import routes, workers  # noqa: E402
+from srim.app import setup as wizard_module  # noqa: E402
 from srim.app.settings import AppSettings, load_settings  # noqa: E402
 from srim.app.setup import SetupWizard  # noqa: E402
 from srim.app.window import MainWindow  # noqa: E402
+from srim.installer.runner import RunOutcome  # noqa: E402
 from srim.installer.steps import ComponentUnavailable, Step  # noqa: E402
 
 
@@ -42,6 +44,13 @@ class Recorder:
             needs_admin=admin,
             requires=requires,
         )
+
+
+@pytest.fixture(autouse=True)
+def no_thread_left_behind(qtbot):
+    """Every test that starts a thread waits until the thread has finished (or been forgotten)."""
+    yield
+    qtbot.waitUntil(lambda: not workers._live, timeout=10000)
 
 
 @pytest.fixture
@@ -82,6 +91,10 @@ def go_to(wiz, page_index):
         wiz.next()
 
 
+def wait_for_install_button(qtbot, wiz):
+    qtbot.waitUntil(lambda: wiz.install_page.install_button.isEnabled(), timeout=5000)
+
+
 def test_the_recommended_route_is_preselected(qtbot, monkeypatch, plan_for):
     monkeypatch.setattr(routes, "recommended_route", lambda: "container")
     wiz = SetupWizard(AppSettings(), checks_fn=lambda r: [], plan_fn=plan_for, system="linux")
@@ -114,6 +127,7 @@ def test_install_runs_plain_steps_and_only_shows_admin_commands(qtbot, rec, plan
     qtbot.addWidget(wiz)
     wiz.show()
     go_to(wiz, 2)
+    wait_for_install_button(qtbot, wiz)
     with qtbot.waitSignal(wiz.install_finished, timeout=10000) as sig:
         qtbot.mouseClick(wiz.install_page.install_button, Qt.LeftButton)
     assert rec.ran == ["srim"]  # the admin step never ran
@@ -121,7 +135,7 @@ def test_install_runs_plain_steps_and_only_shows_admin_commands(qtbot, rec, plan
     assert "sudo apt-get install wine" in wiz.install_page.commands_box.toPlainText()
 
 
-def test_the_wizard_cannot_be_closed_while_installing(qtbot, rec, plan_for):
+def test_the_wizard_cannot_be_left_while_installing(qtbot, rec, plan_for):
     rec.gate = threading.Event()
     wiz = SetupWizard(
         AppSettings(route="container"), checks_fn=ok_checks, plan_fn=plan_for, system="linux"
@@ -129,9 +143,15 @@ def test_the_wizard_cannot_be_closed_while_installing(qtbot, rec, plan_for):
     qtbot.addWidget(wiz)
     wiz.show()
     go_to(wiz, 2)
+    wait_for_install_button(qtbot, wiz)
     try:
         wiz.install_page.install_button.click()
         qtbot.waitUntil(lambda: not wiz.button(QWizard.CancelButton).isEnabled(), timeout=5000)
+        assert not wiz.button(QWizard.BackButton).isEnabled()
+        assert not wiz.button(QWizard.NextButton).isEnabled()
+        wiz.back()
+        wiz.next()
+        assert wiz.currentId() == 2  # the page did not change
         wiz.reject()
         assert wiz.isVisible()
         assert "Installing" in wiz.install_page.status_text()
@@ -140,6 +160,7 @@ def test_the_wizard_cannot_be_closed_while_installing(qtbot, rec, plan_for):
     with qtbot.waitSignal(wiz.install_finished, timeout=10000):
         pass
     assert wiz.button(QWizard.CancelButton).isEnabled()
+    assert wiz.button(QWizard.BackButton).isEnabled()
 
 
 def test_closing_is_ignored_while_installing(qtbot, rec, plan_for):
@@ -150,6 +171,7 @@ def test_closing_is_ignored_while_installing(qtbot, rec, plan_for):
     qtbot.addWidget(wiz)
     wiz.show()
     go_to(wiz, 2)
+    wait_for_install_button(qtbot, wiz)
     try:
         wiz.install_page.install_button.click()
         qtbot.waitUntil(lambda: not wiz.button(QWizard.CancelButton).isEnabled(), timeout=5000)
@@ -159,7 +181,82 @@ def test_closing_is_ignored_while_installing(qtbot, rec, plan_for):
         rec.gate.set()
     with qtbot.waitSignal(wiz.install_finished, timeout=10000):
         pass
-    qtbot.waitUntil(lambda: not workers._live, timeout=5000)
+
+
+def test_an_install_that_raises_re_enables_the_page_and_reports_it(
+    qtbot, monkeypatch, rec, plan_for
+):
+    def broken(steps, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(wizard_module, "run_steps", broken)
+    wiz = SetupWizard(
+        AppSettings(route="container"), checks_fn=ok_checks, plan_fn=plan_for, system="linux"
+    )
+    qtbot.addWidget(wiz)
+    wiz.show()
+    go_to(wiz, 2)
+    wait_for_install_button(qtbot, wiz)
+    with qtbot.waitSignal(wiz.install_finished, timeout=10000) as sig:
+        wiz.install_page.install_button.click()
+    assert sig.args[0].failed == "install"
+    assert "boom" in wiz.install_page.status_text()
+    assert "[fail] install: boom" in wiz.install_page.log.toPlainText()
+    assert wiz.button(QWizard.BackButton).isEnabled()
+    assert wiz.button(QWizard.CancelButton).isEnabled()
+    assert wiz.install_page.copy_button.isEnabled()
+    assert wiz.install_page.check_button.isEnabled()
+    qtbot.waitUntil(lambda: wiz.install_page.install_button.isEnabled(), timeout=5000)
+
+
+def test_a_step_that_fails_is_named_on_the_page(qtbot, monkeypatch, plan_for):
+    monkeypatch.setattr(
+        wizard_module,
+        "run_steps",
+        lambda steps, **kwargs: RunOutcome(failed="srim"),
+    )
+    wiz = SetupWizard(
+        AppSettings(route="container"), checks_fn=ok_checks, plan_fn=plan_for, system="linux"
+    )
+    qtbot.addWidget(wiz)
+    wiz.show()
+    go_to(wiz, 2)
+    wait_for_install_button(qtbot, wiz)
+    with qtbot.waitSignal(wiz.install_finished, timeout=10000) as sig:
+        wiz.install_page.install_button.click()
+    assert sig.args[0].failed == "srim"
+    assert "The install stopped at srim" in wiz.install_page.status_text()
+    assert wiz.button(QWizard.CancelButton).isEnabled()
+
+
+def test_an_installed_step_shows_only_its_name(qtbot, rec, plan_for):
+    rec.done.add("srim")
+    wiz = SetupWizard(
+        AppSettings(route="wine"), checks_fn=ok_checks, plan_fn=plan_for, system="linux"
+    )
+    qtbot.addWidget(wiz)
+    wiz.show()
+    go_to(wiz, 2)
+    # the wine route plans wine-packages, wine and srim
+    qtbot.waitUntil(lambda: wiz.install_page.step_list.count() == 3, timeout=5000)
+    items = [wiz.install_page.step_list.item(i).text() for i in range(3)]
+    assert "srim: installed" in items
+    assert "summary of srim" not in "".join(items)
+
+
+def test_only_admin_steps_left_disables_install(qtbot, rec, plan_for):
+    rec.done.update({"srim", "wine"})
+    wiz = SetupWizard(
+        AppSettings(route="wine"), checks_fn=ok_checks, plan_fn=plan_for, system="linux"
+    )
+    qtbot.addWidget(wiz)
+    wiz.show()
+    go_to(wiz, 2)
+    qtbot.waitUntil(
+        lambda: "Run the commands below" in wiz.install_page.status_text(), timeout=5000
+    )
+    assert not wiz.install_page.install_button.isEnabled()
+    assert "sudo apt-get install wine" in wiz.install_page.commands_box.toPlainText()
 
 
 def test_finish_saves_the_route(qtbot, app_home, rec, plan_for):
@@ -173,7 +270,6 @@ def test_finish_saves_the_route(qtbot, app_home, rec, plan_for):
     qtbot.waitUntil(lambda: "SRIM is ready." in wiz.done_page.result_text(), timeout=5000)
     wiz.accept()
     assert load_settings().route == "container"
-    qtbot.waitUntil(lambda: not workers._live, timeout=5000)
 
 
 def test_the_done_page_lists_what_is_still_wrong(qtbot, plan_for):
@@ -187,6 +283,58 @@ def test_the_done_page_lists_what_is_still_wrong(qtbot, plan_for):
     wiz.next()
     qtbot.waitUntil(lambda: "trim" in wiz.done_page.result_text(), timeout=5000)
     assert "SRIM is ready." not in wiz.done_page.result_text()
+
+
+def test_a_stale_done_page_check_is_ignored(qtbot, plan_for):
+    gate = threading.Event()
+    calls = []
+
+    def checks(route):
+        calls.append(route)
+        if len(calls) == 1:
+            gate.wait(5)
+            return [{"name": "old", "ok": False, "detail": "stale", "fix": "x"}]
+        return ok_checks(route)
+
+    wiz = SetupWizard(AppSettings(), checks_fn=checks, plan_fn=plan_for, system="linux")
+    qtbot.addWidget(wiz)
+    wiz.show()
+    go_to(wiz, 1)
+    wiz.route_page.button("container").setChecked(True)
+    wiz.next()  # install
+    wiz.next()  # done: the first check starts and blocks
+    try:
+        wiz.back()  # back to install (allowed: nothing is installing)
+        wiz.next()  # done again: the second check runs at once
+        qtbot.waitUntil(lambda: "SRIM is ready." in wiz.done_page.result_text(), timeout=5000)
+    finally:
+        gate.set()
+    qtbot.waitUntil(lambda: not workers._live, timeout=5000)
+    assert "SRIM is ready." in wiz.done_page.result_text()
+    assert "stale" not in wiz.done_page.result_text()
+
+
+def test_a_check_that_outlives_finish_is_ignored(qtbot, app_home, plan_for):
+    gate = threading.Event()
+
+    def checks(route):
+        gate.wait(5)
+        return [{"name": "late", "ok": False, "detail": "x", "fix": "y"}]
+
+    wiz = SetupWizard(AppSettings(), checks_fn=checks, plan_fn=plan_for, system="linux")
+    qtbot.addWidget(wiz)
+    wiz.show()
+    go_to(wiz, 1)
+    wiz.route_page.button("container").setChecked(True)
+    wiz.next()
+    wiz.next()
+    try:
+        wiz.accept()
+        assert wiz.is_closed()
+    finally:
+        gate.set()
+    qtbot.waitUntil(lambda: not workers._live, timeout=5000)
+    assert load_settings().route == "container"
 
 
 def test_cancel_does_not_save_the_route(qtbot, app_home, plan_for):
@@ -230,7 +378,6 @@ def test_the_window_opens_setup_and_shows_geometry_after_it(qtbot, monkeypatch):
     before = len(checks_runs)
     win.open_setup()
     qtbot.waitUntil(lambda: len(checks_runs) > before, timeout=5000)
-    qtbot.waitUntil(lambda: not workers._live, timeout=5000)
     assert win.tabs.currentIndex() == 0
 
 
@@ -245,6 +392,24 @@ def test_a_cancelled_setup_leaves_the_window_alone(qtbot, monkeypatch):
     assert win.tabs.currentIndex() == 2
 
 
+def test_open_setup_never_runs_two_wizards_and_not_while_closing(qtbot, monkeypatch):
+    execs = []
+    win = MainWindow(AppSettings(route="wine"), checks_fn=lambda r: [])
+    qtbot.addWidget(win)
+
+    def fake_exec(self):
+        execs.append(True)
+        win.open_setup()  # a nested request while the wizard is open does nothing
+        return QDialog.DialogCode.Rejected
+
+    monkeypatch.setattr(SetupWizard, "exec", fake_exec)
+    win.open_setup()
+    assert execs == [True]
+    win.close()
+    win.open_setup()
+    assert execs == [True]
+
+
 def test_the_setup_opens_on_the_first_check_that_needs_it(qtbot, monkeypatch):
     opened = []
     failing = [{"name": "trim", "ok": False, "detail": "x", "fix": "y"}]
@@ -254,6 +419,7 @@ def test_the_setup_opens_on_the_first_check_that_needs_it(qtbot, monkeypatch):
     app_main.open_setup_when_needed(win)
     with qtbot.waitSignal(win.checked, timeout=5000):
         win.refresh_checks()
+    qtbot.wait(50)
     assert opened == []  # the route is set and every check passes
 
     win2 = MainWindow(AppSettings(route="wine"), checks_fn=lambda r: failing)
@@ -262,7 +428,8 @@ def test_the_setup_opens_on_the_first_check_that_needs_it(qtbot, monkeypatch):
     app_main.open_setup_when_needed(win2)
     with qtbot.waitSignal(win2.checked, timeout=5000):
         win2.refresh_checks()
-    assert opened == [True]
+    qtbot.waitUntil(lambda: opened == [True], timeout=5000)  # opened on the next loop turn
     with qtbot.waitSignal(win2.checked, timeout=5000):
         win2.refresh_checks()
+    qtbot.wait(50)
     assert opened == [True]  # a later check does not reopen it

@@ -1,5 +1,6 @@
 """``pysrim2 app``: start the desktop app. This module is the only one that imports Qt."""
 
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 
 from srim.app.guidance import setup_guidance
@@ -12,14 +13,18 @@ EXIT_WAIT_MS = 5000
 
 
 def open_setup_when_needed(window: MainWindow) -> None:
-    """Open the setup wizard on the first check whose guidance asks for it; later checks do not."""
+    """Open the setup wizard on the first check whose guidance asks for it; later checks do not.
+
+    The wizard opens on the next turn of the event loop, not inside the ``checked`` slot, so the
+    modal loop does not run nested in the signal.
+    """
     asked = []
 
     def on_checked(checks: list[dict]) -> None:
         if asked or not setup_guidance(checks, window.settings.route):
             return
         asked.append(True)
-        window.open_setup()
+        QTimer.singleShot(0, window.open_setup)
 
     window.checked.connect(on_checked)
 
