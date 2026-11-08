@@ -4,12 +4,29 @@ from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 
 from srim.app.guidance import setup_guidance
-from srim.app.settings import load_settings
+from srim.app.routes import available_routes
+from srim.app.settings import AppSettings, load_settings
 from srim.app.theme import apply_theme
 from srim.app.window import MainWindow
 from srim.app.workers import wait_for_threads
+from srim.installer import steps
 
 EXIT_WAIT_MS = 5000
+
+
+def startup_settings() -> AppSettings:
+    """Return the saved settings for this platform.
+
+    A saved route this platform does not offer (settings copied from another machine, or wine
+    saved on macOS) is dropped in memory only: the guidance then asks for a route, and the file
+    keeps its value until the wizard finishes.
+    """
+    settings = load_settings()
+    if settings.route is not None and settings.route not in available_routes(
+        steps.current_platform()
+    ):
+        settings.route = None
+    return settings
 
 
 def open_setup_when_needed(window: MainWindow) -> None:
@@ -33,7 +50,7 @@ def main(argv: list[str] | None = None) -> int:
     """Show the main window and run the event loop until it closes; return the exit code."""
     app = QApplication.instance() or QApplication(["pysrim2", *(argv or [])])
     app.setApplicationName("pysrim2")
-    settings = load_settings()
+    settings = startup_settings()
     apply_theme(app, settings.theme)
     window = MainWindow(settings)
     open_setup_when_needed(window)
