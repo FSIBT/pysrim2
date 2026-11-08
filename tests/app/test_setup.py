@@ -390,14 +390,15 @@ def test_the_window_opens_setup_and_shows_geometry_after_it(qtbot, monkeypatch):
     assert win.tabs.currentIndex() == 0
 
 
-def test_a_cancelled_setup_leaves_the_window_alone(qtbot, monkeypatch):
+def test_a_cancelled_setup_leaves_the_tab_alone_but_checks_again(qtbot, monkeypatch):
+    # Cancel can follow an install that already ran, so the window checks again either way.
     runs = []
     win = MainWindow(AppSettings(route="wine"), checks_fn=lambda r: runs.append(r) or [])
     qtbot.addWidget(win)
     win.tabs.setCurrentIndex(2)
     monkeypatch.setattr(SetupWizard, "exec", lambda self: QDialog.DialogCode.Rejected)
     win.open_setup()
-    assert runs == []
+    qtbot.waitUntil(lambda: runs == ["wine"], timeout=5000)
     assert win.tabs.currentIndex() == 2
 
 

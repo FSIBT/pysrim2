@@ -113,9 +113,10 @@ class MainWindow(QMainWindow):
     # --- setup and checks ----------------------------------------------------------
 
     def open_setup(self) -> None:
-        """Run the setup wizard (modal); when it finishes, show the Geometry tab and check again.
+        """Run the setup wizard (modal), then check again; Accept also shows the Geometry tab.
 
-        Nothing happens while the window is closing or while a wizard is already open.
+        Cancel checks again too, because an install may have run inside the wizard before it was
+        cancelled. Nothing happens while the window is closing or while a wizard is already open.
         """
         if self._closing or self._setup_open:
             return
@@ -131,7 +132,7 @@ class MainWindow(QMainWindow):
             return
         if result == QDialog.DialogCode.Accepted:
             self.tabs.setCurrentIndex(0)
-            self.refresh_checks()
+        self.refresh_checks()
 
     def _on_jump(self, target: str) -> None:
         if target == SETUP_TARGET:
