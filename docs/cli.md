@@ -34,9 +34,9 @@ default set for your platform:
 Components: `srim` (download SRIM-2013, verify its checksum, keep
 `LEGAL.rtf` next to it), `vb5` (Windows: Visual Basic 5 runtime and OCX
 controls), `wine` (Linux: wine packages and the private prefix), `runtime`
-(Podman), `image` (pull `ghcr.io/fsibt/pysrim2`, see {doc}`container`) and
-`skill` (see {doc}`agents`) and `app` (the desktop app's PySide6 and matplotlib into
-this pysrim2 install; see {doc}`app`). Steps already satisfied print `[ok] ...: already
+(Podman), `image` (pull `ghcr.io/fsibt/pysrim2`, see {doc}`container`), `skill`
+(see {doc}`agents`) and `app` (the desktop app's PySide6 and matplotlib into this pysrim2
+install; see {doc}`app`). Steps already satisfied print `[ok] ...: already
 installed`.
 
 Options:
