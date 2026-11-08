@@ -18,8 +18,8 @@ def startup_settings() -> AppSettings:
     """Return the saved settings for this platform.
 
     A saved route this platform does not offer (settings copied from another machine, or wine
-    saved on macOS) is dropped in memory only: the guidance then asks for a route, and the file
-    keeps its value until the wizard finishes.
+    saved on macOS) is dropped in memory only: the guidance then asks for a route. The file is not
+    rewritten here; the next save (the wizard's Finish or a theme change) writes the new value.
     """
     settings = load_settings()
     if settings.route is not None and settings.route not in available_routes(

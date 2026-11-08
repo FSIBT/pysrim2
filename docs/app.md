@@ -42,7 +42,7 @@ If the app is not installed, the command says so and asks you to run `pysrim2 in
 
 The setup opens by itself on the first check if no route is chosen yet or a check is not
 ready. A route saved on another machine, or one this platform does not offer, counts as no
-route until you choose one; the settings file keeps it until the wizard finishes. You can
+route until you choose one; the app does not change the settings file at startup. You can
 reopen it at any time from the **Setup** menu (**Run setup…**), or by
 clicking the setup link in the status bar.
 
