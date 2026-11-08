@@ -373,6 +373,27 @@ def test_an_unavailable_component_is_shown_on_the_page(qtbot):
     assert wiz.button(QWizard.NextButton).isEnabled()
 
 
+def test_a_system_exit_in_an_install_still_unlocks_the_wizard(qtbot, monkeypatch, rec, plan_for):
+    def exits(steps, **kwargs):
+        raise SystemExit(1)
+
+    monkeypatch.setattr(wizard_module, "run_steps", exits)
+    wiz = SetupWizard(
+        AppSettings(route="container"), checks_fn=ok_checks, plan_fn=plan_for, system="linux"
+    )
+    qtbot.addWidget(wiz)
+    wiz.show()
+    go_to(wiz, 2)
+    wait_for_install_button(qtbot, wiz)
+    with qtbot.waitSignal(wiz.install_finished, timeout=10000) as sig:
+        wiz.install_page.install_button.click()
+    assert sig.args[0].failed == "install"
+    assert "[fail] install: 1" in wiz.install_page.log.toPlainText()
+    assert wiz.button(QWizard.BackButton).isEnabled()
+    assert wiz.button(QWizard.CancelButton).isEnabled()
+    qtbot.waitUntil(lambda: wiz.install_page.install_button.isEnabled(), timeout=5000)
+
+
 def test_the_window_opens_setup_and_shows_geometry_after_it(qtbot, monkeypatch):
     checks_runs = []
 

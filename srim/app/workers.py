@@ -26,9 +26,11 @@ class _Worker(QThread):
         self._fn = fn
 
     def run(self) -> None:
+        # BaseException, not Exception: a SystemExit or KeyboardInterrupt from a step must still
+        # reach the GUI thread, or the page stays on "Checking…" or "Installing…" and locked.
         try:
             value = self._fn()
-        except Exception as error:
+        except BaseException as error:
             self.errored.emit(error)
         else:
             self.succeeded.emit(value)
