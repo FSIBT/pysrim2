@@ -21,6 +21,11 @@ from srim.app.theme import apply_theme  # noqa: E402
 from srim.app.window import MainWindow  # noqa: E402
 
 
+def no_wizard(monkeypatch):
+    """The setup wizard is modal; these tests only check that it is asked for."""
+    monkeypatch.setattr(window_module.SetupWizard, "exec", lambda self: 0)
+
+
 @pytest.fixture
 def reset_theme(qapp):
     yield
@@ -40,7 +45,8 @@ def test_the_window_has_the_tabs_and_the_menus(qtbot):
     assert {a.text() for a in win.menuBar().actions()} >= {"&File", "&Setup", "&View", "&Help"}
 
 
-def test_a_failing_check_shows_in_the_status_bar_and_a_click_asks_for_setup(qtbot):
+def test_a_failing_check_shows_in_the_status_bar_and_a_click_asks_for_setup(qtbot, monkeypatch):
+    no_wizard(monkeypatch)
     checks = [
         {
             "name": "trim-exe",
@@ -216,7 +222,8 @@ def test_about_shows_the_version(qtbot, monkeypatch):
     assert shown and srim.__version__ in shown[0][1]
 
 
-def test_run_setup_asks_for_setup(qtbot):
+def test_run_setup_asks_for_setup(qtbot, monkeypatch):
+    no_wizard(monkeypatch)
     win = MainWindow(AppSettings(route="wine"), checks_fn=lambda route: [])
     qtbot.addWidget(win)
     with qtbot.waitSignal(win.setup_requested, timeout=1000):

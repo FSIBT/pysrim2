@@ -4,12 +4,20 @@ from collections.abc import Callable
 
 from PySide6.QtCore import QUrl, Signal
 from PySide6.QtGui import QActionGroup, QDesktopServices, QKeySequence
-from PySide6.QtWidgets import QApplication, QLabel, QMainWindow, QMessageBox, QTabWidget
+from PySide6.QtWidgets import (
+    QApplication,
+    QDialog,
+    QLabel,
+    QMainWindow,
+    QMessageBox,
+    QTabWidget,
+)
 
 import srim
 from srim.app import DOCS_URL
 from srim.app.guidance import Guidance, setup_guidance
 from srim.app.settings import AppSettings, save_settings
+from srim.app.setup import SetupWizard
 from srim.app.statusbar import GuidanceBar
 from srim.app.theme import THEMES, apply_theme
 from srim.app.workers import run_in_thread
@@ -104,8 +112,14 @@ class MainWindow(QMainWindow):
     # --- setup and checks ----------------------------------------------------------
 
     def open_setup(self) -> None:
-        """Open the setup view. Task 5 of the plan fills it in; until then it only says so."""
+        """Run the setup wizard; when it finishes, show the Geometry tab and check again."""
         self.setup_requested.emit()
+        wizard = SetupWizard(self.settings, checks_fn=self._checks_fn, parent=self)
+        result = wizard.exec()
+        wizard.deleteLater()
+        if result == QDialog.DialogCode.Accepted:
+            self.tabs.setCurrentIndex(0)
+            self.refresh_checks()
 
     def _on_jump(self, target: str) -> None:
         if target == SETUP_TARGET:

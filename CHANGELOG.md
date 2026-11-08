@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `pysrim2 install app` installs the desktop app (the new `app` extra: PySide6 and matplotlib) into the running pysrim2, and `pysrim2 app` opens it.
 - `pysrim2 app` opens the desktop window with a status bar that tells you what to do next (the installation checks, with a click to the setup), and a View menu for the system, light or dark theme.
+- `pysrim2 app` shows a welcome screen and a guided setup (first start, or Setup > Run setup…): choose native, wine or container (the recommended one is preselected), install what is missing and check the result. The app never runs a command that needs admin rights; it shows those for you to run in a terminal.
 
 ### Fixed
 
