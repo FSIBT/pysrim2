@@ -4,12 +4,14 @@ Each entry is a material with a name, a density in g/cm³, a phase and its eleme
 :func:`srim.app.model.new_element` makes them, isotopes included). A file that is missing,
 not JSON or not a list reads as no materials, and an entry that is not a mapping, has no
 name or density, or has a bad element is skipped; the rest still load. Writes go through
-the atomic writer of :mod:`srim.app.settings`. Nothing here imports Qt.
+the atomic writer of :mod:`srim.app.settings`. A save or delete that would rewrite a file that
+does not load in full first copies it to ``materials.json.bak``. Nothing here imports Qt.
 """
 
 import json
 import math
 import numbers
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -86,6 +88,25 @@ def _to_json(material: UserMaterial) -> dict:
     }
 
 
+def _loads_in_full(path: Path) -> bool:
+    """True when the file is a list whose every entry is a material (an empty list too)."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(data, list) and all(_material(raw) is not None for raw in data)
+
+
+def _keep_damaged_copy(path: Path) -> None:
+    """Copy a materials file that does not load in full to ``materials.json.bak``.
+
+    Called before the file is rewritten: the rewrite keeps only what loads, so a broken file or
+    entry would otherwise be lost. A missing or intact file gets no copy.
+    """
+    if path.exists() and not _loads_in_full(path):
+        shutil.copyfile(path, path.with_name(path.name + ".bak"))
+
+
 def load_user_materials(path: Path | None = None) -> list[UserMaterial]:
     """The saved materials in file order; a broken file or entry gives none or is skipped."""
     path = path or materials_path()
@@ -118,6 +139,7 @@ def save_user_material(material: UserMaterial, path: Path | None = None) -> None
             out.append(existing)
     if not placed:
         out.append(material)
+    _keep_damaged_copy(path)
     _write_json_atomic(path, [_to_json(m) for m in out], ".materials-")
 
 
@@ -127,4 +149,5 @@ def delete_user_material(name: str, path: Path | None = None) -> None:
     current = load_user_materials(path)
     kept = [m for m in current if m.name != name]
     if len(kept) != len(current):
+        _keep_damaged_copy(path)
         _write_json_atomic(path, [_to_json(m) for m in kept], ".materials-")

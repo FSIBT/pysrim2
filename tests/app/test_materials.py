@@ -92,3 +92,47 @@ def test_the_file_is_written_atomically_and_leaves_no_temporary_files(tmp_path):
     path = tmp_path / "app" / "materials.json"
     save_user_material(glass(), path)
     assert [p.name for p in path.parent.iterdir()] == ["materials.json"]
+
+
+def test_a_broken_file_is_kept_as_bak_before_a_save_rewrites_it(tmp_path):
+    path = tmp_path / "materials.json"
+    original = b"{ not json"
+    path.write_bytes(original)
+    save_user_material(glass("SiO2"), path)
+    assert (tmp_path / "materials.json.bak").read_bytes() == original
+    assert load_user_materials(path) == [glass("SiO2")]
+
+
+def test_a_broken_entry_is_kept_as_bak_before_a_save_rewrites_the_file(tmp_path):
+    path = tmp_path / "materials.json"
+    good = json.dumps({"name": "Kapton", "density_g_cm3": 1.42, "phase": 0, "elements": []})
+    original = f'[{good}, {{"name": "broken"}}]'.encode()
+    path.write_bytes(original)
+    save_user_material(glass("SiO2"), path)
+    assert (tmp_path / "materials.json.bak").read_bytes() == original
+    assert load_user_materials(path) == [glass("SiO2")]
+
+
+def test_a_delete_that_rewrites_a_broken_file_keeps_it_as_bak(tmp_path):
+    path = tmp_path / "materials.json"
+    save_user_material(glass("SiO2"), path)
+    save_user_material(glass("Kapton"), path)
+    entries = json.loads(path.read_text(encoding="utf-8"))
+    entries.append({"name": "broken"})  # no density, no elements: skipped on load
+    path.write_text(json.dumps(entries), encoding="utf-8")
+    original = path.read_bytes()
+    delete_user_material("SiO2", path)
+    assert (tmp_path / "materials.json.bak").read_bytes() == original
+    assert load_user_materials(path) == [glass("Kapton")]
+
+
+def test_an_intact_file_gets_no_bak(tmp_path):
+    path = tmp_path / "materials.json"
+    save_user_material(glass("SiO2"), path)
+    save_user_material(glass("Kapton"), path)
+    assert not (tmp_path / "materials.json.bak").exists()
+
+
+def test_no_file_gets_no_bak(tmp_path):
+    save_user_material(glass("SiO2"), tmp_path / "materials.json")
+    assert not (tmp_path / "materials.json.bak").exists()
