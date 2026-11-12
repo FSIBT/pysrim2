@@ -1,11 +1,11 @@
-"""A value typed but not yet committed (no Enter, no focus change) reaches Save, Undo and friends."""
+"""A value typed but not yet committed (no Enter, no focus change) reaches Save and Undo."""
 
 import pytest
 
 pytest.importorskip("PySide6")
 pytest.importorskip("pytestqt")
 
-from PySide6.QtWidgets import QApplication, QLineEdit, QSpinBox  # noqa: E402
+from PySide6.QtWidgets import QApplication, QLineEdit  # noqa: E402
 
 from srim.app.settings import AppSettings  # noqa: E402
 from srim.app.window import MainWindow  # noqa: E402
