@@ -102,7 +102,7 @@ first row is the layer the beam reaches first. Its columns are:
 
 | Column | What it holds |
 |---|---|
-| Name | A name for the layer (optional; the layer's elements show when it is empty) |
+| Name | A name for the layer (optional; the cell is blank when there is none) |
 | Elements | The elements and their amounts, for example `Si 1, O 2`; an isotope shows as `Si-28 1` |
 | Density (g/cm³) | The density |
 | Thickness | The thickness, shown in the layer's unit |
@@ -121,7 +121,7 @@ displacement, lattice and surface energies in eV. Each new element starts with S
 values (amount 1, displacement 25 eV, lattice 0 eV, surface 3 eV).
 
 **Material…** fills the selected layer from a menu. Its first part is the common materials
-(from the list in `srim/data/compounds.yaml`, with their formula and density); its second part,
+(by name; each one's formula and density come from `srim/data/compounds.yaml`); its second part,
 **My materials**, is what you saved before. A material replaces the layer's name, density, gas
 flag and elements. **Save as material…** keeps the selected layer's density, gas flag and
 elements under a name you choose; saving a name that exists replaces that material. My materials
@@ -151,8 +151,11 @@ number of at least 1.
 
 Each beam quantity has its own editor: **Energy** (keV), **Angle** (degrees), **Azimuth**
 (degrees) and the position **Position y**, **Position z** and **Depth** (nm). Energy and angle
-are always set. Azimuth and the three positions are **Not set** by default, which leaves them
-out of the setup.
+have no **Not set** choice, but an energy that is missing is named by the status bar. Azimuth and
+the three positions are **Not set** by default, which leaves them out of the setup. Setting one
+position coordinate creates the position, with the other two at 0.0. **Not set** on a coordinate
+removes the whole position when the other two are 0.0 (or Not set); otherwise that coordinate is
+stored as 0.0.
 
 Each quantity has a **Kind**:
 
@@ -219,8 +222,9 @@ named here:
 The number of ions is on the Beam tab (`number_ions`); it is written on the ion line of `TRIM.IN`.
 
 A setting that is set back to its default is removed from the setup, and so is the `settings`
-mapping when it becomes empty, so the file holds only what differs from SRIM's defaults. The
-library still writes the description and the ranges flag to `TRIM.IN` even at their defaults.
+mapping when it becomes empty, so the setup holds only what differs from SRIM's defaults. A
+`run.yaml` written by `TRIM.to_spec()` always lists `description` and `ranges`, even at their
+defaults. The `TRIM.IN` file is the same either way: the library writes every setting to it.
 Settings the tab does not show (for example `plot_mode`) and a calculation 4 to 7 from a file
 are kept as they are. A calculation 4 to 7 is shown as "SRIM calculation N" in the menu.
 
@@ -235,8 +239,9 @@ reads with `RunSpec.from_yaml`):
   with **Save setup as…** (Ctrl+Shift+S), which asks for a file.
 
 A setup opened and saved without edits keeps the same contents. Anything the editors do not offer
-(for example calculations 4 to 7, a gas layer, or an inline histogram) is kept as it is; the Beam
-tab shows a value it does not offer as YAML, and it stays until you choose another kind.
+(for example calculations 4 to 7, a `fixed` beam shape, or `settings.plot_mode`) is kept as it
+is; the Beam tab shows a value it does not offer as YAML, and it stays until you choose another
+kind.
 
 Saving refuses an incomplete setup and says what is missing first, and a setup the library refuses
 is saved only once it is fixed. A file that cannot be read or written gives a message, and the
