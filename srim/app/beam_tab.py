@@ -43,7 +43,17 @@ from srim.app.document import DocumentModel
 from srim.app.elements import ElementChoice, element_label
 from srim.app.numbers import parse_number
 from srim.app.periodic import choose_element
-from srim.app.quantity import KINDS, LABELS, PARAMETERS, UNSET, build, describe, text_of, yaml_text
+from srim.app.quantity import (
+    KINDS,
+    LABELS,
+    PARAMETERS,
+    UNSET,
+    build,
+    describe,
+    is_number,
+    text_of,
+    yaml_text,
+)
 from srim.beam.shapes import Histogram
 from srim.spec import SpecError
 
@@ -68,6 +78,11 @@ NUMBER_PATTERN = r"[-+0-9.,eE]*"
 POSITION_KEYS = ("y_nm", "z_nm", "depth_nm")
 HISTOGRAM_FILTER = "Histogram files (*.txt *.dat *.csv);;All files (*)"
 ION_NOT_CHOSEN = "Ion: not chosen"
+
+
+def _is_zero_or_missing(value) -> bool:
+    """True for a Not set coordinate (None) or a plain 0.0 (not a distribution)."""
+    return value is None or (is_number(value) and value == 0)
 
 
 def _number_validator(parent: QWidget) -> QRegularExpressionValidator:
@@ -363,8 +378,6 @@ class BeamTab(QWidget):
         self.number_ions.setKeyboardTracking(False)
         self.number_ions.valueChanged.connect(self._on_number_ions)
 
-        #: the position coordinates the user has left Not set (see :meth:`_set_position`)
-        self._unset: set[str] = set(POSITION_KEYS)
         self.editors: dict[str, QuantityEditor] = {
             "energy_keV": QuantityEditor("Energy", "keV", optional=False, parent=self),
             "angle_deg": QuantityEditor("Angle", "degrees", optional=False, parent=self),
@@ -406,29 +419,17 @@ class BeamTab(QWidget):
             self.number_ions.blockSignals(True)
             self.number_ions.setValue(min(max(count, 1), 2147483647))
             self.number_ions.blockSignals(False)
-        position = ion.get("position") if isinstance(ion.get("position"), dict) else None
-        self._prune_unset(position)
+        position = ion.get("position") if isinstance(ion.get("position"), dict) else {}
         values = {
             "energy_keV": ion.get("energy_keV"),
             "angle_deg": ion.get("angle_deg"),
             "azimuth_deg": ion.get("azimuth_deg"),
         }
+        # No position means every coordinate is Not set; a position shows what it holds.
         for name in POSITION_KEYS:
-            values[name] = None if name in self._unset else (position or {}).get(name)
+            values[name] = position.get(name)
         for key, editor in self.editors.items():
             editor.set_value(values[key])
-
-    def _prune_unset(self, position: dict | None) -> None:
-        """Keep the coordinates shown as Not set in step with the document.
-
-        With no position every coordinate is Not set. With one, a coordinate the document holds
-        as a value (other than 0.0, which is what a Not set coordinate is stored as) is shown as
-        that value.
-        """
-        if position is None:
-            self._unset = set(POSITION_KEYS)
-            return
-        self._unset = {name for name in self._unset if position.get(name) in (0.0, None)}
 
     # --- the edits ---------------------------------------------------------------------
 
@@ -473,27 +474,28 @@ class BeamTab(QWidget):
         self.document.edit(apply)
 
     def _set_position(self, key: str, value) -> None:
-        """Store one coordinate. The position exists while one is set; a Not set one is 0.0.
+        """Store one coordinate of the position.
 
-        With every coordinate Not set there is no position. The document holds 0.0 for a Not set
-        coordinate, and ``_unset`` remembers which ones the user left Not set.
+        A position with no coordinate set is removed. Choosing Not set on a coordinate stores 0.0
+        for it, unless the other two are plain 0.0, in which case the position is removed. Setting
+        a coordinate creates the position with the other two at 0.0 when there is none.
         """
-        if value is None:
-            self._unset.add(key)
-        else:
-            self._unset.discard(key)
 
         def apply(doc: dict) -> None:
             ion_doc = doc.setdefault("ion", {})
-            if self._unset >= set(POSITION_KEYS):
-                ion_doc.pop("position", None)
-                return
             current = ion_doc.get("position")
             current = current if isinstance(current, dict) else {}
+            others = [current.get(name) for name in POSITION_KEYS if name != key]
+            if value is None and all(_is_zero_or_missing(other) for other in others):
+                ion_doc.pop("position", None)
+                return
             position = {}
             for name in POSITION_KEYS:
-                stored = deepcopy(value) if name == key else current.get(name)
-                position[name] = 0.0 if name in self._unset or stored is None else stored
+                if name == key:
+                    position[name] = 0.0 if value is None else deepcopy(value)
+                else:
+                    stored = current.get(name)
+                    position[name] = 0.0 if stored is None else deepcopy(stored)
             ion_doc["position"] = position
 
         self.document.edit(apply)

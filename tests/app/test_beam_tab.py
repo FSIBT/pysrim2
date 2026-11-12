@@ -455,15 +455,85 @@ def test_a_loaded_fixed_shape_is_kept_until_the_user_picks_another_kind(tab, doc
     assert received[-1] == {"gaussian": {"mean": None, "sigma": None}}
 
 
-def test_a_not_set_coordinate_stays_not_set_while_another_is_set(tab, document, with_setup):
+def test_a_not_set_coordinate_next_to_a_set_one_is_stored_as_zero(tab, document, with_setup):
     pick(tab.editors["depth_nm"], "value")
     type_into(tab.editors["depth_nm"].fields["value"], "50")
     pick(tab.editors["y_nm"], "value")
     type_into(tab.editors["y_nm"].fields["value"], "1")
     pick(tab.editors["y_nm"], "unset")
     assert ion(document)["position"] == {"y_nm": 0.0, "z_nm": 0.0, "depth_nm": 50.0}
-    assert tab.editors["y_nm"].kind_box.currentData() == "unset"
+    # The document holds 0.0, so the coordinate shows as a fixed value of 0.0.
+    assert tab.editors["y_nm"].kind_box.currentData() == "value"
+    assert float(tab.editors["y_nm"].fields["value"].text()) == 0.0
     assert float(tab.editors["depth_nm"].fields["value"].text()) == 50.0
+
+
+def test_opening_a_position_shows_its_zero_coordinates_as_fixed_values(
+    tab, document, write_setup, tmp_path, boron_data
+):
+    data = deepcopy(boron_data)
+    data["ion"]["position"] = {"y_nm": 1.0, "z_nm": 0.0, "depth_nm": 0.0}
+    document.open(write_setup(tmp_path / "run.yaml", data))
+    for key, number in (("y_nm", 1.0), ("z_nm", 0.0), ("depth_nm", 0.0)):
+        editor = tab.editors[key]
+        assert editor.kind_box.currentData() == "value"
+        assert float(editor.fields["value"].text()) == number
+
+
+def test_new_and_open_show_the_new_document_not_the_previous_position(
+    tab, document, write_setup, tmp_path, boron_data
+):
+    pick(tab.editors["depth_nm"], "value")
+    type_into(tab.editors["depth_nm"].fields["value"], "50")
+    document.new()
+    assert all(
+        tab.editors[key].kind_box.currentData() == "unset" for key in ("y_nm", "z_nm", "depth_nm")
+    )
+
+    pick(tab.editors["depth_nm"], "value")
+    type_into(tab.editors["depth_nm"].fields["value"], "50")
+    data = deepcopy(boron_data)
+    data["ion"]["position"] = {"y_nm": 1.0, "z_nm": 0.0, "depth_nm": 0.0}
+    document.open(write_setup(tmp_path / "other.yaml", data))
+    assert tab.editors["z_nm"].kind_box.currentData() == "value"
+    assert float(tab.editors["z_nm"].fields["value"].text()) == 0.0
+    assert float(tab.editors["depth_nm"].fields["value"].text()) == 0.0
+
+    document.new()
+    assert tab.editors["z_nm"].kind_box.currentData() == "unset"
+
+
+def test_undo_after_a_coordinate_change_shows_the_restored_state(tab, document, with_setup):
+    pick(tab.editors["depth_nm"], "value")
+    type_into(tab.editors["depth_nm"].fields["value"], "50")
+    pick(tab.editors["y_nm"], "value")
+    type_into(tab.editors["y_nm"].fields["value"], "2")
+    document.undo()
+    assert ion(document)["position"] == {"y_nm": 0.0, "z_nm": 0.0, "depth_nm": 50.0}
+    assert float(tab.editors["y_nm"].fields["value"].text()) == 0.0
+
+
+def test_not_set_on_a_distribution_next_to_zeros_removes_the_position(tab, document, with_setup):
+    document.edit(
+        lambda doc: doc["ion"].update(
+            position={
+                "y_nm": {"gaussian": {"mean": 1.0, "sigma": 0.5}},
+                "z_nm": 0.0,
+                "depth_nm": 0.0,
+            }
+        )
+    )
+    pick(tab.editors["y_nm"], "unset")
+    assert "position" not in ion(document)
+
+
+def test_not_set_next_to_nonzero_coordinates_stores_zero(tab, document, with_setup):
+    document.edit(
+        lambda doc: doc["ion"].update(position={"y_nm": 1.0, "z_nm": 2.0, "depth_nm": 0.0})
+    )
+    pick(tab.editors["y_nm"], "unset")
+    assert ion(document)["position"] == {"y_nm": 0.0, "z_nm": 2.0, "depth_nm": 0.0}
+    assert tab.editors["y_nm"].kind_box.currentData() == "value"
 
 
 def test_undo_of_a_position_shows_its_coordinates_not_set_again(tab, document, with_setup):
