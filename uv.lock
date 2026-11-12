@@ -3,10 +3,10 @@ revision = 5
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.15' and sys_platform == 'win32'",
-    "python_full_version == '3.14.*' and sys_platform == 'win32'",
     "python_full_version >= '3.15' and sys_platform == 'emscripten'",
-    "python_full_version == '3.14.*' and sys_platform == 'emscripten'",
     "python_full_version >= '3.15' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.14.*' and sys_platform == 'win32'",
+    "python_full_version == '3.14.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.14.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
@@ -726,10 +726,10 @@ version = "1.4.0"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "python_full_version >= '3.15' and sys_platform == 'win32'",
-    "python_full_version == '3.14.*' and sys_platform == 'win32'",
     "python_full_version >= '3.15' and sys_platform == 'emscripten'",
-    "python_full_version == '3.14.*' and sys_platform == 'emscripten'",
     "python_full_version >= '3.15' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.14.*' and sys_platform == 'win32'",
+    "python_full_version == '3.14.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.14.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
@@ -2374,10 +2374,10 @@ version = "2.5.4"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "python_full_version >= '3.15' and sys_platform == 'win32'",
-    "python_full_version == '3.14.*' and sys_platform == 'win32'",
     "python_full_version >= '3.15' and sys_platform == 'emscripten'",
-    "python_full_version == '3.14.*' and sys_platform == 'emscripten'",
     "python_full_version >= '3.15' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.14.*' and sys_platform == 'win32'",
+    "python_full_version == '3.14.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.14.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
@@ -3156,8 +3156,8 @@ all = [
     { name = "textual-serve" },
 ]
 app = [
-    { name = "matplotlib" },
-    { name = "pyside6-essentials" },
+    { name = "matplotlib", marker = "python_full_version < '3.15'" },
+    { name = "pyside6-essentials", marker = "python_full_version < '3.15'" },
 ]
 hdf5 = [
     { name = "tables" },
@@ -3181,8 +3181,7 @@ dev = [
     { name = "nbclient" },
     { name = "nbformat" },
     { name = "pre-commit" },
-    { name = "pysrim2", extra = ["app"], marker = "python_full_version < '3.15'" },
-    { name = "pysrim2", extra = ["hdf5", "parquet", "tui"] },
+    { name = "pysrim2", extra = ["app", "hdf5", "parquet", "tui"] },
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "pytest-mock" },
@@ -3200,12 +3199,12 @@ docs = [
 
 [package.metadata]
 requires-dist = [
-    { name = "matplotlib", marker = "extra == 'app'" },
+    { name = "matplotlib", marker = "python_full_version < '3.15' and extra == 'app'" },
     { name = "matplotlib", marker = "extra == 'plot'" },
     { name = "numpy" },
     { name = "pandas" },
     { name = "pyarrow", marker = "extra == 'parquet'" },
-    { name = "pyside6-essentials", marker = "extra == 'app'", specifier = ">=6.8" },
+    { name = "pyside6-essentials", marker = "python_full_version < '3.15' and extra == 'app'", specifier = ">=6.8" },
     { name = "pysrim2", extras = ["parquet", "hdf5", "plot", "tui"], marker = "extra == 'all'" },
     { name = "pyyaml" },
     { name = "tables", marker = "extra == 'hdf5'" },
@@ -3222,8 +3221,7 @@ dev = [
     { name = "nbclient" },
     { name = "nbformat" },
     { name = "pre-commit" },
-    { name = "pysrim2", extras = ["parquet", "hdf5", "tui"], marker = "python_full_version >= '3.15'" },
-    { name = "pysrim2", extras = ["parquet", "hdf5", "tui", "app"], marker = "python_full_version < '3.15'" },
+    { name = "pysrim2", extras = ["parquet", "hdf5", "tui", "app"] },
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "pytest-mock" },
@@ -3694,10 +3692,10 @@ version = "4.0"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "python_full_version >= '3.15' and sys_platform == 'win32'",
-    "python_full_version == '3.14.*' and sys_platform == 'win32'",
     "python_full_version >= '3.15' and sys_platform == 'emscripten'",
-    "python_full_version == '3.14.*' and sys_platform == 'emscripten'",
     "python_full_version >= '3.15' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.14.*' and sys_platform == 'win32'",
+    "python_full_version == '3.14.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.14.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
@@ -3789,10 +3787,10 @@ version = "9.2.0"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "python_full_version >= '3.15' and sys_platform == 'win32'",
-    "python_full_version == '3.14.*' and sys_platform == 'win32'",
     "python_full_version >= '3.15' and sys_platform == 'emscripten'",
-    "python_full_version == '3.14.*' and sys_platform == 'emscripten'",
     "python_full_version >= '3.15' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.14.*' and sys_platform == 'win32'",
+    "python_full_version == '3.14.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.14.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'emscripten'",

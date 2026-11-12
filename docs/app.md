@@ -28,6 +28,10 @@ pip install "pysrim2[app]"
 In a source checkout (an editable install) the command does not run anything; it prints
 `uv sync --extra app` for you to run in the checkout.
 
+The app needs Python 3.14 or older for now: PySide6 does not support Python 3.15 yet. On
+Python 3.15 the `app` extra installs nothing, and `pysrim2 install app` and `pysrim2 app`
+say so. Use Python 3.14 for the app, for example `uv tool install --python 3.14 "pysrim2[app]"`.
+
 Installing the app needs no administrator rights.
 
 ## Start

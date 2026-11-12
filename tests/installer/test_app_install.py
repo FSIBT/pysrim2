@@ -5,7 +5,13 @@ import pytest
 from srim import cli
 from srim.installer import app as app_install
 from srim.installer import steps
-from srim.installer.app import app_command, install_kind, installed_extras
+from srim.installer.app import app_command, app_supported, install_kind, installed_extras
+
+
+@pytest.fixture(autouse=True)
+def _supported_python(monkeypatch):
+    """The install tests run on every Python; the 3.15 limit has tests of its own."""
+    monkeypatch.setattr(app_install, "app_supported", lambda: True)
 
 
 def test_a_uv_tool_install_keeps_its_extras(tmp_path):
@@ -111,3 +117,25 @@ def test_pysrim2_app_without_the_extra_says_how_to_install(monkeypatch, capsys):
     monkeypatch.setattr(app_install, "app_available", lambda: False)
     assert cli.main(["app"]) == 1
     assert "run: pysrim2 install app" in capsys.readouterr().err
+
+
+def test_the_app_needs_python_3_14_or_older():
+    assert app_supported((3, 11))
+    assert app_supported((3, 14, 2))
+    assert not app_supported((3, 15))
+    assert not app_supported((3, 16, 0))
+
+
+def test_install_app_on_python_3_15_says_why_and_installs_nothing(monkeypatch, capsys):
+    monkeypatch.setattr(app_install, "app_supported", lambda: False)
+    ran = []
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: ran.append(a))
+    assert cli.main(["install", "app"]) == 1
+    assert "needs Python 3.14 or older" in capsys.readouterr().err
+    assert ran == []
+
+
+def test_pysrim2_app_on_python_3_15_says_why(monkeypatch, capsys):
+    monkeypatch.setattr(app_install, "app_supported", lambda: False)
+    assert cli.main(["app"]) == 1
+    assert "needs Python 3.14 or older" in capsys.readouterr().err

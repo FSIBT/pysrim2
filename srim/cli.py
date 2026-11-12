@@ -337,6 +337,9 @@ def _install(args) -> int:
 
 def _app(args) -> int:
     """Open the desktop app; the Qt code is imported only once the extra is known to be there."""
+    if not app_install.app_supported():
+        print(app_install.APP_PYTHON_NOTE, file=sys.stderr)
+        return EXIT_FAILED
     if not app_install.app_available():
         print("the desktop app is not installed; run: pysrim2 install app", file=sys.stderr)
         return EXIT_FAILED

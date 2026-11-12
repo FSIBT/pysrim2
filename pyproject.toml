@@ -48,8 +48,12 @@ hdf5 = ["tables"]
 plot = ["matplotlib"]
 # live views of `pysrim2 scan run --ui plot|dashboard|web` (plot: textual-plotext; web: textual-serve)
 tui = ["textual>=0.86.2", "textual-plotext>=1.0.1", "textual-serve>=1.1.3"]
-# the desktop app (`pysrim2 app`); installed by `pysrim2 install app`
-app = ["PySide6-Essentials>=6.8", "matplotlib"]
+# the desktop app (`pysrim2 app`); installed by `pysrim2 install app`. Not on Python 3.15 yet:
+# importing PySide6 breaks its lazy imports (e.g. concurrent.futures)
+app = [
+    "PySide6-Essentials>=6.8; python_version < '3.15'",
+    "matplotlib; python_version < '3.15'",
+]
 all = ["pysrim2[parquet,hdf5,plot,tui]"]
 
 [project.scripts]
@@ -91,10 +95,9 @@ dev = [
     "nbclient",
     "ipykernel",
     "nbformat",
-    # PySide6 breaks Python 3.15's lazy imports (e.g. concurrent.futures) once it is imported,
-    # and pytest-qt imports it when pytest starts; 3.15 tests the library without the app
-    "pysrim2[parquet,hdf5,tui,app]; python_version < '3.15'",
-    "pysrim2[parquet,hdf5,tui]; python_version >= '3.15'",
+    # the app extra is empty on Python 3.15, and pytest-qt would import PySide6 when pytest
+    # starts, so 3.15 tests the library without the app
+    "pysrim2[parquet,hdf5,tui,app]",
     "pytest-qt>=4.4; python_version < '3.15'",
 ]
 docs = [

@@ -3,6 +3,7 @@
 How it is installed depends on how pysrim2 was installed: a ``uv tool`` install is reinstalled
 with the extras it already has plus ``app``; a pip install gets ``pysrim2[app]`` at the same
 version; a source checkout (editable) is told to run ``uv sync --extra app`` instead.
+On Python 3.15 and newer the app is not offered (see ``app_supported``).
 """
 
 import importlib.metadata
@@ -16,11 +17,17 @@ import tomllib
 from pathlib import Path
 
 import srim
-from srim.installer.steps import PACKAGE_TIMEOUT_SECONDS, Step, register
+from srim.installer.steps import PACKAGE_TIMEOUT_SECONDS, ComponentUnavailable, Step, register
 
 APP_PACKAGES = ("PySide6", "matplotlib")
 RECEIPT = "uv-receipt.toml"
 EDITABLE_HINT = "# in your pysrim2 checkout run: uv sync --extra app"
+# PySide6 breaks Python 3.15's lazy imports (concurrent.futures, used by scans) once it is
+# imported, so the app extra is limited to older Pythons until PySide6 supports 3.15.
+APP_PYTHON_LIMIT = (3, 15)
+APP_PYTHON_NOTE = (
+    "the desktop app needs Python 3.14 or older (PySide6 does not support Python 3.15 yet)"
+)
 
 
 class AppInstallError(RuntimeError):
@@ -35,6 +42,11 @@ class _FindUv:
 
 
 _FIND_UV = _FindUv()
+
+
+def app_supported(version: tuple[int, ...] = tuple(sys.version_info)) -> bool:
+    """True when the app can run on this Python (``version``: the major and minor numbers)."""
+    return tuple(version[:2]) < APP_PYTHON_LIMIT
 
 
 def app_available() -> bool:
@@ -118,6 +130,8 @@ def _run(cmd: list[str]) -> None:
 
 
 def _app_step() -> Step:
+    if not app_supported():
+        raise ComponentUnavailable("app", APP_PYTHON_NOTE)
     kind = install_kind()
     extras: set[str] = set()
     if kind == "uv-tool":
