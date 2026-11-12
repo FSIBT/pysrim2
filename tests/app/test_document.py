@@ -119,6 +119,16 @@ def test_open_a_missing_or_broken_file_leaves_the_document_unchanged(tmp_path):
     assert doc.doc == before and doc.path is None
 
 
+def test_a_binary_file_is_refused_on_open_and_changes_nothing(tmp_path):
+    doc = DocumentModel()
+    before = deepcopy(doc.doc)
+    binary = tmp_path / "run.yaml"
+    binary.write_bytes(b"\xff\xfe\x00\x81\x80not text at all")
+    with pytest.raises(SpecError, match="not a text file"):
+        doc.open(binary)
+    assert doc.doc == before and doc.path is None and not doc.can_undo
+
+
 def test_a_histogram_file_that_is_broken_is_refused_on_open(tmp_path, boron_data, write_setup):
     source = tmp_path / "spread.txt"
     source.write_text(SPREAD, encoding="utf-8")

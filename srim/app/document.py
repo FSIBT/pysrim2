@@ -115,6 +115,8 @@ class DocumentModel(QObject):
             spec = RunSpec.from_yaml(path)
         except OSError as error:
             raise SpecError(f"cannot read {path}: {error.strerror or error}") from error
+        except UnicodeDecodeError as error:
+            raise SpecError(f"{path} is not a text file: {error}") from error
         doc = from_spec(spec)
         self._doc = doc
         self._path = path

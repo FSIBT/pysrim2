@@ -416,6 +416,20 @@ def test_a_broken_setup_shows_the_message_and_keeps_the_document(qtbot, monkeypa
     assert win.document.path is None
 
 
+def test_a_binary_file_shows_the_message_and_keeps_the_document(qtbot, monkeypatch, tmp_path):
+    binary = tmp_path / "run.yaml"
+    binary.write_bytes(b"\xff\xfe\x00\x81\x80not text")
+    warnings = []
+    monkeypatch.setattr(
+        QMessageBox, "warning", lambda parent, title, text, *a, **k: warnings.append(text)
+    )
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *a, **k: (str(binary), ""))
+    win = window_with(qtbot)
+    win.open_action.trigger()
+    assert warnings and "not a text file" in warnings[0]
+    assert win.document.path is None
+
+
 def test_save_writes_the_open_setup_in_place(qtbot, boron_data, write_setup, tmp_path):
     path = write_setup(tmp_path / "run.yaml", boron_data)
     win = window_with(qtbot)
