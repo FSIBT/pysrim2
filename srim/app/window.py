@@ -116,10 +116,10 @@ class MainWindow(QMainWindow):
         edit_menu = menus.addMenu("&Edit")
         self.undo_action = edit_menu.addAction("&Undo")
         self.undo_action.setShortcut(QKeySequence(QKeySequence.StandardKey.Undo))
-        self.undo_action.triggered.connect(lambda: self.document.undo())
+        self.undo_action.triggered.connect(self._undo)
         self.redo_action = edit_menu.addAction("&Redo")
         self.redo_action.setShortcut(QKeySequence(QKeySequence.StandardKey.Redo))
-        self.redo_action.triggered.connect(lambda: self.document.redo())
+        self.redo_action.triggered.connect(self._redo)
 
         setup_menu = menus.addMenu("&Setup")
         self.setup_action = setup_menu.addAction("Run setup…")
@@ -171,8 +171,33 @@ class MainWindow(QMainWindow):
         self.setWindowModified(document.is_modified)
         self._show_status()
 
+    def _commit_pending(self) -> None:
+        """Commit the value typed in the focused field before a command uses the document.
+
+        A spin box or line edit commits when Enter is pressed or when it loses focus. A shortcut
+        or a menu does not take the focus away, so a typed value would be lost. Clearing the focus
+        makes the field commit: a spin box or line edit emits its signals on focus-out, and a
+        table's cell editor is committed and closed by its delegate. Only a field of this window
+        counts. The field does not get the focus back.
+        """
+        widget = QApplication.focusWidget()
+        if widget is None or widget.window() is not self:
+            return
+        widget.clearFocus()
+
+    def _undo(self) -> None:
+        """Undo the last edit. A value typed and not yet committed is committed first, so it
+        becomes an edit of its own and undo reverts it (not the edit before it)."""
+        self._commit_pending()
+        self.document.undo()
+
+    def _redo(self) -> None:
+        self._commit_pending()
+        self.document.redo()
+
     def _may_discard(self) -> bool:
         """True when nothing unsaved would be lost, or the user agrees to discard the edits."""
+        self._commit_pending()
         if not self.document.is_modified:
             return True
         buttons = QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
@@ -186,6 +211,7 @@ class MainWindow(QMainWindow):
             self.document.new()
 
     def open_setup_file(self) -> None:
+        self._commit_pending()
         folder = str(self.document.base_dir) if self.document.base_dir else ""
         path, _ = QFileDialog.getOpenFileName(self, "Open run setup", folder, FILE_FILTER)
         if not path:
@@ -198,12 +224,14 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Open setup", str(error))
 
     def save_setup(self) -> None:
+        self._commit_pending()
         if self.document.path is None:
             self.save_setup_as()
             return
         self._save_to(self.document.path)
 
     def save_setup_as(self) -> None:
+        self._commit_pending()
         if self.document.base_dir is not None:
             start = str(self.document.base_dir / "run.yaml")
         else:
