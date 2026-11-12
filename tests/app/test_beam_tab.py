@@ -19,8 +19,10 @@ from srim.app import window as window_module  # noqa: E402
 from srim.app.beam_tab import BeamTab, HistogramPreview  # noqa: E402
 from srim.app.document import DocumentModel  # noqa: E402
 from srim.app.elements import ElementChoice  # noqa: E402
+from srim.app.model import BINNED_AUTO, BINNED_TEXT, EXACT_TEXT, to_spec  # noqa: E402
 from srim.app.settings import AppSettings  # noqa: E402
 from srim.app.window import MainWindow  # noqa: E402
+from srim.beam.binned import make_bins  # noqa: E402
 from srim.beam.shapes import Histogram  # noqa: E402
 from srim.spec import SpecError  # noqa: E402
 
@@ -547,3 +549,215 @@ def test_undo_of_a_position_shows_its_coordinates_not_set_again(tab, document, w
     document.redo()
     assert ion(document)["position"] == {"y_nm": 0.0, "z_nm": 0.0, "depth_nm": 50.0}
     assert tab.editors["depth_nm"].fields["value"].text() == "50.0"
+
+
+# --- exact or binned, and the distribution plots -----------------------------------------
+
+
+def choose_mode(tab, mode):
+    tab.mode_combo.setCurrentIndex(tab.mode_combo.findData(mode))
+
+
+def gaussian_energy(tab, mean="20", sigma="1"):
+    editor = tab.editors["energy_keV"]
+    pick(editor, "gaussian")
+    type_into(editor.fields["mean"], mean)
+    type_into(editor.fields["sigma"], sigma)
+
+
+def dashed(plot):
+    return [line for line in plot.axes.lines if line.get_linestyle() == "--"]
+
+
+def test_a_gaussian_energy_plot_is_one_visible_line(tab, document, with_setup):
+    gaussian_energy(tab)
+    plot = tab.plots["energy_keV"]
+    assert not plot.isHidden()
+    assert len(plot.axes.lines) == 1
+
+
+def test_a_plain_energy_hides_its_plot(tab, document, with_setup):
+    assert tab.plots["energy_keV"].isHidden()
+
+
+def test_automatic_with_calculation_3_reads_binned_and_says_why(tab, document, with_setup):
+    gaussian_energy(tab)
+    document.edit(lambda doc: doc.update(calculation=3))
+    assert tab.mode_combo.currentText() == "Automatic (binned)"
+    assert tab.mode_text.text() == BINNED_AUTO
+    assert "beam" not in document.doc
+
+
+def test_automatic_with_calculation_1_reads_exact(tab, document, with_setup):
+    gaussian_energy(tab)
+    assert tab.mode_combo.currentText() == "Automatic (exact)"
+    assert tab.mode_text.text() == EXACT_TEXT
+    assert "beam" not in document.doc
+
+
+def test_the_mode_names_are_the_three_items(tab, document, with_setup):
+    gaussian_energy(tab)
+    texts = [tab.mode_combo.itemText(i) for i in range(tab.mode_combo.count())]
+    assert texts == ["Automatic (exact)", "Exact (TRIM.DAT)", "Binned"]
+
+
+def test_binned_with_four_energy_bins_stores_the_bins_and_five_edges(tab, document, with_setup):
+    gaussian_energy(tab)
+    choose_mode(tab, "binned")
+    assert document.doc["beam"] == {"mode": "binned"}
+    assert tab.mode_text.text() == BINNED_TEXT
+    tab.energy_bins.setValue(4)
+    assert document.doc["beam"] == {"mode": "binned", "bins": {"energy_keV": 4}}
+    edges = sorted(
+        {b.energy_range[0] for b in make_bins(to_spec(document.doc))}
+        | {b.energy_range[1] for b in make_bins(to_spec(document.doc))}
+    )
+    assert len(edges) == 5
+    assert len(dashed(tab.plots["energy_keV"])) == 5
+
+
+def test_zero_bins_is_automatic_and_stores_no_bins(tab, document, with_setup):
+    gaussian_energy(tab)
+    choose_mode(tab, "binned")
+    tab.energy_bins.setValue(4)
+    tab.energy_bins.setValue(0)
+    assert document.doc["beam"] == {"mode": "binned"}
+    assert tab.energy_bins.specialValueText() == "Automatic (10)"
+    assert tab.angle_bins.specialValueText() == "Automatic (6)"
+
+
+def test_exact_stores_only_its_mode(tab, document, with_setup):
+    gaussian_energy(tab)
+    choose_mode(tab, "binned")
+    tab.energy_bins.setValue(4)
+    choose_mode(tab, "exact")
+    assert document.doc["beam"] == {"mode": "exact"}
+    assert tab.mode_text.text() == EXACT_TEXT
+
+
+def test_switching_back_to_automatic_removes_the_beam_key(tab, document, with_setup):
+    gaussian_energy(tab)
+    choose_mode(tab, "binned")
+    tab.energy_bins.setValue(4)
+    choose_mode(tab, "auto")
+    assert "beam" not in document.doc
+
+
+def test_the_bin_fields_are_enabled_only_in_binned_mode_for_distributed_quantities(
+    tab, document, with_setup
+):
+    gaussian_energy(tab)
+    assert not tab.energy_bins.isEnabled()
+    choose_mode(tab, "binned")
+    assert tab.energy_bins.isEnabled()
+    assert not tab.angle_bins.isEnabled()  # the angle is a fixed 7 degrees
+
+
+def gaussian_angle(tab, mean="7", sigma="0.5"):
+    editor = tab.editors["angle_deg"]
+    pick(editor, "gaussian")
+    type_into(editor.fields["mean"], mean)
+    type_into(editor.fields["sigma"], sigma)
+
+
+def test_a_bin_count_for_a_quantity_that_becomes_fixed_is_removed(tab, document, with_setup):
+    gaussian_energy(tab)
+    gaussian_angle(tab)
+    choose_mode(tab, "binned")
+    tab.energy_bins.setValue(4)
+    pick(tab.editors["energy_keV"], "value")
+    type_into(tab.editors["energy_keV"].fields["value"], "20")
+    # The angle is still distributed, so the beam stays binned, but its energy bins are gone.
+    assert document.doc["beam"] == {"mode": "binned"}
+    assert not tab.energy_bins.isEnabled()
+
+
+def test_a_plain_beam_hides_the_mode_and_shows_the_single_run_label(tab, document, with_setup):
+    assert tab.mode_group.isHidden()
+    assert not tab.single_label.isHidden()
+    assert tab.single_label.text() == "Single energy and angle: one SRIM run."
+
+
+def test_a_distributed_beam_shows_the_mode_group(tab, document, with_setup):
+    gaussian_energy(tab)
+    assert not tab.mode_group.isHidden()
+    assert tab.single_label.isHidden()
+
+
+def test_a_beam_key_left_after_the_beam_becomes_plain_is_removed(tab, document, with_setup):
+    gaussian_energy(tab)
+    gaussian_angle(tab)
+    choose_mode(tab, "binned")
+    pick(tab.editors["energy_keV"], "value")
+    type_into(tab.editors["energy_keV"].fields["value"], "20")
+    assert document.doc["beam"] == {"mode": "binned"}
+    pick(tab.editors["angle_deg"], "value")
+    type_into(tab.editors["angle_deg"].fields["value"], "7")
+    assert "beam" not in document.doc
+    assert not tab.single_label.isHidden()
+    assert tab.mode_group.isHidden()
+
+
+def test_undo_of_the_mode_change_shows_the_previous_mode(tab, document, with_setup):
+    gaussian_energy(tab)
+    choose_mode(tab, "binned")
+    assert tab.mode_combo.currentData() == "binned"
+    document.undo()
+    assert tab.mode_combo.currentData() == "auto"
+
+
+def test_new_shows_the_new_mode_not_the_previous_one(tab, document, with_setup):
+    gaussian_energy(tab)
+    choose_mode(tab, "binned")
+    document.new()
+    assert tab.mode_group.isHidden()
+    gaussian_energy(tab)
+    assert tab.mode_combo.currentData() == "auto"
+
+
+def test_focus_target_mode_focuses_the_mode_box(qtbot, tab, document, with_setup):
+    gaussian_energy(tab)
+    tab.show()
+    qtbot.waitExposed(tab)
+    tab.focus_target("mode")
+    qtbot.waitUntil(lambda: QApplication.focusWidget() is tab.mode_combo)
+
+
+def test_the_status_bar_shows_the_library_bin_warning_for_400_bins(qtbot, monkeypatch, boron_data):
+    # Answer the unsaved-changes question at once, so a failing test cannot block on a dialog.
+    monkeypatch.setattr(
+        window_module.QMessageBox,
+        "question",
+        staticmethod(lambda *a, **k: window_module.QMessageBox.StandardButton.Yes),
+    )
+    win = MainWindow(AppSettings(route="wine"), checks_fn=lambda route: [])
+    qtbot.addWidget(win)
+    win.document.edit(lambda doc: doc.update(deepcopy(boron_data)))
+    tab = win.editors["beam"]
+    gaussian_energy(tab)
+    pick(tab.editors["angle_deg"], "gaussian")
+    type_into(tab.editors["angle_deg"].fields["mean"], "7")
+    type_into(tab.editors["angle_deg"].fields["sigma"], "0.5")
+    choose_mode(tab, "binned")
+    tab.energy_bins.setValue(20)
+    tab.angle_bins.setValue(20)
+    assert "400 bins" in win.status.shown_text()
+    win.close()
+
+
+def test_open_shows_the_opened_mode_bins_and_edges(
+    tab, document, write_setup, tmp_path, boron_data
+):
+    gaussian_energy(tab)
+    choose_mode(tab, "exact")
+    data = deepcopy(boron_data)
+    data["ion"]["energy_keV"] = {"gaussian": {"mean": 20.0, "sigma": 1.0}}
+    data["beam"] = {"mode": "binned", "bins": {"energy_keV": 4}}
+    document.open(write_setup(tmp_path / "run.yaml", data))
+    assert tab.mode_combo.currentData() == "binned"
+    assert tab.energy_bins.value() == 4
+    assert tab.energy_bins.isEnabled()
+    assert len(dashed(tab.plots["energy_keV"])) == 5
+    document.new()
+    assert tab.mode_group.isHidden()
+    assert tab.mode_combo.currentData() == "auto"

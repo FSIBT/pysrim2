@@ -12,9 +12,15 @@ ions, and one editor per quantity. Each change goes through :meth:`DocumentModel
 one undo step, and the library judges the values. ``focus_target("<quantity>")`` is how a status
 bar click reaches a field.
 
-matplotlib is imported only when a histogram file is previewed.
+The mode box (Automatic, Exact or Binned) and the bin counts are shown from the document only:
+Automatic stores no ``beam`` key, Exact stores ``{"mode": "exact"}``, and Binned stores
+``{"mode": "binned"}`` with the non-zero counts. Each quantity has a :class:`DistributionPlot`
+under its editor. matplotlib is imported only by :mod:`srim.app.beam_plot`, and a histogram file
+is previewed with it.
 """
 
+import warnings
+from collections.abc import Mapping
 from copy import deepcopy
 from pathlib import Path
 
@@ -39,8 +45,16 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from srim.app.beam_plot import DistributionPlot
 from srim.app.document import DocumentModel
 from srim.app.elements import ElementChoice, element_label
+from srim.app.model import (
+    BINNED_TEXT,
+    EXACT_TEXT,
+    default_beam_mode,
+    is_distributed,
+    to_spec,
+)
 from srim.app.numbers import parse_number
 from srim.app.periodic import choose_element
 from srim.app.quantity import (
@@ -54,7 +68,9 @@ from srim.app.quantity import (
     text_of,
     yaml_text,
 )
+from srim.beam.binned import make_bins
 from srim.beam.shapes import Histogram
+from srim.beam.spec import BIN_KEYS, DEFAULT_ANGLE_BINS, DEFAULT_ENERGY_BINS, DEFAULT_MAX_BINS
 from srim.spec import SpecError
 
 #: the choice that stands for a value the editor keeps as YAML (it is not a kind)
@@ -78,6 +94,9 @@ NUMBER_PATTERN = r"[-+0-9.,eE]*"
 POSITION_KEYS = ("y_nm", "z_nm", "depth_nm")
 HISTOGRAM_FILTER = "Histogram files (*.txt *.dat *.csv);;All files (*)"
 ION_NOT_CHOSEN = "Ion: not chosen"
+
+MODE_LABELS = {"exact": "Exact (TRIM.DAT)", "binned": "Binned"}
+SINGLE_RUN_TEXT = "Single energy and angle: one SRIM run."
 
 
 def _is_zero_or_missing(value) -> bool:
@@ -359,10 +378,11 @@ class HistogramPreview(QDialog):
 
 
 class BeamTab(QWidget):
-    """The Beam editor: the ion, the number of ions, and one :class:`QuantityEditor` each.
+    """The Beam editor: the ion, the number of ions, the beam mode, and one editor per quantity.
 
     ``editors`` is keyed by the quantity: ``energy_keV``, ``angle_deg``, ``azimuth_deg`` and the
-    position coordinates ``y_nm``, ``z_nm`` and ``depth_nm``.
+    position coordinates ``y_nm``, ``z_nm`` and ``depth_nm``. ``plots`` holds the distribution
+    plot under each editor, by the same key.
     """
 
     def __init__(self, document: DocumentModel, parent=None):
@@ -378,6 +398,25 @@ class BeamTab(QWidget):
         self.number_ions.setKeyboardTracking(False)
         self.number_ions.valueChanged.connect(self._on_number_ions)
 
+        self.mode_combo = QComboBox(self)
+        self.mode_combo.addItem("Automatic", "auto")
+        self.mode_combo.addItem(MODE_LABELS["exact"], "exact")
+        self.mode_combo.addItem(MODE_LABELS["binned"], "binned")
+        self.mode_combo.currentIndexChanged.connect(self._on_mode)
+        self.mode_text = QLabel(self)
+        self.mode_text.setWordWrap(True)
+        self.energy_bins = self._bin_spin(DEFAULT_ENERGY_BINS, "energy_keV")
+        self.angle_bins = self._bin_spin(DEFAULT_ANGLE_BINS, "angle_deg")
+        self.mode_group = QWidget(self)
+        mode_form = QFormLayout(self.mode_group)
+        mode_form.setContentsMargins(0, 0, 0, 0)
+        mode_form.addRow("Beam mode", self.mode_combo)
+        mode_form.addRow(self.mode_text)
+        mode_form.addRow("Energy bins", self.energy_bins)
+        mode_form.addRow("Angle bins", self.angle_bins)
+        self.single_label = QLabel(SINGLE_RUN_TEXT, self)
+        self.single_label.setWordWrap(True)
+
         self.editors: dict[str, QuantityEditor] = {
             "energy_keV": QuantityEditor("Energy", "keV", optional=False, parent=self),
             "angle_deg": QuantityEditor("Angle", "degrees", optional=False, parent=self),
@@ -388,6 +427,9 @@ class BeamTab(QWidget):
         }
         for key, editor in self.editors.items():
             editor.value_changed.connect(lambda value, k=key: self._on_value(k, value))
+        self.plots: dict[str, DistributionPlot] = {
+            key: DistributionPlot(self) for key in self.editors
+        }
 
         top = QHBoxLayout()
         top.addWidget(self.ion_button)
@@ -397,12 +439,23 @@ class BeamTab(QWidget):
         layout = QVBoxLayout(self)
         layout.addLayout(top)
         layout.addLayout(counts)
-        for editor in self.editors.values():
+        layout.addWidget(self.mode_group)
+        layout.addWidget(self.single_label)
+        for key, editor in self.editors.items():
             layout.addWidget(editor)
+            layout.addWidget(self.plots[key])
         layout.addStretch(1)
 
         document.changed.connect(self._refresh)
         self._refresh()
+
+    def _bin_spin(self, default: int, key: str) -> QSpinBox:
+        spin = QSpinBox(self)
+        spin.setRange(0, DEFAULT_MAX_BINS)
+        spin.setSpecialValueText(f"Automatic ({default})")
+        spin.setKeyboardTracking(False)
+        spin.valueChanged.connect(lambda value, k=key: self._on_bins(k, value))
+        return spin
 
     # --- showing the document -----------------------------------------------------------
 
@@ -430,8 +483,52 @@ class BeamTab(QWidget):
             values[name] = position.get(name)
         for key, editor in self.editors.items():
             editor.set_value(values[key])
+        self._refresh_mode(doc)
+        self._refresh_plots(doc, values)
+
+    def _refresh_mode(self, doc: dict) -> None:
+        distributed = is_distributed(doc)
+        self.mode_group.setVisible(distributed)
+        self.single_label.setVisible(not distributed)
+
+        mode = _mode_of(doc)
+        default_mode, default_text = default_beam_mode(doc)
+        self.mode_combo.blockSignals(True)
+        self.mode_combo.setItemText(0, f"Automatic ({default_mode})")
+        self.mode_combo.setCurrentIndex(self.mode_combo.findData(mode))
+        self.mode_combo.blockSignals(False)
+        if mode == "auto":
+            self.mode_text.setText(default_text)
+        else:
+            self.mode_text.setText(EXACT_TEXT if mode == "exact" else BINNED_TEXT)
+
+        beam = doc.get("beam") if isinstance(doc.get("beam"), dict) else {}
+        ion = doc.get("ion") or {}
+        for spin, key in ((self.energy_bins, "energy_keV"), (self.angle_bins, "angle_deg")):
+            count, given = _bin_count(beam, key)
+            spin.blockSignals(True)
+            spin.setValue(count)
+            spin.blockSignals(False)
+            # Bins written as edges are kept as they are: the count shows, but is not edited here.
+            spin.setEnabled(mode == "binned" and isinstance(ion.get(key), Mapping) and not given)
+            spin.setToolTip("The bin edges are kept as written in the setup" if given else "")
+
+    def _refresh_plots(self, doc: dict, values: dict) -> None:
+        base_dir = self.document.base_dir
+        edges = _bin_edges(doc, base_dir)
+        for key, plot in self.plots.items():
+            plot.show(values[key], key, base_dir, edges.get(key))
 
     # --- the edits ---------------------------------------------------------------------
+
+    def _edit(self, apply) -> None:
+        """Apply an edit, then drop what the beam no longer needs (one undo step)."""
+
+        def tidy(doc: dict) -> None:
+            apply(doc)
+            _tidy_beam(doc)
+
+        self.document.edit(tidy)
 
     def choose_ion(self) -> None:
         choice = choose_element(self, "Choose the ion")
@@ -459,6 +556,43 @@ class BeamTab(QWidget):
             return
         self.document.edit(lambda doc: doc.__setitem__("number_ions", int(value)))
 
+    def _on_mode(self, index: int) -> None:
+        choice = self.mode_combo.itemData(index)
+        if choice is None or choice == _mode_of(self.document.doc):
+            return
+
+        def apply(doc: dict) -> None:
+            if choice == "auto":
+                doc.pop("beam", None)
+            elif choice == "exact":
+                doc["beam"] = {"mode": "exact"}
+            else:
+                beam = doc.get("beam")
+                beam = dict(beam) if isinstance(beam, dict) else {}
+                beam["mode"] = "binned"
+                doc["beam"] = beam
+
+        self._edit(apply)
+
+    def _on_bins(self, key: str, value: int) -> None:
+        beam = self.document.doc.get("beam")
+        if not isinstance(beam, dict) or _bin_count(beam, key) == (value, False):
+            return
+
+        def apply(doc: dict) -> None:
+            beam_doc = doc.setdefault("beam", {"mode": "binned"})
+            bins = dict(beam_doc["bins"]) if isinstance(beam_doc.get("bins"), dict) else {}
+            if value == 0:
+                bins.pop(key, None)  # Automatic
+            else:
+                bins[key] = int(value)
+            if bins:
+                beam_doc["bins"] = bins
+            else:
+                beam_doc.pop("bins", None)
+
+        self._edit(apply)
+
     def _on_value(self, key: str, value) -> None:
         if key in POSITION_KEYS:
             self._set_position(key, value)
@@ -471,7 +605,7 @@ class BeamTab(QWidget):
             else:
                 ion_doc[key] = deepcopy(value)
 
-        self.document.edit(apply)
+        self._edit(apply)
 
     def _set_position(self, key: str, value) -> None:
         """Store one coordinate of the position.
@@ -498,7 +632,7 @@ class BeamTab(QWidget):
                     position[name] = 0.0 if stored is None else deepcopy(stored)
             ion_doc["position"] = position
 
-        self.document.edit(apply)
+        self._edit(apply)
 
     # --- the editor protocol -------------------------------------------------------------
 
@@ -508,5 +642,82 @@ class BeamTab(QWidget):
             self.ion_button.setFocus()
         elif rest == "number_ions":
             self.number_ions.setFocus()
+        elif rest == "mode":
+            self.mode_combo.setFocus()
+        elif rest == "energy_bins":
+            self.energy_bins.setFocus()
+        elif rest == "angle_bins":
+            self.angle_bins.setFocus()
         elif rest in self.editors:
             self.editors[rest].focus_first()
+
+
+# --- the beam mode, from the document ----------------------------------------------------
+
+
+def _mode_of(doc: dict) -> str:
+    """``auto`` (no ``beam`` key), or the mode the ``beam`` key gives (SRIM's default is exact)."""
+    beam = doc.get("beam")
+    if not isinstance(beam, dict):
+        return "auto"
+    return str(beam.get("mode", "exact"))
+
+
+def _bin_count(beam: dict, key: str) -> tuple[int, bool]:
+    """The bin count of ``key`` in ``beam`` (0 for Automatic), and whether it is given as edges."""
+    bins = beam.get("bins") if isinstance(beam.get("bins"), dict) else {}
+    value = bins.get(key, 0)
+    if isinstance(value, list):
+        return max(len(value) - 1, 0), True
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value, False
+    return 0, False
+
+
+def _tidy_beam(doc: dict) -> None:
+    """Drop a ``beam`` key the setup no longer needs, and bins of a quantity that is now fixed.
+
+    The library refuses both, so they go in the same edit that makes them stale.
+    """
+    if not is_distributed(doc):
+        doc.pop("beam", None)
+        return
+    beam = doc.get("beam")
+    if not isinstance(beam, dict) or not isinstance(beam.get("bins"), dict):
+        return
+    ion = doc.get("ion") or {}
+    bins = beam["bins"]
+    for key in BIN_KEYS:
+        if key in bins and not isinstance(ion.get(key), Mapping):
+            del bins[key]
+    if not bins:
+        del beam["bins"]
+
+
+def _effective_mode(doc: dict) -> str:
+    mode = _mode_of(doc)
+    return default_beam_mode(doc)[0] if mode == "auto" else mode
+
+
+def _bin_edges(doc: dict, base_dir) -> dict[str, list[float]]:
+    """The bin edges of the energy and of the angle, when the setup is binned and distributed.
+
+    The edges are those of the library's bins (:func:`srim.beam.binned.make_bins`). A setup the
+    library refuses has none, and the library's warnings are not shown here (the status bar has
+    them).
+    """
+    if _effective_mode(doc) != "binned" or not is_distributed(doc):
+        return {}
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            bins = make_bins(to_spec(doc, base_dir))
+    except SpecError:
+        return {}
+    edges: dict[str, list[float]] = {}
+    for key, attr in (("energy_keV", "energy_range"), ("angle_deg", "angle_range")):
+        ranges = [getattr(b, attr) for b in bins]
+        if not ranges or any(r is None for r in ranges):
+            continue
+        edges[key] = sorted({r[0] for r in ranges} | {r[1] for r in ranges})
+    return edges
