@@ -36,19 +36,25 @@ class LayerBox:
     to_scale: bool
 
 
-def _usable_thickness(value: Any) -> float | None:
-    """A thickness that can be drawn to scale, or None: missing, not a number, or not positive."""
+def _number(value: Any) -> float | None:
+    """A finite number from a thickness value, or None: missing, a bool, text or not finite."""
     if value is None or isinstance(value, bool):
         return None
     try:
         number = float(value)
     except (TypeError, ValueError):
         return None
-    return number if math.isfinite(number) and number > 0 else None
+    return number if math.isfinite(number) else None
+
+
+def _usable_thickness(value: Any) -> float | None:
+    """A thickness that can be drawn to scale, or None: missing, not a number, or not positive."""
+    number = _number(value)
+    return number if number is not None and number > 0 else None
 
 
 def _largest_remainder(exact: dict[int, float], total: int) -> dict[int, int]:
-    """Whole numbers near ``exact`` that add up to ``total`` (the largest fractions get the rest)."""
+    """Whole numbers near ``exact`` that add up to ``total``; the largest fractions get the rest."""
     whole = {i: math.floor(value) for i, value in exact.items()}
     spare = total - sum(whole.values())
     order = sorted(exact, key=lambda i: (-(exact[i] - whole[i]), i))
@@ -104,7 +110,7 @@ def layer_boxes(
 
 def _place(widths: list[int], to_scale: list[bool]) -> list[LayerBox]:
     boxes, left = [], 0
-    for width, scaled in zip(widths, to_scale):
+    for width, scaled in zip(widths, to_scale, strict=True):
         boxes.append(LayerBox(left, width, scaled))
         left += width
     return boxes
@@ -147,10 +153,10 @@ def display_unit(layer: dict) -> str:
 def layer_tooltip(layer: dict, to_scale: bool) -> str:
     """``"<label>: <thickness> <unit>"``, with the wider-than-scale note when it is not to scale."""
     label = layer_label(layer)
-    thickness = layer.get("thickness_nm")
-    if thickness is None or isinstance(thickness, bool):
+    thickness = _number(layer.get("thickness_nm"))
+    if thickness is None:
         text = f"{label}: no thickness"
     else:
         unit = display_unit(layer)
-        text = f"{label}: {float(thickness) / UNITS[unit]:g} {unit}"
+        text = f"{label}: {thickness / UNITS[unit]:g} {unit}"
     return text if to_scale else f"{text} {WIDER_NOTE}"

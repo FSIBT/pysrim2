@@ -148,3 +148,56 @@ def test_a_drawing_repaints_when_the_document_changes(view, document):
     set_target(document, [layer("a", 100.0), layer("b", 1.0), layer("c", 2.0)])
     assert view.layer_at(view.target_span()[0] + 1) == 0
     assert view.grab().width() == 420
+
+
+def test_a_repaint_does_not_read_the_beam_angle_again(document, qtbot, monkeypatch):
+    from srim.app import target_view as module
+
+    calls = []
+    real = module.beam_angle
+
+    def counting(value, base_dir=None):
+        calls.append(value)
+        return real(value, base_dir)
+
+    monkeypatch.setattr(module, "beam_angle", counting)
+    set_target(document, [layer("a", 100.0)], angle=30.0)
+    widget = TargetView(document)
+    widget.resize(420, 140)
+    qtbot.addWidget(widget)
+    assert len(calls) == 1
+    widget.grab()
+    widget.resize(500, 160)
+    widget.grab()
+    widget.set_selected(0)
+    widget.grab()
+    assert len(calls) == 1
+
+
+def test_a_layer_edit_does_not_read_the_beam_angle_again(document, qtbot, monkeypatch):
+    from srim.app import target_view as module
+
+    calls = []
+    real = module.beam_angle
+
+    def counting(value, base_dir=None):
+        calls.append(value)
+        return real(value, base_dir)
+
+    monkeypatch.setattr(module, "beam_angle", counting)
+    set_target(document, [layer("a", 100.0)], angle=30.0)
+    widget = TargetView(document)
+    qtbot.addWidget(widget)
+    before = len(calls)
+    document.edit(lambda doc: doc["target"][0].__setitem__("thickness_nm", 50.0))
+    assert len(calls) == before
+
+
+def test_changing_the_angle_updates_the_cached_value(document, qtbot):
+    set_target(document, [layer("a", 100.0)], angle=30.0)
+    widget = TargetView(document)
+    qtbot.addWidget(widget)
+    assert widget.beam_angle_deg == pytest.approx(30.0)
+    document.edit(lambda doc: doc["ion"].__setitem__("angle_deg", 45.0))
+    assert widget.beam_angle_deg == pytest.approx(45.0)
+    widget.grab()  # the repaint uses the new value without an error

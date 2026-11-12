@@ -10,6 +10,7 @@ The widths and the tooltips come from :mod:`srim.app.drawing`, which has the rul
 """
 
 import math
+from copy import deepcopy
 
 from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPalette, QPen
@@ -41,9 +42,32 @@ class TargetView(QWidget):
         super().__init__(parent)
         self._document = document
         self._selected = -1
+        # The beam angle is read once per change of its source, never on a repaint: a
+        # distribution may read a histogram file or run the user's Python function.
+        self._angle_source: tuple | None = None
+        self._angle = 0.0
+        self._refresh_angle()
         self.setMinimumSize(180, 120)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        document.changed.connect(self.update)
+        document.changed.connect(self._on_document_changed)
+
+    @property
+    def beam_angle_deg(self) -> float:
+        """The beam angle the drawing uses (cached; see :meth:`_refresh_angle`)."""
+        return self._angle
+
+    def _on_document_changed(self) -> None:
+        self._refresh_angle()
+        self.update()
+
+    def _refresh_angle(self) -> None:
+        """Re-read the beam angle only when its raw value or the setup's folder changed."""
+        raw = (self._document.doc.get("ion") or {}).get("angle_deg")
+        source = (deepcopy(raw), self._document.base_dir)
+        if self._angle_source is not None and source == self._angle_source:
+            return
+        self._angle_source = source
+        self._angle = beam_angle(raw, self._document.base_dir)
 
     # --- geometry ---------------------------------------------------------------------
 
@@ -133,7 +157,7 @@ class TargetView(QWidget):
                 "No layers yet",
             )
             return
-        for row, (layer, box) in enumerate(zip(layers, self._boxes())):
+        for row, (layer, box) in enumerate(zip(layers, self._boxes(), strict=True)):
             rect = QRectF(left + box.left, top, box.width, height)
             painter.fillRect(rect, QColor(layer_color(layer)))
             if not box.to_scale:
@@ -152,11 +176,8 @@ class TargetView(QWidget):
                 painter.drawRect(rect)
 
     def _paint_beam(self, painter: QPainter, ink: QColor, left: float, middle: float) -> None:
-        """The beam arrow: its head on the surface, its tail ``ARROW_LENGTH`` back along the beam."""
-        angle = beam_angle(
-            (self._document.doc.get("ion") or {}).get("angle_deg"), self._document.base_dir
-        )
-        angle = max(-90.0, min(90.0, angle))
+        """The beam arrow: its head on the surface, its tail ``ARROW_LENGTH`` back up the beam."""
+        angle = max(-90.0, min(90.0, self._angle))
         radians = math.radians(angle)
         dx, dy = math.cos(radians), math.sin(radians)  # the direction into the target
         head = QPointF(left, middle)

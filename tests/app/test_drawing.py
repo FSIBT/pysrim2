@@ -77,7 +77,7 @@ def test_boxes_are_contiguous_with_no_gaps():
     thicknesses = [3.0, None, 1e5, 0.5, 40.0]
     boxes = layer_boxes(thicknesses, 517)
     assert boxes[0].left == 0
-    for before, after in zip(boxes, boxes[1:]):
+    for before, after in zip(boxes, boxes[1:], strict=False):
         assert after.left == before.left + before.width
     assert boxes[-1].left + boxes[-1].width == 517
 
@@ -135,3 +135,13 @@ def test_the_tooltip_of_a_layer_with_an_unknown_unit_uses_the_best_one():
     layer = {"name": "x", "thickness_nm": 1500.0, "_unit": "parsec"}
     assert layer_tooltip(layer, to_scale=True) == "x: 1.5 µm"
 
+
+@pytest.mark.parametrize("thickness", ["abc", [1.0], {"nm": 1}, float("nan"), "1e400", True])
+def test_the_tooltip_never_raises_for_a_thickness_that_is_not_a_number(thickness):
+    layer = {"name": "x", "thickness_nm": thickness}
+    assert layer_tooltip(layer, to_scale=True) == "x: no thickness"
+
+
+def test_a_zero_thickness_is_shown_not_hidden():
+    layer = {"name": "x", "thickness_nm": 0.0, "_unit": "nm"}
+    assert layer_tooltip(layer, to_scale=False) == "x: 0 nm (drawn wider than to scale)"
