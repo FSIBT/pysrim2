@@ -25,7 +25,9 @@ def discard_without_asking(monkeypatch):
 
     A window closed in teardown with unsaved edits would otherwise wait on a modal dialog. A test
     that checks the question sets its own answer with ``monkeypatch``, which takes precedence.
-    Only a Qt test has PySide6 loaded, so the Qt-free tests never import it here.
+    Only a Qt test has PySide6 loaded, so the Qt-free tests never import it here. The patch relies
+    on PySide6.QtWidgets being imported when the test starts, which a Qt test module does by
+    importing Qt at module level. A Qt import inside a test body would be too late to be patched.
     """
     import sys
 
