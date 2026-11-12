@@ -188,9 +188,7 @@ NOT_OFFERED = {
 
 
 @pytest.mark.parametrize("case", sorted(NOT_OFFERED))
-def test_a_saved_setup_keeps_what_the_editors_do_not_offer(
-    case, tmp_path, boron_data, write_setup
-):
+def test_a_saved_setup_keeps_what_the_editors_do_not_offer(case, tmp_path, boron_data, write_setup):
     changes = dict(NOT_OFFERED[case])
     if changes.pop("gas", False):
         boron_data["target"].append(deepcopy(GAS))  # gas layer with binding energies
