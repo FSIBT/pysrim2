@@ -28,7 +28,7 @@ EXACT_TEXT = (
 BINNED_TEXT = "Binned: the beam is split into bins and SRIM runs once per bin."
 BINNED_AUTO = "Automatic chose binned because the monolayer calculation cannot read TRIM.DAT."
 
-_KEY = re.compile(r"^[A-Za-z_]+(\[\d+\])?(\.[A-Za-z_]+(\[\d+\])?)*")
+_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\[\d+\])?(\.[A-Za-z_][A-Za-z0-9_]*(\[\d+\])?)*")
 _BEAM_NUMBERS = ("energy_keV", "angle_deg", "azimuth_deg")
 _POSITION = ("y_nm", "z_nm", "depth_nm")
 _LAYER_FIELDS = {

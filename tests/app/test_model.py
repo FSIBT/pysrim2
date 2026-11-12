@@ -296,3 +296,11 @@ def test_to_spec_raises_spec_error_for_a_bad_document():
     doc["ion"]["energy_keV"] = -1.0
     with pytest.raises(SpecError):
         to_spec(doc)
+
+
+def test_a_library_message_about_a_field_with_a_digit_is_placed(boron_data):
+    # density_g_cm3 has digits; the key in the library's message must be read whole.
+    boron_data["target"][0]["density_g_cm3"] = -1.0
+    found = [p for p in problems(boron_data) if p.blocking]
+    assert found and found[0].target == "geometry/0/density"
+    assert target_for_key("target[0].density_g_cm3") == "geometry/0/density"
