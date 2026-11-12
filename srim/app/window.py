@@ -196,11 +196,11 @@ class MainWindow(QMainWindow):
             self.document.new()
 
     def open_setup_file(self) -> None:
-        if not self._may_discard():
-            return
         folder = str(self.document.base_dir) if self.document.base_dir else ""
         path, _ = QFileDialog.getOpenFileName(self, "Open run setup", folder, FILE_FILTER)
         if not path:
+            return  # cancelled: nothing is asked and nothing changes
+        if not self._may_discard():
             return
         try:
             self.document.open(path)

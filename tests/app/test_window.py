@@ -376,16 +376,28 @@ def test_new_with_yes_discards_the_edits(qtbot, monkeypatch):
     assert win.document.doc["seed"] == 0 and not win.isWindowModified()
 
 
-def test_open_asks_before_the_file_dialog_and_no_keeps_the_setup(qtbot, monkeypatch):
+def test_open_asks_only_after_a_file_is_chosen_and_no_keeps_the_setup(
+    qtbot, monkeypatch, boron_data, write_setup, tmp_path
+):
+    path = write_setup(tmp_path / "run.yaml", boron_data)
     win = window_with(qtbot)
     win.document.edit(lambda d: d.__setitem__("seed", 5))
-    answer(monkeypatch, QMessageBox.StandardButton.No)
-
-    def no_dialog(*args, **kwargs):
-        raise AssertionError("the file dialog must not open after No")
-
-    monkeypatch.setattr(QFileDialog, "getOpenFileName", no_dialog)
+    asked = []
+    answer(monkeypatch, QMessageBox.StandardButton.No, asked)
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *a, **k: (str(path), ""))
     win.open_action.trigger()
+    assert asked == ["Discard the changes to this setup?"]
+    assert win.document.doc["seed"] == 5
+
+
+def test_cancelling_the_open_dialog_never_asks(qtbot, monkeypatch):
+    win = window_with(qtbot)
+    win.document.edit(lambda d: d.__setitem__("seed", 5))
+    asked = []
+    answer(monkeypatch, QMessageBox.StandardButton.Yes, asked)
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *a, **k: ("", ""))
+    win.open_action.trigger()
+    assert asked == []
     assert win.document.doc["seed"] == 5
 
 
