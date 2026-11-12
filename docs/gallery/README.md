@@ -15,6 +15,8 @@ An entry module defines:
   else into `outdir`; temporary SRIM runs go in a temporary directory.
 
 The entry scripts are shown to users as example code, so they are kept short.
+An entry that runs many ions keeps the count in a module-level `IONS`: the SRIM test
+(`tests/integration/test_gallery_srim.py`) lowers it so that CI stays quick.
 
 ## Rebuilding the pictures
 
