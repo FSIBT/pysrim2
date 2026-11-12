@@ -80,14 +80,40 @@ wizard are unavailable while an install runs.
 
 ## Status bar
 
-The status bar at the bottom of the window says what to do next, one line at a time:
+The status bar at the bottom of the window says what to do next, one line at a time. It lists,
+in this order:
 
-- *Choose how SRIM runs: open the setup* until a route is chosen.
-- A line for each check that is not ready, in the form `<check>: <detail>. Fix: <what to
-  run>`. When there are more, the bar says how many more.
-- *Ready to set up a run* when every check passes.
+- *Choose how SRIM runs: open the setup* until a route is chosen, and a line for each check
+  that is not ready, in the form `<check>: <detail>. Fix: <what to run>`.
+- What the run setup still needs (for example *Choose the ion: pick an element on the Beam
+  tab*), then the problems the library finds in it. A note that does not stop a run comes
+  last.
+- *The run setup is complete* when nothing is listed.
 
-A line with a link opens the setup when you click it.
+When there are more lines, the bar says how many more. A line with a link opens the setup, or
+the tab and field it names, when you click it.
+
+## Open and save a setup
+
+The window edits one run setup at a time, kept in a `run.yaml` file (the same file the library
+reads with `RunSpec.from_yaml`):
+
+- **File > New setup** (Ctrl+N) starts an empty setup.
+- **File > Open setup…** (Ctrl+O) reads a `run.yaml`.
+- **File > Save setup** (Ctrl+S) writes the setup to the file it came from; a new setup is saved
+  with **Save setup as…** (Ctrl+Shift+S), which asks for a file.
+
+Saving refuses an incomplete setup and says what is missing first. A histogram file that the
+setup uses from outside its own folder is copied to a `beam/` folder next to the saved file,
+and the file refers to the copy, so the setup still opens when its folder is moved. A file that
+cannot be read or written gives a message, and the setup stays as it was.
+
+**Edit > Undo** and **Redo** (Ctrl+Z, Ctrl+Shift+Z on Windows and Linux) go back and forward
+through the edits since the setup was opened or created; opening another file starts a new
+history, so Undo never returns to the setup that was open before.
+
+New, Open and Quit ask **Discard the changes to this setup?** when the setup has edits that are
+not saved. Choosing No keeps the setup and the window open.
 
 ## Themes
 
@@ -96,7 +122,8 @@ A line with a link opens the setup when you click it.
 
 ## Menus and tabs
 
-- **File > Quit** (Ctrl+Q)
+- **File > New setup**, **Open setup…**, **Save setup**, **Save setup as…** and **Quit** (Ctrl+Q)
+- **Edit > Undo** and **Redo**
 - **Setup > Run setup…**
 - **View > Theme > System, Light, Dark**
 - **Help > Documentation** (opens this documentation) and **About pysrim2**

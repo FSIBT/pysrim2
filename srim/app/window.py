@@ -1,20 +1,24 @@
-"""The main window: the run tabs, the menus and the guidance status bar."""
+"""The main window: the run tabs, the menus, the run setup and the guidance status bar."""
 
 from collections.abc import Callable
+from pathlib import Path
 
 from PySide6.QtCore import QUrl, Signal
 from PySide6.QtGui import QActionGroup, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
+    QFileDialog,
     QLabel,
     QMainWindow,
     QMessageBox,
     QTabWidget,
+    QWidget,
 )
 
 import srim
 from srim.app import DOCS_URL
+from srim.app.document import DocumentModel
 from srim.app.guidance import Guidance, setup_guidance
 from srim.app.settings import AppSettings, save_settings
 from srim.app.setup import SetupWizard
@@ -22,10 +26,34 @@ from srim.app.statusbar import GuidanceBar
 from srim.app.theme import THEMES, apply_theme
 from srim.app.workers import run_in_thread
 from srim.cli import collect_checks
+from srim.spec import SpecError
 
-TAB_NAMES = ("Geometry", "Beam", "Run settings", "Progress", "Results")
+#: the editor tabs, by key (the first part of a guidance target) and tab name
+EDITOR_TABS = (("geometry", "Geometry"), ("beam", "Beam"), ("settings", "Run settings"))
+#: the tabs that only say they arrive later in 0.12
+PLAIN_TABS = ("Progress", "Results")
 THEME_LABELS = {"system": "&System", "light": "&Light", "dark": "&Dark"}
 SETUP_TARGET = "setup"
+FILE_FILTER = "Run setup (*.yaml *.yml)"
+DISCARD_TEXT = "Discard the changes to this setup?"
+
+
+def placeholder_editor(name: str) -> type[QWidget]:
+    """A stand-in for an editor tab whose release has not come yet; it keeps the 0.12.0 text.
+
+    Each editor is a widget built as ``Editor(document, parent=None)`` with a
+    ``focus_target(rest)`` method, which the window calls when a guidance line for one of its
+    fields is clicked (``rest`` is the target after the tab, for example ``"1/density"``).
+    """
+
+    class Placeholder(QLabel):
+        def __init__(self, document: DocumentModel, parent=None):
+            super().__init__(f"{name}: arrives in a later release", parent)
+
+        def focus_target(self, rest: str) -> None:
+            """Nothing to focus yet."""
+
+    return Placeholder
 
 
 class MainWindow(QMainWindow):
@@ -37,6 +65,7 @@ class MainWindow(QMainWindow):
         settings: AppSettings,
         checks_fn: Callable[[str | None], list[dict]] = collect_checks,
         parent=None,
+        document: DocumentModel | None = None,
     ):
         super().__init__(parent)
         self.settings = settings
@@ -44,10 +73,17 @@ class MainWindow(QMainWindow):
         self._closing = False
         self._setup_open = False
         self._generation = 0
-        self.setWindowTitle("pysrim2")
+        self._setup_messages: list[Guidance] = []
+        self.document = document if document is not None else DocumentModel(self)
 
+        # Editors are keyed "geometry", "beam" and "settings"; Tasks 5-9 replace the placeholders.
+        self.editors: dict[str, QWidget] = {}
         self.tabs = QTabWidget(self)
-        for name in TAB_NAMES:
+        for key, name in EDITOR_TABS:
+            editor = placeholder_editor(name)(self.document, self)
+            self.editors[key] = editor
+            self.tabs.addTab(editor, name)
+        for name in PLAIN_TABS:
             self.tabs.addTab(QLabel(f"{name}: arrives in a later release", self), name)
         self.setCentralWidget(self.tabs)
 
@@ -58,6 +94,9 @@ class MainWindow(QMainWindow):
         self.theme_actions: dict[str, object] = {}
         self._build_menus()
 
+        self.document.changed.connect(self._on_document_changed)
+        self._on_document_changed()
+
         hints = QApplication.instance().styleHints()
         hints.colorSchemeChanged.connect(self._on_scheme_changed)
 
@@ -67,9 +106,30 @@ class MainWindow(QMainWindow):
         menus = self.menuBar()
 
         file_menu = menus.addMenu("&File")
-        quit_action = file_menu.addAction("&Quit")
-        quit_action.setShortcut(QKeySequence("Ctrl+Q"))
-        quit_action.triggered.connect(self.close)
+        self.new_action = file_menu.addAction("&New setup")
+        self.new_action.setShortcut(QKeySequence("Ctrl+N"))
+        self.new_action.triggered.connect(self.new_setup)
+        self.open_action = file_menu.addAction("&Open setup…")
+        self.open_action.setShortcut(QKeySequence("Ctrl+O"))
+        self.open_action.triggered.connect(self.open_setup_file)
+        self.save_action = file_menu.addAction("&Save setup")
+        self.save_action.setShortcut(QKeySequence("Ctrl+S"))
+        self.save_action.triggered.connect(self.save_setup)
+        self.save_as_action = file_menu.addAction("Save setup &as…")
+        self.save_as_action.setShortcut(QKeySequence("Ctrl+Shift+S"))
+        self.save_as_action.triggered.connect(self.save_setup_as)
+        file_menu.addSeparator()
+        self.quit_action = file_menu.addAction("&Quit")
+        self.quit_action.setShortcut(QKeySequence("Ctrl+Q"))
+        self.quit_action.triggered.connect(self.close)
+
+        edit_menu = menus.addMenu("&Edit")
+        self.undo_action = edit_menu.addAction("&Undo")
+        self.undo_action.setShortcut(QKeySequence(QKeySequence.StandardKey.Undo))
+        self.undo_action.triggered.connect(lambda: self.document.undo())
+        self.redo_action = edit_menu.addAction("&Redo")
+        self.redo_action.setShortcut(QKeySequence(QKeySequence.StandardKey.Redo))
+        self.redo_action.triggered.connect(lambda: self.document.redo())
 
         setup_menu = menus.addMenu("&Setup")
         self.setup_action = setup_menu.addAction("Run setup…")
@@ -101,7 +161,7 @@ class MainWindow(QMainWindow):
         try:
             save_settings(self.settings)
         except OSError as error:
-            self.status.set_messages([Guidance(f"Could not save the theme: {error}")])
+            self._set_setup_messages([Guidance(f"Could not save the theme: {error}")])
 
     def _on_scheme_changed(self, *_args) -> None:
         if self.settings.theme == "system" and not self._closing:
@@ -109,6 +169,68 @@ class MainWindow(QMainWindow):
 
     def _about(self) -> None:
         QMessageBox.about(self, "About pysrim2", f"pysrim2 {srim.__version__}")
+
+    # --- the run setup -------------------------------------------------------------
+
+    def _on_document_changed(self) -> None:
+        document = self.document
+        self.undo_action.setEnabled(document.can_undo)
+        self.redo_action.setEnabled(document.can_redo)
+        name = document.path.name if document.path is not None else "Untitled"
+        self.setWindowTitle(f"pysrim2 — {name}[*]")
+        self.setWindowModified(document.is_modified)
+        self._show_status()
+
+    def _may_discard(self) -> bool:
+        """True when nothing unsaved would be lost, or the user agrees to discard the edits."""
+        if not self.document.is_modified:
+            return True
+        buttons = QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        answer = QMessageBox.question(
+            self, "pysrim2", DISCARD_TEXT, buttons, QMessageBox.StandardButton.No
+        )
+        return answer == QMessageBox.StandardButton.Yes
+
+    def new_setup(self) -> None:
+        if self._may_discard():
+            self.document.new()
+
+    def open_setup_file(self) -> None:
+        if not self._may_discard():
+            return
+        folder = str(self.document.base_dir) if self.document.base_dir else ""
+        path, _ = QFileDialog.getOpenFileName(self, "Open run setup", folder, FILE_FILTER)
+        if not path:
+            return
+        try:
+            self.document.open(path)
+        except (SpecError, OSError) as error:
+            QMessageBox.warning(self, "Open setup", str(error))
+
+    def save_setup(self) -> None:
+        if self.document.path is None:
+            self.save_setup_as()
+            return
+        self._save_to(self.document.path)
+
+    def save_setup_as(self) -> None:
+        if self.document.base_dir is not None:
+            start = str(self.document.base_dir / "run.yaml")
+        else:
+            start = "run.yaml"
+        path, _ = QFileDialog.getSaveFileName(self, "Save run setup", start, FILE_FILTER)
+        if not path:
+            return
+        target = Path(path)
+        if not target.suffix:
+            target = target.with_suffix(".yaml")
+        self._save_to(target)
+
+    def _save_to(self, path: Path) -> None:
+        try:
+            self.document.save(path)
+        except (SpecError, OSError) as error:
+            QMessageBox.warning(self, "Save setup", str(error))
 
     # --- setup and checks ----------------------------------------------------------
 
@@ -135,12 +257,31 @@ class MainWindow(QMainWindow):
         self.refresh_checks()
 
     def _on_jump(self, target: str) -> None:
+        """A click on a guidance line: the setup, or an editor tab and the field in it."""
         if target == SETUP_TARGET:
             self.open_setup()
+            return
+        head, _, rest = target.partition("/")
+        editor = self.editors.get(head)
+        if editor is None:
+            return
+        self.tabs.setCurrentWidget(editor)
+        editor.focus_target(rest)
+
+    def _set_setup_messages(self, messages: list[Guidance]) -> None:
+        self._setup_messages = messages
+        self._show_status()
+
+    def _show_status(self) -> None:
+        """The status bar: the setup's messages, then the blocking problems, then the notes."""
+        problems = self.document.problems
+        blocking = [problem for problem in problems if problem.blocking]
+        notes = [problem for problem in problems if not problem.blocking]
+        self.status.set_messages([*self._setup_messages, *blocking, *notes])
 
     def refresh_checks(self) -> None:
         """Run the installation checks in a thread and show what is not ready."""
-        self.status.set_messages([Guidance("Checking the installation…")])
+        self._set_setup_messages([Guidance("Checking the installation…")])
         route = self.settings.route
         self._generation += 1
         generation = self._generation
@@ -157,17 +298,21 @@ class MainWindow(QMainWindow):
     def _checks_done(self, generation: int, checks: list[dict]) -> None:
         if not self._is_current(generation):
             return
-        self.status.set_messages(setup_guidance(checks, self.settings.route))
+        self._set_setup_messages(setup_guidance(checks, self.settings.route))
         self.checked.emit(checks)
 
     def _checks_failed(self, generation: int, error: BaseException) -> None:
         if not self._is_current(generation):
             return
-        self.status.set_messages(
+        self._set_setup_messages(
             [Guidance(f"Could not check the installation: {error}", SETUP_TARGET)]
         )
 
     def closeEvent(self, event):  # noqa: N802 (Qt's name)
+        # Unsaved edits are asked about first; "No" keeps the window open.
+        if not self._may_discard():
+            event.ignore()
+            return
         # No wait here: a slow check keeps running in the background and its result is ignored.
         # The application waits for stragglers once, at exit (see srim.app.main).
         self._closing = True

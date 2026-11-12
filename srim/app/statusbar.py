@@ -8,7 +8,7 @@ from PySide6.QtWidgets import QLabel, QStatusBar
 
 from srim.app.guidance import Guidance
 
-READY = "Ready to set up a run"
+READY = "The run setup is complete"
 
 
 class GuidanceBar(QStatusBar):
