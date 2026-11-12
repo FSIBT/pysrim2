@@ -22,6 +22,7 @@ from srim.app.beam_tab import BeamTab
 from srim.app.document import DocumentModel
 from srim.app.geometry import GeometryTab
 from srim.app.guidance import Guidance, setup_guidance
+from srim.app.run_settings import RunSettingsTab
 from srim.app.settings import AppSettings, save_settings
 from srim.app.setup import SetupWizard
 from srim.app.statusbar import GuidanceBar
@@ -38,24 +39,6 @@ THEME_LABELS = {"system": "&System", "light": "&Light", "dark": "&Dark"}
 SETUP_TARGET = "setup"
 FILE_FILTER = "Run setup (*.yaml *.yml)"
 DISCARD_TEXT = "Discard the changes to this setup?"
-
-
-def placeholder_editor(name: str) -> type[QWidget]:
-    """A stand-in for an editor tab whose release has not come yet; it keeps the 0.12.0 text.
-
-    Each editor is a widget built as ``Editor(document, parent=None)`` with a
-    ``focus_target(rest)`` method, which the window calls when a guidance line for one of its
-    fields is clicked (``rest`` is the target after the tab, for example ``"1/density"``).
-    """
-
-    class Placeholder(QLabel):
-        def __init__(self, document: DocumentModel, parent=None):
-            super().__init__(f"{name}: arrives in a later release", parent)
-
-        def focus_target(self, rest: str) -> None:
-            """Nothing to focus yet."""
-
-    return Placeholder
 
 
 class MainWindow(QMainWindow):
@@ -78,7 +61,7 @@ class MainWindow(QMainWindow):
         self._setup_messages: list[Guidance] = []
         self.document = document if document is not None else DocumentModel(self)
 
-        # Editors are keyed "geometry", "beam" and "settings"; the Run settings placeholder waits.
+        # Editors are keyed "geometry", "beam" and "settings".
         self.editors: dict[str, QWidget] = {}
         self.tabs = QTabWidget(self)
         for key, name in EDITOR_TABS:
@@ -87,7 +70,7 @@ class MainWindow(QMainWindow):
             elif key == "beam":
                 editor = BeamTab(self.document, self)
             else:
-                editor = placeholder_editor(name)(self.document, self)
+                editor = RunSettingsTab(self.document, self)
             self.editors[key] = editor
             self.tabs.addTab(editor, name)
         for name in PLAIN_TABS:

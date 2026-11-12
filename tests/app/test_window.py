@@ -245,6 +245,7 @@ from PySide6.QtWidgets import QFileDialog  # noqa: E402
 from srim.app import document as document_module  # noqa: E402
 from srim.app.beam_tab import BeamTab  # noqa: E402
 from srim.app.document import DocumentModel  # noqa: E402
+from srim.app.run_settings import RunSettingsTab  # noqa: E402
 from srim.app.statusbar import READY  # noqa: E402
 from srim.spec import RunSpec  # noqa: E402
 
@@ -322,11 +323,11 @@ def test_a_click_selects_the_tab_and_focuses_the_field(qtbot, target, tab, rest)
     assert calls == [rest]
 
 
-def test_the_editors_are_placeholders_with_the_plan_one_text(qtbot):
+def test_the_run_settings_tab_is_the_settings_editor(qtbot):
     win = window_with(qtbot)
     assert set(win.editors) == {"geometry", "beam", "settings"}
     assert isinstance(win.editors["beam"], BeamTab)
-    assert win.editors["settings"].text() == "Run settings: arrives in a later release"
+    assert isinstance(win.editors["settings"], RunSettingsTab)
     assert win.tabs.tabText(win.tabs.indexOf(win.editors["settings"])) == "Run settings"
 
 
