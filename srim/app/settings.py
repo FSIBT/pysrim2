@@ -53,11 +53,20 @@ def load_settings(path: Path | None = None) -> AppSettings:
 def save_settings(settings: AppSettings, path: Path | None = None) -> None:
     """Write ``settings`` to ``path`` (default: the settings file), atomically."""
     path = path or settings_path()
+    _write_json_atomic(path, asdict(settings), ".settings-")
+
+
+def _write_json_atomic(path: Path, data, prefix: str) -> None:
+    """Write ``data`` as JSON to ``path`` through a temporary file in the same folder.
+
+    The file is replaced in one step, so a crash never leaves half a file behind. The app's
+    other JSON files (the user materials) are written the same way.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".settings-", suffix=".tmp")
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=prefix, suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(asdict(settings), handle, indent=2)
+            json.dump(data, handle, indent=2)
             handle.write("\n")
         os.replace(tmp, path)
     except BaseException:
