@@ -133,7 +133,7 @@ def test_a_quote_in_the_description_is_the_librarys_message_in_the_status_bar(
     type_into(tab.widgets["description"], 'a"b')
     targets = [problem.target for problem in document.problems]
     assert "settings/description" in targets
-    assert 'double quote' in win.status.shown_text()
+    assert "double quote" in win.status.shown_text()
 
 
 def test_focus_target_description_focuses_the_line_edit(qtbot, tab):
