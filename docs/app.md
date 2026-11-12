@@ -108,7 +108,7 @@ setup uses from outside its own folder is copied to a `beam/` folder next to the
 and the file refers to the copy, so the setup still opens when its folder is moved. A file that
 cannot be read or written gives a message, and the setup stays as it was.
 
-**Edit > Undo** and **Redo** (Ctrl+Z, Ctrl+Shift+Z on Windows and Linux) go back and forward
+**Edit > Undo** and **Redo** (the standard keys of your platform) go back and forward
 through the edits since the setup was opened or created; opening another file starts a new
 history, so Undo never returns to the setup that was open before.
 
