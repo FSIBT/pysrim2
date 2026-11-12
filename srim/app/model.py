@@ -204,7 +204,8 @@ def target_for_key(key: str) -> str | None:
     return None
 
 
-def _label(layer: dict) -> str:
+def layer_label(layer: dict) -> str:
+    """The name of a layer, else its element symbols joined by "+", else "new layer"."""
     if layer.get("name"):
         return str(layer["name"])
     symbols = "+".join(e["symbol"] for e in layer.get("elements") or [] if e.get("symbol"))
@@ -224,7 +225,7 @@ def _missing(doc: dict) -> list[Guidance]:
     if not layers:
         out.append(Guidance("Add a target layer on the Geometry tab", "geometry"))
     for i, layer in enumerate(layers):
-        here = f"Layer {i + 1} ({_label(layer)})"
+        here = f"Layer {i + 1} ({layer_label(layer)})"
         elements = layer.get("elements") or []
         if not elements:
             out.append(Guidance(f"{here}: add at least one element", f"geometry/{i}/elements"))

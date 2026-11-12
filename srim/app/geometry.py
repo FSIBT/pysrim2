@@ -7,7 +7,8 @@ is red, with the problem as its tooltip. :class:`ElementsDialog` edits one layer
 the material menu fills a layer from a predefined compound or from "My materials".
 
 ``selected_layer`` (the row, or -1) and ``select_layer(row)`` are the hooks the cross-section
-drawing uses. ``focus_target("<row>/<field>")`` is how a status bar click reaches a cell.
+drawing (:class:`srim.app.target_view.TargetView`, beside the table) uses in both directions.
+``focus_target("<row>/<field>")`` is how a status bar click reaches a cell.
 """
 
 import math
@@ -34,6 +35,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPushButton,
+    QSplitter,
     QStyledItemDelegate,
     QTableView,
     QTableWidget,
@@ -47,6 +49,7 @@ from srim.app.materials import UserMaterial, load_user_materials, save_user_mate
 from srim.app.model import UNITS, new_element, new_layer
 from srim.app.numbers import parse_number
 from srim.app.periodic import choose_element
+from srim.app.target_view import TargetView
 from srim.core.compounds import formula_elements, predefined_compounds
 
 #: the MIME type of a dragged layer row (its row number, as text)
@@ -500,9 +503,20 @@ class GeometryTab(QWidget):
         ):
             buttons.addWidget(button)
         buttons.addStretch(1)
+        # The to-scale drawing of the target sits beside the table; the two select each other.
+        self.target_view = TargetView(document, self)
+        self.target_view.set_selected(self._selected)
+        self.target_view.layer_clicked.connect(self.select_layer)
+        self.selected_layer.connect(self.target_view.set_selected)
+        self.splitter = QSplitter(Qt.Orientation.Horizontal, self)
+        self.splitter.addWidget(self.table)
+        self.splitter.addWidget(self.target_view)
+        self.splitter.setStretchFactor(0, 3)
+        self.splitter.setStretchFactor(1, 2)
+
         layout = QVBoxLayout(self)
         layout.addLayout(buttons)
-        layout.addWidget(self.table)
+        layout.addWidget(self.splitter)
 
         # Connected after setModel, so the selection model's reset handling runs first.
         self.table.selectionModel().currentRowChanged.connect(self._on_current_row)
