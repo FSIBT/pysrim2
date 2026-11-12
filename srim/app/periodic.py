@@ -28,9 +28,8 @@ def isotope_menu(symbol, parent):
             f"  ({isotope.abundance_percent:.4g} %)"
         )
         action = menu.addAction(text)
-        action.triggered.connect(
-            lambda *_, choice=ElementChoice(symbol, isotope.mass_amu): parent.pick(choice)
-        )
+        choice = ElementChoice(symbol, isotope.mass_amu)
+        action.triggered.connect(lambda *_, choice=choice: parent.pick(choice))
     return menu
 
 
