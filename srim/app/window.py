@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 import srim
 from srim.app import DOCS_URL
 from srim.app.document import DocumentModel
+from srim.app.geometry import GeometryTab
 from srim.app.guidance import Guidance, setup_guidance
 from srim.app.settings import AppSettings, save_settings
 from srim.app.setup import SetupWizard
@@ -76,11 +77,14 @@ class MainWindow(QMainWindow):
         self._setup_messages: list[Guidance] = []
         self.document = document if document is not None else DocumentModel(self)
 
-        # Editors are keyed "geometry", "beam" and "settings"; Tasks 5-9 replace the placeholders.
+        # Editors are keyed "geometry", "beam" and "settings"; Tasks 6-9 replace the placeholders.
         self.editors: dict[str, QWidget] = {}
         self.tabs = QTabWidget(self)
         for key, name in EDITOR_TABS:
-            editor = placeholder_editor(name)(self.document, self)
+            if key == "geometry":
+                editor = GeometryTab(self.document, self)
+            else:
+                editor = placeholder_editor(name)(self.document, self)
             self.editors[key] = editor
             self.tabs.addTab(editor, name)
         for name in PLAIN_TABS:

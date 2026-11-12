@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The desktop app opens and saves a run setup (File > New, Open, Save and Save as, asking before unsaved edits are discarded) with Edit > Undo and Redo, and its status bar lists what the setup is still missing, with a click that jumps to the field.
 - The desktop app needs Python 3.14 or older until PySide6 supports Python 3.15: there the `app` extra is empty, and `pysrim2 install app` and `pysrim2 app` say so.
 - The library has tables of the natural isotopes (`srim.core.isotopes`) and of common materials (`srim.core.compounds`).
+- The desktop app's Geometry tab edits the layers: a table with name, elements, density, thickness (in Å, nm, µm or mm), gas or not, and Add, Remove, Up and Down (or drag a row); each layer's elements are edited in a dialog, a material menu fills a layer from the common materials or from "My materials", and "Save as material…" keeps a layer's composition for later. A cell the setup cannot use is shown in red.
 
 ### Fixed
 
