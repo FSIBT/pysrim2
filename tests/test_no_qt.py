@@ -14,7 +14,7 @@ def test_the_library_and_cli_never_import_qt(tmp_path):
     code = (
         "import contextlib, os, sys\n"
         "import srim, srim.cli, srim.app, srim.installer.app\n"
-        "import srim.app.routes, srim.app.settings, srim.app.guidance\n"
+        "import srim.app.routes, srim.app.settings, srim.app.guidance, srim.app.model\n"
         "import srim.core.isotopes, srim.core.compounds\n"
         "from srim import cli\n"
         "cli.build_parser().parse_args(['doctor'])\n"

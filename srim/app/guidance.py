@@ -1,7 +1,7 @@
 """What the app's setup view says: one line per thing that is not ready.
 
 ``target`` names where a click on the line goes. This plan has only the setup view
-(``"setup"``).
+(``"setup"``). ``blocking`` is False for a note that does not stop a run (a library warning).
 """
 
 from dataclasses import dataclass
@@ -11,6 +11,7 @@ from dataclasses import dataclass
 class Guidance:
     text: str
     target: str | None = None
+    blocking: bool = True
 
 
 def setup_guidance(checks: list[dict], route: str | None) -> list[Guidance]:
