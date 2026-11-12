@@ -149,20 +149,52 @@ def test_save_refuses_an_incomplete_setup_and_writes_nothing(tmp_path):
     assert not target.exists() and doc.path is None
 
 
-def test_a_saved_setup_keeps_what_the_editors_do_not_offer(tmp_path, boron_data, write_setup):
-    boron_data.update(
-        {
-            "calculation": 4,
-            "beam": {"mode": "binned"},  # calculation 4 with a distributed beam is binned
-            "settings": {"plot_mode": 0},
-            "ion": {
-                "symbol": "B",
-                "energy_keV": {"histogram": {"edges": [19, 20, 21], "counts": [1, 2]}},
-                "angle_deg": 7.0,
-            },
-        }
-    )
-    boron_data["target"].append(GAS)
+HISTOGRAM = {"histogram": {"edges": [19, 20, 21], "counts": [1, 2]}}  # inline, not from a file
+
+#: setups the editors do not offer (Review Focus 1): each is changed from the boron setup
+NOT_OFFERED = {
+    "calc4_binned_inline_histogram_plot_mode": {
+        "calculation": 4,
+        "beam": {"mode": "binned"},
+        "settings": {"plot_mode": 0},
+        "ion": {"symbol": "B", "energy_keV": HISTOGRAM, "angle_deg": 7.0},
+        "gas": True,
+    },
+    "calc5_binned_inline_histogram": {
+        "calculation": 5,
+        "beam": {"mode": "binned"},
+        "ion": {"symbol": "B", "energy_keV": HISTOGRAM, "angle_deg": 7.0},
+        "gas": True,
+    },
+    "calc6_binned_inline_histogram": {
+        "calculation": 6,
+        "beam": {"mode": "binned"},
+        "ion": {"symbol": "B", "energy_keV": HISTOGRAM, "angle_deg": 7.0},
+    },
+    "calc7_binned_inline_histogram": {
+        "calculation": 7,
+        "beam": {"mode": "binned"},
+        "ion": {"symbol": "B", "energy_keV": HISTOGRAM, "angle_deg": 7.0},
+    },
+    "fixed_energy_and_angle_with_gas": {
+        "ion": {
+            "symbol": "B",
+            "energy_keV": {"fixed": {"value": 20.0}},
+            "angle_deg": {"fixed": {"value": 7.0}},
+        },
+        "gas": True,
+    },
+}
+
+
+@pytest.mark.parametrize("case", sorted(NOT_OFFERED))
+def test_a_saved_setup_keeps_what_the_editors_do_not_offer(
+    case, tmp_path, boron_data, write_setup
+):
+    changes = dict(NOT_OFFERED[case])
+    if changes.pop("gas", False):
+        boron_data["target"].append(deepcopy(GAS))  # gas layer with binding energies
+    boron_data.update(changes)
     old = write_setup(tmp_path / "old" / "run.yaml", boron_data)
     doc = DocumentModel()
     doc.open(old)
