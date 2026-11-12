@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `pysrim2 app` opens the desktop window: a welcome screen and a guided setup (it opens by itself on the first check if no route is chosen yet or a check is not ready, and Setup > Run setup… reopens it) that chooses native, wine (Linux only) or container (the recommended one is preselected; macOS offers only the container), installs what is missing and checks the result. The app never runs a command that needs admin rights; it shows those for you to run in a terminal and then press Check again.
 - The app's status bar says what to do next, with a click through to the setup, and View > Theme switches between the system, light and dark colours.
 - The desktop app needs Python 3.14 or older until PySide6 supports Python 3.15: there the `app` extra is empty, and `pysrim2 install app` and `pysrim2 app` say so.
+- The library has tables of the natural isotopes (`srim.core.isotopes`) and of common materials (`srim.core.compounds`).
 
 ### Fixed
 

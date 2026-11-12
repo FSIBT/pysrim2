@@ -1,0 +1,118 @@
+# Common materials offered by the desktop app. Each entry: name, chemical formula, density in
+# g/cm3 and phase (0 = solid or liquid, 1 = gas). Read by srim.core.compounds.
+- name: Silicon
+  formula: Si
+  density_g_cm3: 2.3212
+  phase: 0
+- name: Germanium
+  formula: Ge
+  density_g_cm3: 5.3234
+  phase: 0
+- name: Graphite
+  formula: C
+  density_g_cm3: 2.253
+  phase: 0
+- name: Diamond
+  formula: C
+  density_g_cm3: 3.515
+  phase: 0
+- name: Aluminium
+  formula: Al
+  density_g_cm3: 2.6989
+  phase: 0
+- name: Titanium
+  formula: Ti
+  density_g_cm3: 4.54
+  phase: 0
+- name: Iron
+  formula: Fe
+  density_g_cm3: 7.874
+  phase: 0
+- name: Nickel
+  formula: Ni
+  density_g_cm3: 8.902
+  phase: 0
+- name: Copper
+  formula: Cu
+  density_g_cm3: 8.96
+  phase: 0
+- name: Molybdenum
+  formula: Mo
+  density_g_cm3: 10.22
+  phase: 0
+- name: Silver
+  formula: Ag
+  density_g_cm3: 10.5
+  phase: 0
+- name: Tantalum
+  formula: Ta
+  density_g_cm3: 16.65
+  phase: 0
+- name: Tungsten
+  formula: W
+  density_g_cm3: 19.3
+  phase: 0
+- name: Platinum
+  formula: Pt
+  density_g_cm3: 21.45
+  phase: 0
+- name: Gold
+  formula: Au
+  density_g_cm3: 19.32
+  phase: 0
+- name: Silicon dioxide (fused silica)
+  formula: SiO2
+  density_g_cm3: 2.20
+  phase: 0
+- name: Silicon nitride
+  formula: Si3N4
+  density_g_cm3: 3.44
+  phase: 0
+- name: Silicon carbide
+  formula: SiC
+  density_g_cm3: 3.21
+  phase: 0
+- name: Aluminium oxide (sapphire)
+  formula: Al2O3
+  density_g_cm3: 3.98
+  phase: 0
+- name: Titanium dioxide (rutile)
+  formula: TiO2
+  density_g_cm3: 4.23
+  phase: 0
+- name: Gallium arsenide
+  formula: GaAs
+  density_g_cm3: 5.317
+  phase: 0
+- name: Gallium nitride
+  formula: GaN
+  density_g_cm3: 6.15
+  phase: 0
+- name: Lithium fluoride
+  formula: LiF
+  density_g_cm3: 2.635
+  phase: 0
+- name: Water (liquid)
+  formula: H2O
+  density_g_cm3: 1.0
+  phase: 0
+- name: Kapton
+  formula: C22H10N2O5
+  density_g_cm3: 1.42
+  phase: 0
+- name: Mylar
+  formula: C10H8O4
+  density_g_cm3: 1.397
+  phase: 0
+- name: Polyethylene
+  formula: C2H4
+  density_g_cm3: 0.94
+  phase: 0
+- name: PMMA
+  formula: C5H8O2
+  density_g_cm3: 1.19
+  phase: 0
+- name: Air (dry)
+  formula: N78.08O20.95Ar0.93
+  density_g_cm3: 0.001205
+  phase: 1

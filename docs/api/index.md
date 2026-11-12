@@ -8,6 +8,7 @@ One page per part of the library. Each object is documented on one page only.
 - {doc}`scan`: scans over many runs and their results.
 - {doc}`beam`: beam distributions and their runs.
 - {doc}`analysis`: `implant_summary`.
+- {doc}`core`: the natural isotopes and the common materials with their formulas.
 - {doc}`export`: Parquet, HDF5 and CSV export.
 - {doc}`plot`: the plots of a `Results` object.
 
@@ -21,6 +22,7 @@ spec
 scan
 beam
 analysis
+core
 export
 plot
 ```
