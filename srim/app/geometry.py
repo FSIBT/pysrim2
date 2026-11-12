@@ -142,11 +142,11 @@ class LayerTableModel(QAbstractTableModel):
 
     # --- Qt model interface -------------------------------------------------------------
 
-    def rowCount(self, parent=QModelIndex()):  # noqa: N802 (Qt's name)
-        return 0 if parent.isValid() else len(self._layers())
+    def rowCount(self, parent=None):  # noqa: N802 (Qt's name)
+        return 0 if parent is not None and parent.isValid() else len(self._layers())
 
-    def columnCount(self, parent=QModelIndex()):  # noqa: N802
-        return 0 if parent.isValid() else len(self.COLUMNS)
+    def columnCount(self, parent=None):  # noqa: N802
+        return 0 if parent is not None and parent.isValid() else len(self.COLUMNS)
 
     def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):  # noqa: N802
         if orientation == Qt.Orientation.Horizontal and role == Qt.ItemDataRole.DisplayRole:
@@ -211,7 +211,9 @@ class LayerTableModel(QAbstractTableModel):
         if role != Qt.ItemDataRole.EditRole:
             return False
         if column == "name":
-            return self._edit_layer(row, "name", str(value))
+            if not isinstance(value, str):
+                return False  # the view's cleanup after a drop sends None; a name is text
+            return self._edit_layer(row, "name", value)
         if column == "unit":
             if value not in UNITS:
                 return False
@@ -248,6 +250,13 @@ class LayerTableModel(QAbstractTableModel):
         if indexes:
             data.setData(ROW_MIME, QByteArray(str(indexes[0].row()).encode()))
         return data
+
+    def removeRows(self, row, count, parent=None):  # noqa: N802
+        """Layers are removed only by the Remove button, through the document.
+
+        The view asks for this after a drop it has accepted; refusing keeps the layer.
+        """
+        return False
 
     def dropMimeData(self, data, action, row, column, parent):  # noqa: N802
         if action != Qt.DropAction.MoveAction or not data.hasFormat(ROW_MIME):
@@ -456,6 +465,9 @@ class GeometryTab(QWidget):
         self.table.setAcceptDrops(True)
         self.table.setDropIndicatorShown(True)
         self.table.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
+        # The view would otherwise clear the moved row's cells after a drop (overwrite mode).
+        self.table.setDragDropOverwriteMode(False)
+        self.table.doubleClicked.connect(self._on_double_click)
         self.table.setItemDelegateForColumn(
             self.model.COLUMNS.index("unit"), UnitDelegate(self.table)
         )
@@ -604,6 +616,11 @@ class GeometryTab(QWidget):
             return
         elements = dialog.elements
         self.document.edit(lambda doc: doc["target"][row].__setitem__("elements", elements))
+
+    def _on_double_click(self, index) -> None:
+        if self.model.COLUMNS[index.column()] == "elements":
+            self.select_layer(index.row())
+            self.edit_elements()
 
     def _use_material(self, name: str, density, phase: int, elements: list[dict]) -> None:
         row = self._selected

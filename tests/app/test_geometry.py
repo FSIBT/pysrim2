@@ -479,3 +479,44 @@ def test_cancelling_the_elements_dialog_changes_nothing(tab, document, monkeypat
     monkeypatch.setattr(ElementsDialog, "exec", lambda self: QDialog.DialogCode.Rejected)
     tab.elements_button.click()
     assert document.doc == before
+
+
+# --- the view's cleanup after a drag, and the Elements double-click ----------------------------
+
+
+def test_the_view_does_not_overwrite_cells_after_a_drag(tab):
+    assert tab.table.dragDropOverwriteMode() is False
+
+
+def test_the_cleanup_after_a_drop_leaves_the_moved_layer_unchanged(tab, document):
+    set_layers(document, layer("A", density=2.2, thickness=10.0, elements=silica_elements()))
+    before = deepcopy(document.doc)
+    # After an internal move the view clears the selected cells (overwrite) or removes the rows.
+    index = cell(tab, 0, "name")
+    assert tab.model.setData(index, None, Qt.ItemDataRole.EditRole) is False
+    assert tab.model.setItemData(index, {Qt.ItemDataRole.EditRole: None}) is False
+    assert tab.model.removeRows(0, 1) is False
+    assert document.doc == before
+    assert text(tab, 0, "name") == "A"
+
+
+def test_a_non_text_name_is_refused(tab, document):
+    set_layers(document, layer("A"))
+    assert tab.model.setData(cell(tab, 0, "name"), 42, Qt.ItemDataRole.EditRole) is False
+    assert document.doc["target"][0]["name"] == "A"
+
+
+def test_double_clicking_the_elements_cell_opens_the_elements_dialog(tab, document, monkeypatch):
+    set_layers(document, layer("glass", density=2.2, elements=silica_elements()), layer("b"))
+    opened = []
+
+    def record(self):
+        opened.append(self.row_count())
+        return QDialog.DialogCode.Rejected
+
+    monkeypatch.setattr(ElementsDialog, "exec", record)
+    tab.table.doubleClicked.emit(cell(tab, 1, "density"))
+    assert opened == []
+    tab.table.doubleClicked.emit(cell(tab, 0, "elements"))
+    assert opened == [2]
+    assert tab.table.currentIndex().row() == 0
