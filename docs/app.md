@@ -2,8 +2,9 @@
 
 `pysrim2 app` opens a window for pysrim2. In 0.12.0 it guides you through setting up
 SRIM: it shows how SRIM runs on your machine, installs what is still missing, and checks
-the result. Editing a calculation, starting runs and reading results follow later in the
-0.12 series; until then their tabs only say so.
+the result. It also edits a run setup: the target (Geometry tab), the beam (Beam tab) and the
+run settings (Run settings tab). Starting runs and reading results follow later in the 0.12
+series.
 
 The app is optional. The library (`import srim`) and the command line never import Qt, so
 they work without it.
@@ -90,10 +91,140 @@ in this order:
   last.
 - *The run setup is complete* when nothing is listed.
 
-When there are more lines, the bar says how many more. A line with a link opens the setup, or
-the tab and field it names, when you click it.
+The first line is a link when it names a place: clicking it opens the setup, or the tab and the
+field it names. When there are more lines, the bar says how many more, and its tooltip lists
+all of them.
 
-## Open and save a setup
+## Geometry
+
+The **Geometry** tab edits the layers of the target. The table has one row per layer; the
+first row is the layer the beam reaches first. Its columns are:
+
+| Column | What it holds |
+|---|---|
+| Name | A name for the layer (optional; the layer's elements show when it is empty) |
+| Elements | The elements and their amounts, for example `Si 1, O 2`; an isotope shows as `Si-28 1` |
+| Density (g/cm³) | The density |
+| Thickness | The thickness, shown in the layer's unit |
+| Unit | The unit of the thickness: Å, nm, µm or mm (the value is stored in nm) |
+| Gas | Ticked for a gas layer |
+
+Type a number into a cell and press Enter. A comma works as a decimal point (`1,5` is 1.5).
+Text that is not a number is refused and the old value stays. An empty cell is a missing value:
+the status bar names it. A value the library cannot use (for example a negative thickness) is
+shown in red, with the library's message as its tooltip.
+
+**Add layer**, **Remove layer**, **Up** and **Down** change the layers; you can also drag a row
+to a new place. **Elements…** opens the elements of the selected layer in a dialog, with one row
+per element: the element (**Choose…**, which opens the periodic table), its amount, and its
+displacement, lattice and surface energies in eV. Each new element starts with SRIM's usual
+values (amount 1, displacement 25 eV, lattice 0 eV, surface 3 eV).
+
+**Material…** fills the selected layer from a menu. Its first part is the common materials
+(from the list in `srim/data/compounds.yaml`, with their formula and density); its second part,
+**My materials**, is what you saved before. A material replaces the layer's name, density, gas
+flag and elements. **Save as material…** keeps the selected layer's density, gas flag and
+elements under a name you choose; saving a name that exists replaces that material. My materials
+are stored in `materials.json` in pysrim2's data directory, in the `app` folder (`<data
+dir>/app/materials.json`, see {doc}`installation`). A file that cannot be read counts as no
+materials.
+
+The periodic table has one button per element, Z = 1 to 92 (SRIM's range). An element's menu
+has **Natural** first, which is SRIM's own mass for the element, the same as a scripted run gets
+when it names no mass. The other entries are the element's natural isotopes, most abundant first,
+and choosing one sets that mass for the ion or the element. Only an isotope is stored with a mass;
+natural elements are stored without one.
+
+Beside the table the **target** is drawn to scale. Each layer's width follows its thickness,
+the beam comes in from the left at its angle, and a click on a layer selects its row (and a row
+selects its layer). A thin layer next to a thick one is still drawn a few pixels wide so that it
+stays visible and clickable. Such a layer is drawn wider than to scale: it has a dashed outline,
+a "≠" mark and a tooltip that says so. A layer with no usable thickness is drawn the same way. When
+there are more layers than fit at that width, each gets an equal width and none is to scale. The
+picture is only a guide: the numbers in the table are the setup.
+
+## Beam
+
+The **Beam** tab sets the ion, the number of ions and the beam quantities. The **Ion** button
+opens the periodic table, with the isotopes as on the Geometry tab. **Number of ions** is a whole
+number of at least 1.
+
+Each beam quantity has its own editor: **Energy** (keV), **Angle** (degrees), **Azimuth**
+(degrees) and the position **Position y**, **Position z** and **Depth** (nm). Energy and angle
+are always set. Azimuth and the three positions are **Not set** by default, which leaves them
+out of the setup.
+
+Each quantity has a **Kind**:
+
+- **Fixed value** is one number.
+- **Gaussian** (mean, sigma), **Uniform** (low, high), **Triangular** (low, mode, high) and
+  **Log-normal** (mu, sigma) are the distributions. The parameters are those of the
+  {doc}`beam` guide.
+- **Python function** takes a reference written as `python:<module>:<name>`, for example
+  `python:my_beams:density`. The module must be importable by its name from the folder you run
+  from, so put it next to your script. A function in `__main__`, a lambda and a function made
+  inside another function are refused, because a worker process cannot import them.
+- **Histogram file** is read with **Load…**. The file's bars are shown in a preview, and **OK**
+  uses it (**Cancel** keeps the setup as it was). A file that is broken (one row, decreasing
+  edges, values that are not numbers) is refused with the library's message.
+
+A distribution (every kind but a fixed value) also has **Limit to**, with optional low and high
+bounds: values outside the range are not sampled.
+
+Under each editor the density of that quantity is drawn: a smooth curve for a distribution, and a
+step line for a histogram or a uniform distribution. A binned beam also marks its bin edges with
+dashed lines. A value the library refuses is not drawn. The tab scrolls, so all six plots can be
+reached in a small window.
+
+A setup with a distribution, an azimuth or a position is a **distributed** beam, and the tab then
+shows the **Beam mode**. A single energy and angle is one SRIM run, and the tab says so instead.
+The modes are:
+
+- **Automatic** (the default) is exact for calculations 1 and 2, and binned for the others. The
+  line under the choice says which one it picked and why.
+- **Exact (TRIM.DAT)** samples every ion from the distributions and runs SRIM once, with the
+  sampled ions in SRIM's `TRIM.DAT` file. One SRIM run holds up to 99 999 ions; a larger exact
+  beam is split into several runs by `srim.beam.run_beam` (see {doc}`beam`).
+- **Binned** splits the beam into bins of energy and angle and runs SRIM once per bin. **Energy
+  bins** and **Angle bins** set the number of bins (**Automatic** is 10 and 6, up to 2000). The
+  count can be edited only for a distributed energy or angle, and only when it is binned. A
+  setup whose bins are written as edges keeps them, and the count shows without being editable.
+
+For the meaning of the modes and of the sampling, see {doc}`beam`. For the file itself, see
+{doc}`run-spec`.
+
+**Histogram files and saving.** A histogram file is read from the folder of the setup when it is
+relative to it. When you save, a histogram file that lies outside the folder of the saved
+`run.yaml` is copied into a `beam/` folder next to it, and the setup refers to the copy (a
+second file with the same name becomes `name-2.txt`, and so on). The setup then opens when its
+folder moves. A histogram file that cannot be found stops the save with a message.
+
+## Run settings
+
+The **Run settings** tab sets the calculation and the options that SRIM reads from `TRIM.IN`.
+Each control stores one item in the setup, and the library writes it to the `TRIM.IN` line
+named here:
+
+| Control | Setup item | `TRIM.IN` line |
+|---|---|---|
+| Calculation | `calculation` (1 Quick, 2 Full cascades, 3 Monolayer) | cascade options |
+| Random seed | `seed` | cascade options |
+| Description | `settings.description` (no double quote) | target |
+| Ranges, Backscattered ions, Transmitted ions, Sputtered atoms | `settings.ranges`, `backscattered`, `transmit`, `sputtered` (0 or 1) | disk files |
+| Collisions | `settings.collisions` (0, 1 or 2) | disk files |
+| EXYZ.txt from | `settings.exyz` (eV; Off is 0) | disk files |
+| Bragg correction | `settings.bragg_correction` (default 1.0) | ion |
+| Autosave every | `settings.autosave` | ion |
+
+The number of ions is on the Beam tab (`number_ions`); it is written on the ion line of `TRIM.IN`.
+
+A setting that is set back to its default is removed from the setup, and so is the `settings`
+mapping when it becomes empty, so the file holds only what differs from SRIM's defaults. The
+library still writes the description and the ranges flag to `TRIM.IN` even at their defaults.
+Settings the tab does not show (for example `plot_mode`) and a calculation 4 to 7 from a file
+are kept as they are. A calculation 4 to 7 is shown as "SRIM calculation N" in the menu.
+
+## Undo, open and save
 
 The window edits one run setup at a time, kept in a `run.yaml` file (the same file the library
 reads with `RunSpec.from_yaml`):
@@ -103,14 +234,18 @@ reads with `RunSpec.from_yaml`):
 - **File > Save setup** (Ctrl+S) writes the setup to the file it came from; a new setup is saved
   with **Save setup as…** (Ctrl+Shift+S), which asks for a file.
 
-Saving refuses an incomplete setup and says what is missing first. A histogram file that the
-setup uses from outside its own folder is copied to a `beam/` folder next to the saved file,
-and the file refers to the copy, so the setup still opens when its folder is moved. A file that
-cannot be read or written gives a message, and the setup stays as it was.
+A setup opened and saved without edits keeps the same contents. Anything the editors do not offer
+(for example calculations 4 to 7, a gas layer, or an inline histogram) is kept as it is; the Beam
+tab shows a value it does not offer as YAML, and it stays until you choose another kind.
 
-**Edit > Undo** and **Redo** (the standard keys of your platform) go back and forward
-through the edits since the setup was opened or created; opening another file starts a new
-history, so Undo never returns to the setup that was open before.
+Saving refuses an incomplete setup and says what is missing first, and a setup the library refuses
+is saved only once it is fixed. A file that cannot be read or written gives a message, and the
+setup stays as it was.
+
+**Edit > Undo** and **Redo** (the standard keys of your platform) go back and forward through
+the edits since the setup was opened or created (the last 200). Each change to a field is
+one edit, so a typed number is one step once you press Enter or leave the field. Opening another
+file starts a new history, so Undo never returns to the setup that was open before.
 
 New, Open and Quit ask **Discard the changes to this setup?** when the setup has edits that are
 not saved. Choosing No keeps the setup and the window open.
@@ -129,7 +264,8 @@ not saved. Choosing No keeps the setup and the window open.
 - **Help > Documentation** (opens this documentation) and **About pysrim2**
 
 The window has five tabs: **Geometry**, **Beam**, **Run settings**, **Progress** and
-**Results**. In 0.12.0 each of them only says that it arrives in a later release.
+**Results**. The first three edit the run setup. In 0.12.0 **Progress** and **Results** only
+say that they arrive in a later release.
 
 ## Settings file
 
