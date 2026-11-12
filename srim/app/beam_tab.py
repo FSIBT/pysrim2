@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QFileDialog,
     QFormLayout,
+    QFrame,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -40,6 +41,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -436,7 +438,9 @@ class BeamTab(QWidget):
         top.addStretch(1)
         counts = QFormLayout()
         counts.addRow("Number of ions", self.number_ions)
-        layout = QVBoxLayout(self)
+        # The body scrolls, so the six plots fit a small window. The tab is what the window adds.
+        body = QWidget()
+        layout = QVBoxLayout(body)
         layout.addLayout(top)
         layout.addLayout(counts)
         layout.addWidget(self.mode_group)
@@ -445,6 +449,13 @@ class BeamTab(QWidget):
             layout.addWidget(editor)
             layout.addWidget(self.plots[key])
         layout.addStretch(1)
+        self.scroll = QScrollArea(self)
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.scroll.setWidget(body)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(self.scroll)
 
         document.changed.connect(self._refresh)
         self._refresh()
@@ -517,7 +528,7 @@ class BeamTab(QWidget):
         base_dir = self.document.base_dir
         edges = _bin_edges(doc, base_dir)
         for key, plot in self.plots.items():
-            plot.show(values[key], key, base_dir, edges.get(key))
+            plot.set_distribution(values[key], key, base_dir, edges.get(key))
 
     # --- the edits ---------------------------------------------------------------------
 
@@ -565,7 +576,11 @@ class BeamTab(QWidget):
             if choice == "auto":
                 doc.pop("beam", None)
             elif choice == "exact":
-                doc["beam"] = {"mode": "exact"}
+                # The other keys (max_bins, and the bins that wait for binned) are kept as they are.
+                beam = doc.get("beam")
+                beam = dict(beam) if isinstance(beam, dict) else {}
+                beam["mode"] = "exact"
+                doc["beam"] = beam
             else:
                 beam = doc.get("beam")
                 beam = dict(beam) if isinstance(beam, dict) else {}

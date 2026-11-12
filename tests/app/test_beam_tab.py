@@ -15,7 +15,6 @@ from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtWidgets import QApplication, QDialog  # noqa: E402
 
 from srim.app import beam_tab as beam_module  # noqa: E402
-from srim.app import window as window_module  # noqa: E402
 from srim.app.beam_tab import BeamTab, HistogramPreview  # noqa: E402
 from srim.app.document import DocumentModel  # noqa: E402
 from srim.app.elements import ElementChoice  # noqa: E402
@@ -112,6 +111,17 @@ def test_required_quantities_have_no_not_set_choice_and_optional_ones_do(tab):
         "histogram",
     ]
     assert kinds("azimuth_deg")[0] == "unset"
+
+
+def test_the_tab_scrolls_its_editors_and_plots(tab):
+    from PySide6.QtWidgets import QScrollArea
+
+    (scroll,) = tab.findChildren(QScrollArea)
+    assert scroll.widgetResizable()
+    for editor in tab.editors.values():
+        assert scroll.isAncestorOf(editor)
+    for plot in tab.plots.values():
+        assert scroll.isAncestorOf(plot)
 
 
 def test_the_window_puts_the_beam_tab_in_the_beam_place(qtbot):
@@ -235,12 +245,6 @@ def test_an_empty_sigma_emits_none_and_the_status_bar_names_the_library_message(
     assert received[-1] == {"gaussian": {"mean": 20.0, "sigma": None}}
     assert win.document.problems[0].target == "beam/energy_keV"
     assert "sigma" in win.status.shown_text()
-    # The window asks before it discards unsaved edits; answer yes so closing does not block.
-    monkeypatch.setattr(
-        window_module.QMessageBox,
-        "question",
-        staticmethod(lambda *a, **k: window_module.QMessageBox.StandardButton.Yes),
-    )
     win.close()
 
 
@@ -626,13 +630,24 @@ def test_zero_bins_is_automatic_and_stores_no_bins(tab, document, with_setup):
     assert tab.angle_bins.specialValueText() == "Automatic (6)"
 
 
-def test_exact_stores_only_its_mode(tab, document, with_setup):
+def test_exact_keeps_the_bins_for_a_return_to_binned(tab, document, with_setup):
     gaussian_energy(tab)
     choose_mode(tab, "binned")
     tab.energy_bins.setValue(4)
     choose_mode(tab, "exact")
-    assert document.doc["beam"] == {"mode": "exact"}
+    assert document.doc["beam"] == {"mode": "exact", "bins": {"energy_keV": 4}}
+    to_spec(document.doc)  # the library accepts the bins in exact mode
     assert tab.mode_text.text() == EXACT_TEXT
+    choose_mode(tab, "binned")
+    assert tab.energy_bins.value() == 4
+
+
+def test_max_bins_survives_exact(tab, document, with_setup):
+    gaussian_energy(tab)
+    document.edit(lambda doc: doc.update(beam={"mode": "binned", "max_bins": 500}))
+    choose_mode(tab, "exact")
+    assert document.doc["beam"] == {"mode": "exact", "max_bins": 500}
+    to_spec(document.doc)  # the library accepts it
 
 
 def test_switching_back_to_automatic_removes_the_beam_key(tab, document, with_setup):
@@ -723,13 +738,7 @@ def test_focus_target_mode_focuses_the_mode_box(qtbot, tab, document, with_setup
     qtbot.waitUntil(lambda: QApplication.focusWidget() is tab.mode_combo)
 
 
-def test_the_status_bar_shows_the_library_bin_warning_for_400_bins(qtbot, monkeypatch, boron_data):
-    # Answer the unsaved-changes question at once, so a failing test cannot block on a dialog.
-    monkeypatch.setattr(
-        window_module.QMessageBox,
-        "question",
-        staticmethod(lambda *a, **k: window_module.QMessageBox.StandardButton.Yes),
-    )
+def test_the_status_bar_shows_the_library_bin_warning_for_400_bins(qtbot, boron_data):
     win = MainWindow(AppSettings(route="wine"), checks_fn=lambda route: [])
     qtbot.addWidget(win)
     win.document.edit(lambda doc: doc.update(deepcopy(boron_data)))

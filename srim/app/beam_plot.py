@@ -40,8 +40,8 @@ _AXIS_LABELS = {
 class DistributionPlot(QWidget):
     """The density of one beam quantity, with the bin edges of a binned setup.
 
-    :meth:`show` takes the value as the document holds it. Calling it again with the same
-    arguments draws nothing; the figure is redrawn when the palette changes.
+    :meth:`set_distribution` takes the value as the document holds it. Calling it again with the
+    same arguments draws nothing; the figure is redrawn when the palette changes.
     """
 
     def __init__(self, parent=None):
@@ -55,11 +55,13 @@ class DistributionPlot(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.canvas)
         self._last: tuple | None = None
-        QWidget.setVisible(self, False)
+        self.setVisible(False)
 
     # --- showing -----------------------------------------------------------------------
 
-    def show(self, value: Any, key: str, base_dir: Any, bin_edges: list[float] | None) -> None:
+    def set_distribution(
+        self, value: Any, key: str, base_dir: Any, bin_edges: list[float] | None
+    ) -> None:
         """Draw the density of ``value`` for the quantity ``key``, or hide the plot.
 
         ``bin_edges`` are drawn as dashed lines; None (or an empty list) draws none.
@@ -82,7 +84,7 @@ class DistributionPlot(QWidget):
         value, key, base_dir, edges = self._last
         shape = _shape_of(value, key, base_dir)
         if shape is None:
-            QWidget.setVisible(self, False)
+            self.setVisible(False)
             return
         self.axes.clear()
         foreground, background, accent = self._colours()
@@ -104,7 +106,7 @@ class DistributionPlot(QWidget):
         for edge in edges or ():
             self.axes.axvline(edge, color=foreground, linestyle="--", linewidth=0.8)
         self.canvas.draw_idle()
-        QWidget.setVisible(self, True)
+        self.setVisible(True)
 
     def _colours(self) -> tuple[str, str, str]:
         palette = self.palette()

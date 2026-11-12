@@ -19,6 +19,27 @@ def app_home(tmp_path, monkeypatch):
     return home
 
 
+@pytest.fixture(autouse=True)
+def discard_without_asking(monkeypatch):
+    """Answer the window's "discard unsaved edits?" question with Yes, so no test blocks on it.
+
+    A window closed in teardown with unsaved edits would otherwise wait on a modal dialog. A test
+    that checks the question sets its own answer with ``monkeypatch``, which takes precedence.
+    Only a Qt test has PySide6 loaded, so the Qt-free tests never import it here.
+    """
+    import sys
+
+    widgets = sys.modules.get("PySide6.QtWidgets")
+    if widgets is None:
+        return
+    box = widgets.QMessageBox
+    monkeypatch.setattr(
+        box,
+        "question",
+        staticmethod(lambda *args, **kwargs: box.StandardButton.Yes),
+    )
+
+
 @pytest.fixture
 def boron_data():
     """A complete setup in the shape of the boron reference case (one gold layer)."""
