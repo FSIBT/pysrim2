@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The desktop app's Beam tab sets the ion (from the periodic table, with its isotopes), the number of ions, and the energy, angle, azimuth and position of the ion, each as a fixed value or a distribution (Gaussian, uniform, triangular, log-normal, a Python function or a histogram file, with an optional "Limit to" range); a histogram file is previewed before it is used, and the setup keeps a copy of it when it is saved.
 - The desktop app's Beam tab chooses the beam mode (Automatic, Exact with TRIM.DAT, or Binned, with the number of energy and angle bins, Automatic by default), says which one Automatic picked and why, and draws the density of each beam quantity under its editor, with the bin edges of a binned beam; a single energy and angle is one SRIM run and shows no mode.
 - The desktop app's Run settings tab sets the calculation, the random seed, the description, the output files (ranges, backscattered and transmitted ions, sputtered atoms), collision details, the EXYZ threshold, the Bragg correction and autosave; a setting left at SRIM's default is not written to the file.
+- The desktop app keeps a broken `materials.json` (My materials) as `materials.json.bak` before a save rewrites it, so no saved material is lost without a copy.
 
 ### Fixed
 
