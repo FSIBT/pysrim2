@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The library has tables of the natural isotopes (`srim.core.isotopes`) and of common materials (`srim.core.compounds`).
 - The desktop app's Geometry tab edits the layers: a table with name, elements, density, thickness (in Å, nm, µm or mm), gas or not, and Add, Remove, Up and Down (or drag a row); each layer's elements are edited in a dialog, a material menu fills a layer from the common materials or from "My materials", and "Save as material…" keeps a layer's composition for later. A cell the setup cannot use is shown in red.
 - The desktop app's Geometry tab shows the target to scale beside the layer table: each layer's width follows its thickness (a thin layer is drawn wider than to scale and marked "≠"), the beam comes in at its angle, and a click on a layer selects its row and the other way round.
+- The desktop app's Beam tab sets the ion (from the periodic table, with its isotopes), the number of ions, and the energy, angle, azimuth and position of the ion, each as a fixed value or a distribution (Gaussian, uniform, triangular, log-normal, a Python function or a histogram file, with an optional "Limit to" range); a histogram file is previewed before it is used, and the setup keeps a copy of it when it is saved.
 
 ### Fixed
 
