@@ -227,6 +227,9 @@ mapping when it becomes empty, so the setup holds only what differs from SRIM's 
 defaults. The `TRIM.IN` file is the same either way: the library writes every setting to it.
 Settings the tab does not show (for example `plot_mode`) and a calculation 4 to 7 from a file
 are kept as they are. A calculation 4 to 7 is shown as "SRIM calculation N" in the menu.
+The tab has no field for `plot_mode`, `plot_xmin`, `plot_xmax`, `reminders` or `version`: they
+are kept as they are and are edited in `run.yaml`, so a status bar line about one of them opens
+the tab but has no field to focus.
 
 ## Undo, open and save
 
