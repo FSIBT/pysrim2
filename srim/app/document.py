@@ -19,6 +19,7 @@ from srim.app import scan_model
 from srim.app.guidance import Guidance
 from srim.app.model import History, from_spec, new_document, prepare_for_save, problems, to_spec
 from srim.beam.shapes import Histogram
+from srim.scan.executor import MARKER_NAME
 from srim.spec import RunSpec, SpecError
 
 LOCKED_TEXT = "the setup is locked while a run is going"
@@ -48,6 +49,13 @@ class DocumentModel(QObject):
     @property
     def path(self) -> Path | None:
         return self._path
+
+    @property
+    def in_run_folder(self) -> bool:
+        """True when :attr:`path` is the ``scan.yaml`` of a run folder (its folder holds the scan
+        marker). Such a setup is not saved in place: the run's points belong to it, so Save and
+        Start ask for a file of their own first."""
+        return self._path is not None and (self._path.parent / MARKER_NAME).is_file()
 
     @property
     def base_dir(self) -> Path | None:

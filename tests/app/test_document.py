@@ -407,3 +407,21 @@ def test_a_scan_with_nothing_to_vary_cannot_be_saved(tmp_path, boron_data, write
     with pytest.raises(SpecError, match="Add a value to vary"):
         doc.save(target)
     assert not target.exists()
+
+
+def test_a_setup_in_a_run_folder_is_in_the_run_folder_until_it_is_saved_elsewhere(
+    tmp_path, write_setup, boron_data
+):
+    from srim.scan.executor import MARKER_NAME
+
+    run = tmp_path / "boron-runs" / "20261112T000000Z"
+    run.mkdir(parents=True)
+    (run / MARKER_NAME).write_text("scan\n", encoding="utf-8")
+    doc = DocumentModel()
+    assert not doc.in_run_folder
+    doc.open(write_setup(run / "scan.yaml", boron_data))
+    assert doc.in_run_folder
+    doc.open(write_setup(tmp_path / "other" / "run.yaml", boron_data))
+    assert not doc.in_run_folder
+    doc.new()
+    assert not doc.in_run_folder

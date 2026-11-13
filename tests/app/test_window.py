@@ -787,3 +787,251 @@ def test_open_run_folder_asks_before_discarding_unsaved_edits(
     assert asked == [window_module.DISCARD_TEXT]
     assert fresh.run.folder is None
     assert fresh.document.is_modified
+
+
+# -- a loaded run folder, Save and Start, the stale-read guard, the closing flag ----------------
+
+
+def _snapshot_tree(folder):
+    return sorted(str(path.relative_to(folder)) for path in folder.rglob("*"))
+
+
+def _open_run(qtbot, monkeypatch, folder):
+    """A fresh window with the run folder ``folder`` opened (File > Open run folder…)."""
+    fresh = fresh_window(qtbot)
+    pick_folder(monkeypatch, folder)
+    with qtbot.waitSignal(fresh.run.finished, timeout=RUN_TIMEOUT):
+        fresh.open_run_action.trigger()
+    return fresh
+
+
+def _answer_save_dialog(monkeypatch, target, asked):
+    """Make the Save dialog answer ``target`` (empty for cancel); ``asked`` gets its start."""
+
+    def get_save(*args, **kwargs):
+        asked.append(args[2])
+        return (str(target) if target is not None else "", "")
+
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", get_save)
+
+
+def test_saving_a_loaded_run_never_changes_its_scan_yaml_and_asks_for_a_file(
+    qtbot, tmp_path, write_setup, boron_data, monkeypatch
+):
+    import yaml
+
+    _win, folder = a_run_of(qtbot, tmp_path, write_setup, boron_data)
+    fresh = _open_run(qtbot, monkeypatch, folder)
+    scan_bytes = (folder / "scan.yaml").read_bytes()
+    tree = _snapshot_tree(folder)
+    fresh.document.edit(lambda doc: doc.__setitem__("number_ions", 7))
+    target = tmp_path / "saved.yaml"
+    asked = []
+    _answer_save_dialog(monkeypatch, target, asked)
+    fresh.save_action.trigger()
+    assert asked == [str(tmp_path / "boron" / "run.yaml")]  # the setup beside its run folders
+    assert (folder / "scan.yaml").read_bytes() == scan_bytes
+    assert _snapshot_tree(folder) == tree
+    assert fresh.document.path == target
+    assert yaml.safe_load(target.read_text(encoding="utf-8"))["spec"]["number_ions"] == 7
+
+
+def test_a_cancelled_save_of_a_loaded_run_changes_nothing(
+    qtbot, tmp_path, write_setup, boron_data, monkeypatch
+):
+    _win, folder = a_run_of(qtbot, tmp_path, write_setup, boron_data)
+    fresh = _open_run(qtbot, monkeypatch, folder)
+    scan_bytes = (folder / "scan.yaml").read_bytes()
+    fresh.document.edit(lambda doc: doc.__setitem__("number_ions", 7))
+    asked = []
+    _answer_save_dialog(monkeypatch, None, asked)
+    fresh.save_action.trigger()
+    assert len(asked) == 1
+    assert (folder / "scan.yaml").read_bytes() == scan_bytes
+    assert fresh.document.path == folder / "scan.yaml"
+
+
+def test_start_on_a_loaded_run_asks_for_a_file_and_creates_nothing_in_the_run_folder(
+    qtbot, tmp_path, write_setup, boron_data, monkeypatch
+):
+    _win, folder = a_run_of(qtbot, tmp_path, write_setup, boron_data)
+    fresh = _open_run(qtbot, monkeypatch, folder)
+    tree = _snapshot_tree(folder)
+    asked = []
+    _answer_save_dialog(monkeypatch, None, asked)
+    fresh.start_action.trigger()
+    assert len(asked) == 1
+    assert not fresh.run.running
+    assert _snapshot_tree(folder) == tree
+
+
+def test_start_on_a_loaded_run_runs_the_saved_copy_in_its_own_run_folder(
+    qtbot, tmp_path, write_setup, boron_data, monkeypatch
+):
+    _win, folder = a_run_of(qtbot, tmp_path, write_setup, boron_data)
+    fresh = _open_run(qtbot, monkeypatch, folder)
+    tree = _snapshot_tree(folder)
+    target = tmp_path / "copy.yaml"
+    _answer_save_dialog(monkeypatch, target, [])
+    with qtbot.waitSignal(fresh.run.finished, timeout=RUN_TIMEOUT):
+        fresh.start_action.trigger()
+    assert fresh.run.folder.parent == tmp_path / "copy-runs"
+    assert _snapshot_tree(folder) == tree
+
+
+def test_save_and_save_as_are_disabled_while_a_run_goes(
+    qtbot, tmp_path, boron_data, write_setup, monkeypatch
+):
+    path = write_setup(tmp_path / "w" / "run.yaml", boron_data)
+    win = MainWindow(AppSettings(route="wine"), checks_fn=lambda route: [], run_runner=slow_runner)
+    qtbot.addWidget(win)
+    win.document.open(path)
+    win.document.edit(lambda doc: doc.__setitem__("seed", 9))
+    win.run.start(ParallelChoice())
+    assert not win.save_action.isEnabled()
+    assert not win.save_as_action.isEnabled()
+    monkeypatch.setattr(
+        QMessageBox, "question", lambda *args, **kwargs: QMessageBox.StandardButton.Yes
+    )
+    with qtbot.waitSignal(win.run.finished, timeout=15_000):
+        win.run.stop()
+    assert win.save_action.isEnabled()
+    assert win.save_as_action.isEnabled()
+
+
+def test_save_and_save_as_are_disabled_while_a_run_folder_is_read(
+    qtbot, tmp_path, write_setup, boron_data, monkeypatch, held_loads
+):
+    _win, folder = a_run_of(qtbot, tmp_path, write_setup, boron_data)
+    fresh = fresh_window(qtbot)
+    pick_folder(monkeypatch, folder)
+    fresh.open_run_action.trigger()
+    assert not fresh.save_action.isEnabled()
+    assert not fresh.save_as_action.isEnabled()
+    read, done, _failed = held_loads[-1]
+    done(read())
+    assert fresh.save_action.isEnabled()
+    assert fresh.save_as_action.isEnabled()
+
+
+@pytest.fixture
+def held_loads(monkeypatch):
+    """The run folder reads are held: the test calls them, as it chooses. A run's own thread
+    goes on as usual (only the ``read`` of RunController.load is kept)."""
+    from srim.app import run_control
+
+    real = run_control.run_in_thread
+    calls = []
+
+    def fake(fn, done, failed):
+        if fn.__name__ == "read":
+            calls.append((fn, done, failed))
+        else:
+            real(fn, done, failed)
+
+    monkeypatch.setattr(run_control, "run_in_thread", fake)
+    return calls
+
+
+def test_a_run_folder_read_that_ends_after_the_window_closed_is_ignored(
+    qtbot, tmp_path, write_setup, boron_data, monkeypatch, held_loads
+):
+    _win, folder = a_run_of(qtbot, tmp_path, write_setup, boron_data)
+    fresh = fresh_window(qtbot)
+    pick_folder(monkeypatch, folder)
+    fresh.open_run_action.trigger()
+    read, done, _failed = held_loads[-1]
+    fresh.close()
+    done(read())
+    assert fresh.run.folder is None
+    assert fresh.document.path is None
+
+
+def test_an_older_run_folder_read_that_ends_last_is_ignored(
+    qtbot, tmp_path, write_setup, boron_data, held_loads
+):
+    import shutil
+
+    _win, folder = a_run_of(qtbot, tmp_path, write_setup, boron_data)
+    copy = tmp_path / "copy-runs" / folder.name
+    shutil.copytree(folder, copy)
+    fresh = fresh_window(qtbot)
+    fresh.run.load(folder)
+    older = held_loads[-1]
+    fresh.run.load(copy)
+    newer = held_loads[-1]
+    older[1](older[0]())
+    assert fresh.run.folder is None
+    with qtbot.waitSignal(fresh.run.finished, timeout=RUN_TIMEOUT):
+        newer[1](newer[0]())
+    assert fresh.run.folder == copy
+
+
+def test_a_run_folder_read_that_ends_after_a_run_started_is_ignored(
+    qtbot, tmp_path, write_setup, boron_data, held_loads
+):
+    _win, folder = a_run_of(qtbot, tmp_path, write_setup, boron_data)
+    fresh = fresh_window(qtbot)
+    fresh.document.open(tmp_path / "boron" / "run.yaml")
+    fresh.run.load(folder)
+    read, done, _failed = held_loads[-1]
+    with qtbot.waitSignal(fresh.run.finished, timeout=RUN_TIMEOUT):
+        fresh.run.start(ParallelChoice())
+    started = fresh.run.folder
+    done(read())
+    assert fresh.run.folder == started
+    assert started != folder
+
+
+def test_the_closing_flag_is_true_once_the_window_closes(qtbot):
+    win = fresh_window(qtbot)
+    assert not win.closing
+    win.close()
+    assert win.closing
+
+
+def test_a_run_folder_is_the_first_recent_item_after_it_is_opened(
+    qtbot, tmp_path, write_setup, boron_data, monkeypatch
+):
+    from srim.app.recent import RUN, SETUP, add_recent, load_recent, new_entry
+
+    _win, folder = a_run_of(qtbot, tmp_path, write_setup, boron_data)
+    other = tmp_path / "other.yaml"
+    add_recent(new_entry(other, SETUP))  # something else is now the newest entry
+    _open_run(qtbot, monkeypatch, folder)
+    entries = load_recent()
+    assert (entries[0].kind, entries[0].path) == (RUN, str(folder))
+    assert [entry.path for entry in entries if entry.kind == SETUP] == [str(other)]
+
+
+def test_a_run_whose_point_folders_are_gone_cannot_save_its_results(
+    qtbot, tmp_path, write_setup, boron_data
+):
+    import shutil
+
+    from srim.app.runs import MISSING_OUTPUTS_TEXT
+
+    win, folder = a_run_of(qtbot, tmp_path, write_setup, boron_data)
+    win.run.finished.emit(win.run.result)  # the window looks again: the points have outputs now
+    assert win.save_results_action.isEnabled()
+    shutil.rmtree(folder / "points")
+    win.run.finished.emit(win.run.result)
+    assert not win.save_results_action.isEnabled()
+    assert win.save_results_action.toolTip() == MISSING_OUTPUTS_TEXT
+
+
+def test_opening_a_run_folders_scan_yaml_as_a_setup_is_not_recorded_as_a_setup(
+    qtbot, tmp_path, write_setup, boron_data, monkeypatch
+):
+    from srim.app.recent import load_recent
+
+    _win, folder = a_run_of(qtbot, tmp_path, write_setup, boron_data)
+    fresh = fresh_window(qtbot)
+    monkeypatch.setattr(
+        window_module.QFileDialog,
+        "getOpenFileName",
+        staticmethod(lambda *args, **kwargs: (str(folder / "scan.yaml"), "")),
+    )
+    fresh.open_setup_file()
+    assert fresh.document.in_run_folder
+    assert [entry.path for entry in load_recent() if entry.path.endswith("scan.yaml")] == []

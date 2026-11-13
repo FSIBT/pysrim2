@@ -120,8 +120,8 @@ class RunController(QObject):
         if self._running:
             raise RuntimeError("a run is already going")
         document = self._window.document
-        if document.path is None:
-            raise SpecError("save the setup before running it")
+        if document.path is None or document.in_run_folder:
+            raise SpecError("save the setup as a file of its own before running it")
         snapshot = deepcopy(document.doc)
         scan = plan_run(snapshot, document.base_dir, choice)
         folder = run_folder(document.path, datetime.now(UTC))
@@ -225,7 +225,7 @@ class RunController(QObject):
     def _is_current_load(self, generation: int) -> bool:
         # A late read is ignored when a newer load or a run has started, or the window closed.
         return (
-            generation == self._load_generation and not self._running and not self._window._closing
+            generation == self._load_generation and not self._running and not self._window.closing
         )
 
     def _loaded(self, generation: int, folder: Path, result, finished: bool, state) -> None:

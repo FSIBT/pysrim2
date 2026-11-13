@@ -28,7 +28,15 @@ from srim.app.recent import RUN, SETUP, add_recent, entry_problem, load_recent, 
 from srim.app.results_tab import ResultsTab
 from srim.app.run_control import RunController
 from srim.app.run_settings import RunSettingsTab
-from srim.app.runs import ParallelChoice, parallel_advice, plan_run, run_samples
+from srim.app.runs import (
+    MISSING_OUTPUTS_TEXT,
+    ParallelChoice,
+    outputs_missing,
+    parallel_advice,
+    plan_run,
+    run_samples,
+    setup_path_for_run,
+)
 from srim.app.save_dialog import SaveResultsDialog
 from srim.app.scan_tab import ScanTab
 from srim.app.settings import AppSettings, save_settings
@@ -121,6 +129,12 @@ class MainWindow(QMainWindow):
 
         hints = QApplication.instance().styleHints()
         hints.colorSchemeChanged.connect(self._on_scheme_changed)
+
+    @property
+    def closing(self) -> bool:
+        """True once the window's close has been accepted (its late background results are
+        ignored from then on)."""
+        return self._closing
 
     # --- menus ----------------------------------------------------------------
 
@@ -241,13 +255,21 @@ class MainWindow(QMainWindow):
         self.open_action.setEnabled(not busy)
         self.open_run_action.setEnabled(not busy)
         self.recent_menu.setEnabled(not busy)
+        self.save_action.setEnabled(not busy)
+        self.save_as_action.setEnabled(not busy)
         # A run folder that did not finish has no result/scan.csv: the export has nothing to read.
+        # A finished run whose point folders are gone has nothing to export either, and says so.
+        missing = outputs_missing(self.run.result, self.run.folder)
         self.save_results_action.setEnabled(
             not busy
             and self.run.result is not None
             and self.run.folder is not None
             and not self.run.partial
+            and not missing
         )
+        tip = MISSING_OUTPUTS_TEXT if missing else ""
+        self.save_results_action.setToolTip(tip)
+        self.save_results_action.setStatusTip(tip)
         self.undo_action.setEnabled(document.can_undo and not busy)
         self.redo_action.setEnabled(document.can_redo and not busy)
         for editor in self.editors.values():
@@ -313,9 +335,9 @@ class MainWindow(QMainWindow):
         if self.run.running or self._closing:
             return
         self._commit_pending()
-        if self.document.path is None or self.document.is_modified:
+        if self._needs_new_file() or self.document.is_modified:
             self.save_setup()
-            if self.document.path is None or self.document.is_modified:
+            if self._needs_new_file() or self.document.is_modified:
                 return  # cancelled, or the save failed (and said so)
         choice = self._choose_parallel()
         if choice is None:
@@ -435,18 +457,31 @@ class MainWindow(QMainWindow):
         except (SpecError, OSError) as error:
             QMessageBox.warning(self, "Open setup", str(error))
             return
-        self._remember(path, SETUP)
+        self._remember_setup(path)
+
+    def _needs_new_file(self) -> bool:
+        """True when the setup has no file of its own: no path yet, or it is the ``scan.yaml`` of
+        a run folder. Save and Start then ask for a file (Save as), so a run is never changed."""
+        return self.document.path is None or self.document.in_run_folder
+
+    def _remember_setup(self, path) -> None:
+        """Record a setup in the recent list, unless it is a run folder's ``scan.yaml`` (the run
+        is recorded as a run, when it ends)."""
+        if not self.document.in_run_folder:
+            self._remember(path, SETUP)
 
     def save_setup(self) -> None:
         self._commit_pending()
-        if self.document.path is None:
+        if self._needs_new_file():
             self.save_setup_as()
             return
         self._save_to(self.document.path)
 
     def save_setup_as(self) -> None:
         self._commit_pending()
-        if self.document.base_dir is not None:
+        if self.document.in_run_folder:
+            start = str(setup_path_for_run(self.document.path))
+        elif self.document.base_dir is not None:
             start = str(self.document.base_dir / "run.yaml")
         else:
             start = "run.yaml"
@@ -480,7 +515,7 @@ class MainWindow(QMainWindow):
         except (SpecError, OSError) as error:
             QMessageBox.warning(self, "Save setup", str(error))
             return
-        self._remember(path, SETUP)
+        self._remember_setup(path)
 
     # --- setup and checks ----------------------------------------------------------
 
