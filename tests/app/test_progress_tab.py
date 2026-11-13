@@ -4,6 +4,8 @@ The tab is driven by a fake controller (a QObject with the controller's signals 
 and a :class:`ScanState` fed with scripted events, so no run, SRIM or worker is needed.
 """
 
+from pathlib import Path
+
 import pytest
 
 pytest.importorskip("PySide6")
@@ -182,7 +184,7 @@ def test_open_log_is_enabled_on_the_failed_point_and_opens_its_file(
     )
     assert tab.open_log_button.isEnabled()
     tab.open_log_button.click()
-    assert [url.toLocalFile() for url in opened] == [str(log)]
+    assert [Path(url.toLocalFile()) for url in opened] == [Path(log)]
 
 
 def test_open_log_follows_the_selected_row(tab, running):
