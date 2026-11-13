@@ -426,6 +426,9 @@ folder.
 `scan.yaml`. Its setup is opened into the window, and its results and final progress are shown as
 they were at the end of the run. Unsaved edits are asked about first, as for any other open.
 
+Opening a run folder, from **Open run folder…** or from an entry of **Open recent**, does not add it to
+the list: only the end of a run records it.
+
 ## Themes
 
 **View > Theme** chooses **System** (the default: follow the operating system), **Light** or
