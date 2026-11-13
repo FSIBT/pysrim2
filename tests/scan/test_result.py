@@ -2,13 +2,17 @@
 
 import math
 import sys
+from pathlib import Path
 
 import pandas as pd
 import pytest
 
-from srim.scan import Scan
+from srim.output import Results
+from srim.scan import Scan, read_scan_result, run_scan
 from srim.scan.result import ScanResult
 from srim.spec import RunSpec, SpecError
+
+FIXTURE = Path(__file__).resolve().parents[2] / "test_files" / "1"
 
 BASE = {
     "ion": {"symbol": "B", "energy_keV": 20.0, "angle_deg": 0.0},
@@ -234,3 +238,34 @@ def test_missing_path_stays_missing(scan, tmp_path):
         row.pop("path")
     result = ScanResult.from_rows(scan, rows, base_dir=tmp_path)
     assert result.table["path"].isna().all()
+
+
+def fixture_runner(spec):
+    """Stands in for SRIM: the outputs of test_files/1 (no SRIM is run)."""
+    return Results(str(FIXTURE))
+
+
+def test_read_scan_result_reads_a_finished_folder(tmp_path):
+    base = RunSpec.from_dict(BASE)
+    scan = Scan(base, grid={"ion.energy_keV": [10.0, 20.0]}, seed=7)
+    folder = tmp_path / "scan"
+    finished = run_scan(scan, workers=1, runner=fixture_runner, scan_dir=folder, cache=False)
+    again = read_scan_result(folder)
+    assert isinstance(again, ScanResult)
+    assert list(again.table.columns) == list(finished.table.columns)
+    assert again.table["status"].tolist() == finished.table["status"].tolist() == ["done"] * 2
+    assert again.table["ion.energy_keV"].tolist() == [10.0, 20.0]
+    assert again.table["path"].tolist() == finished.table["path"].tolist()
+    assert again.scan.seed == 7
+    assert [p.id for p in again.scan.points()] == [p.id for p in scan.points()]
+
+
+def test_read_scan_result_needs_scan_yaml_and_the_result_table(tmp_path):
+    scan = Scan(RunSpec.from_dict(BASE))
+    folder = tmp_path / "scan"
+    folder.mkdir()
+    with pytest.raises(FileNotFoundError):
+        read_scan_result(folder)
+    scan.to_yaml(folder / "scan.yaml")
+    with pytest.raises(FileNotFoundError):
+        read_scan_result(folder)

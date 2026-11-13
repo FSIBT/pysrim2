@@ -146,6 +146,50 @@ def result_folder(spec: RunSpec, output_dir) -> Path:
     return folder / "points" / spec_hash(spec)[:16]
 
 
+def beam_scan(spec, *, batch_ions=None, precision=None, extract=None):
+    """The :class:`~srim.scan.Scan` that :func:`run_beam` runs for ``spec``.
+
+    For an exact spec with up to 99 999 ions (no ``precision``, no ``batch_ions``) this is the
+    one-point scan ``Scan(spec, ions=spec.number_ions, seed=spec.seed, keep_seed=True)``: its
+    point runs with the spec's own seed, so the run is the run of the spec (its ``TRIM.IN``
+    is the one of ``TRIM.from_spec(spec)``). Otherwise the scan has ``ions`` of ``spec`` (or
+    the ``precision`` goal) with the spec's seed, split into units of ``batch_ions`` (an exact
+    beam of more than 99 999 ions is split into units of 99 999 ions by default).
+
+    Parameters
+    ----------
+    spec : :class:`srim.spec.RunSpec`
+        the run; validated first
+    batch_ions : int, optional
+        units of this many ions (default: 99 999 for a larger exact beam, else none)
+    precision : :class:`srim.scan.Precision`, optional
+        run batches until this precision goal is reached instead of ``spec.number_ions``
+    extract : list, optional
+        extractors of the scan; default none
+    """
+    from ..scan import Scan  # lazy: srim.scan imports srim.beam lazily
+
+    spec.validate()
+    if precision is None and batch_ions is None and _mode(spec) == "exact":
+        if spec.number_ions <= MAX_TRIM_DAT_IONS:
+            return Scan(
+                spec,
+                ions=spec.number_ions,
+                seed=spec.seed,
+                extract=[] if extract is None else extract,
+                keep_seed=True,
+            )
+    if batch_ions is None and _splits(spec, precision):
+        batch_ions = MAX_TRIM_DAT_IONS
+    return Scan(
+        spec,
+        ions=precision if precision is not None else spec.number_ions,
+        batch_ions=batch_ions,
+        seed=spec.seed,
+        extract=extract if extract is not None else [],
+    )
+
+
 def run_beam(
     spec,
     *,
@@ -197,7 +241,7 @@ def run_beam(
     RuntimeError
         when a run of the scan failed or was stopped (the message has the row's error)
     """
-    from ..scan import Scan, run_scan  # lazy: srim.scan imports srim.beam lazily
+    from ..scan import run_scan  # lazy: srim.scan imports srim.beam lazily
     from ..srim import TRIM  # lazy: srim.srim imports srim.beam
 
     spec.validate()
@@ -206,13 +250,7 @@ def run_beam(
             return runner(spec)
         return TRIM.from_spec(spec).run(output_dir=output_dir)
 
-    scan = Scan(
-        spec,
-        ions=precision if precision is not None else spec.number_ions,
-        batch_ions=MAX_TRIM_DAT_IONS if _splits(spec, precision) else None,
-        seed=spec.seed,
-        extract=extract if extract is not None else [],
-    )
+    scan = beam_scan(spec, precision=precision, extract=extract)
     temporary = output_dir is None
     folder = Path(tempfile.mkdtemp(prefix="pysrim2-beam-")) if temporary else Path(output_dir)
     try:

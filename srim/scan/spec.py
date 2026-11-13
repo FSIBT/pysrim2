@@ -14,6 +14,7 @@ A scan is a :class:`RunSpec` plus, in a ``run.yaml`` ``scan:`` section (next to 
       ions: 1000           # or: precision: {target: sputter_yield, rel: 0.05, ...}
       batch_ions: 100      # optional: split each point into batches of this many ions
       seed: 1              # optional base seed for the batches
+      keep_seed: true      # optional: a one-point scan runs that point with seed itself
 
 Keys are dotted like ``--set``: ``ion.energy_keV``, ``target.0.thickness_nm``; the form
 ``target[0].thickness_nm`` is accepted and normalised to ``target.0.thickness_nm``, which is
@@ -46,7 +47,16 @@ RESERVED_KEYS = {
     "number_ions": "use ions= (or precision=) for the ion count",
     "seed": "use seed= for the base seed",
 }
-_SECTION_KEYS = ("grid", "points", "extract", "ions", "precision", "batch_ions", "seed")
+_SECTION_KEYS = (
+    "grid",
+    "points",
+    "extract",
+    "ions",
+    "precision",
+    "batch_ions",
+    "seed",
+    "keep_seed",
+)
 
 
 def normalise_key(key) -> str:
@@ -215,6 +225,29 @@ def _seed(seed):
     return int(seed)
 
 
+def _keep_seed(keep_seed, points, ions, batch_ions, seed) -> bool:
+    """Check ``keep_seed``: one unbatched point (no precision target, no binned beam) and a seed."""
+    if not isinstance(keep_seed, bool):
+        raise SpecError(f"scan.keep_seed must be true or false, got {keep_seed!r}")
+    if not keep_seed:
+        return False
+    if len(points) != 1:
+        raise SpecError(
+            f"scan.keep_seed needs a scan of one point, but it has {len(points)}; "
+            "remove grid and points"
+        )
+    if isinstance(ions, Precision) or batch_ions is not None:
+        raise SpecError(
+            "scan.keep_seed cannot be combined with batch_ions or a precision target: the "
+            "point runs as one run, with the scan's seed"
+        )
+    if is_binned(points[0].spec):
+        raise SpecError("scan.keep_seed cannot be used with a binned beam (one run per bin)")
+    if seed is None:
+        raise SpecError("scan.keep_seed needs scan.seed: the run uses that seed")
+    return True
+
+
 def _check_trim_dat_units(points, ions, batch_ions) -> None:
     """Refuse an exact distributed point whose run is more than one TRIM.DAT file can hold.
 
@@ -290,6 +323,11 @@ class Scan:
     seed : int, optional
         base seed of the batches (``None``: the scan draws a random base seed and records
         it in ``scan.yaml``)
+    keep_seed : bool, optional
+        a one-point scan whose point runs with ``seed`` itself (no derived seed), so the run
+        is the run of ``base`` with that seed (``TRIM.IN`` as for ``TRIM.from_spec``). It
+        needs exactly one point, no ``batch_ions``, no precision target, no binned beam and a
+        ``seed``. Default ``False``.
     """
 
     def __init__(
@@ -301,6 +339,7 @@ class Scan:
         ions=None,
         seed=None,
         batch_ions=None,
+        keep_seed=False,
     ):
         if not isinstance(base, RunSpec):
             raise TypeError(f"a scan starts from a RunSpec, not {type(base).__name__}")
@@ -326,6 +365,7 @@ class Scan:
                     _apply(base, {key: value}, f"scan.grid.{key}")
         self._points = self._expand()
         _check_trim_dat_units(self._points, self.ions, self.batch_ions)
+        self.keep_seed = _keep_seed(keep_seed, self._points, self.ions, self.batch_ions, self.seed)
 
     @property
     def param_names(self) -> list[str]:
@@ -389,6 +429,8 @@ class Scan:
             out["batch_ions"] = self.batch_ions
         if self.seed is not None:
             out["seed"] = self.seed
+        if self.keep_seed:
+            out["keep_seed"] = True
         return out
 
     def to_yaml(self, path, provenance=None):
@@ -439,4 +481,5 @@ class Scan:
             ions=ions,
             seed=section.get("seed"),
             batch_ions=section.get("batch_ions"),
+            keep_seed=section.get("keep_seed", False),
         )

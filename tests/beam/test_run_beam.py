@@ -13,13 +13,18 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import yaml
 from test_beam_scan import FIXTURE, SPEC_DIR_VAR, beam_base, plain_runner
 
-from srim.beam import run_beam, sampled_ions
+from srim.beam import beam_scan, run_beam, sampled_ions
 from srim.beam.exact import sample_ions, write_trim_dat
+from srim.input import TRIMInput
 from srim.output import Results
+from srim.scan import Precision, run_scan
 from srim.scan.batches import MergedResults
 from srim.scan.events import ScanStarted
+from srim.spec import RunSpec
+from srim.srim import TRIM
 
 
 def _work_dir() -> Path:
@@ -149,3 +154,76 @@ def test_sampled_ions_of_a_binned_run_is_refused(spec_dir):
     with run_beam(beam_base(mode="binned", bins={"energy_keV": 2}), runner=plain_runner) as r:
         with pytest.raises(ValueError, match="beam_bins"):
             sampled_ions(r)
+
+
+# -- beam_scan: the scan run_beam runs for a spec -------------------------------------------
+
+
+def plain_exact_spec(number_ions, seed=9):
+    """A run with no beam section at all (a fixed energy): not a distributed beam."""
+    return RunSpec.from_dict(
+        {
+            "ion": {"symbol": "B", "energy_keV": 10.0, "angle_deg": 7.0},
+            "number_ions": number_ions,
+            "calculation": 1,
+            "seed": seed,
+            "settings": {"ranges": 1},
+            "target": [
+                {
+                    "name": "Si",
+                    "thickness_nm": 100.0,
+                    "density_g_cm3": 2.33,
+                    "elements": [{"symbol": "Si", "stoich": 1.0}],
+                }
+            ],
+        }
+    )
+
+
+def test_beam_scan_of_a_plain_spec_keeps_its_seed():
+    spec = plain_exact_spec(500)
+    scan = beam_scan(spec)
+    assert scan.keep_seed is True
+    assert scan.seed == spec.seed
+    assert scan.ions == 500
+    assert scan.batch_ions is None
+    assert scan.extract == []
+    assert len(scan.points()) == 1
+
+
+def test_beam_scan_matches_run_beam_for_binned_and_large_exact():
+    binned = beam_scan(beam_base(bins={"energy_keV": 5}))
+    assert binned.keep_seed is False
+    assert binned.seed == beam_base(bins={"energy_keV": 5}).seed
+
+    large = beam_scan(exact_spec(150_000))
+    assert large.keep_seed is False
+    assert large.batch_ions == 99_999
+    assert large.ions == 150_000
+
+
+def test_beam_scan_with_a_precision_target_is_not_a_kept_seed_run():
+    scan = beam_scan(exact_spec(500), precision=Precision("sputter_yield", rel=0.05))
+    assert scan.keep_seed is False
+    assert isinstance(scan.ions, Precision)
+
+
+def test_trim_in_of_a_keep_seed_point_equals_the_plain_run(spec_dir, tmp_path):
+    spec = plain_exact_spec(500)
+    run_scan(
+        beam_scan(spec),
+        workers=1,
+        runner=plain_runner,
+        scan_dir=tmp_path / "scan",
+        cache=False,
+    )
+    (recorded_file,) = sorted(spec_dir.glob("*.yaml"))
+    unit_spec = RunSpec.from_dict(yaml.safe_load(recorded_file.read_text(encoding="utf-8")))
+
+    def trim_in(s, name):
+        directory = tmp_path / name
+        directory.mkdir()
+        TRIMInput(TRIM.from_spec(s)).write(str(directory))
+        return (directory / "TRIM.IN").read_bytes()
+
+    assert trim_in(unit_spec, "unit") == trim_in(spec, "plain")

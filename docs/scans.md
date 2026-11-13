@@ -337,6 +337,20 @@ error bars from `<y>_err`. `ax` is a matplotlib Axes, or a new one is made.
 
 The exports hold no host paths: `path` is relative to the scan folder.
 
+A finished scan folder is read back with `read_scan_result(folder)`: it reads `scan.yaml`
+and `result/scan.csv` and returns the same `ScanResult` (`FileNotFoundError` when either
+file is missing).
+
+## Keeping the seed of a single run
+
+A scan with one point can keep the scan's seed for that point: `Scan(spec, seed=4711,
+keep_seed=True)`, or `keep_seed: true` in the `scan:` section. The point then runs with the
+seed `4711` itself (no derived seed), so its run is the run of `spec` with that seed: the
+same `TRIM.IN`, and the same numbers as `pysrim2 run` of the `run.yaml`. This is what
+`beam_scan` uses for a single exact run. It needs exactly one point, a `seed`, and
+no `batch_ions`, precision target or binned beam (otherwise the scan raises a `SpecError`
+that names `scan.keep_seed`).
+
 ## Beam distributions in scans
 
 A run spec with a distributed beam (see {doc}`beam`) can be scanned like any other. Its

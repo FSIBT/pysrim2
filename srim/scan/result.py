@@ -72,6 +72,24 @@ def _relative_path(value, base_dir):
     return Path(rel).as_posix()
 
 
+def read_scan_result(folder) -> "ScanResult":
+    """The :class:`ScanResult` of a finished scan folder: ``scan.yaml`` and ``result/scan.csv``.
+
+    The table is read back as :meth:`ScanResult.to_csv` wrote it (the text columns stay text).
+    Raises :class:`FileNotFoundError` when either file is missing, and
+    :class:`~srim.spec.SpecError` for a ``scan.yaml`` that is not a scan.
+    """
+    folder = Path(folder)
+    scan_file = folder / "scan.yaml"
+    csv_file = folder / "result" / "scan.csv"
+    for path in (scan_file, csv_file):
+        if not path.is_file():
+            raise FileNotFoundError(f"{path}: no such file (is this a finished scan folder?)")
+    scan = Scan.from_yaml(scan_file)
+    table = pd.read_csv(csv_file, dtype={"id": str, "seeds": str, "status": str, "path": str})
+    return ScanResult(scan, table)
+
+
 @dataclass(eq=False)
 class ScanResult:
     """The result of a scan: ``scan`` (the definition) and ``table`` (one row per point)."""

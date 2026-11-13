@@ -4,7 +4,7 @@ from .batches import BatchInfo, MergedResults, derive_seed, run_batches
 from .cache import cache_key, clear_cache
 from .executor import ScanBusy, run_scan
 from .precision import Precision
-from .result import ScanResult
+from .result import ScanResult, read_scan_result
 from .slurm import collect_slurm, prepare_slurm
 from .spec import Scan, ScanPoint, spec_hash
 
@@ -21,6 +21,7 @@ __all__ = [
     "collect_slurm",
     "derive_seed",
     "prepare_slurm",
+    "read_scan_result",
     "run_batches",
     "run_scan",
     "spec_hash",

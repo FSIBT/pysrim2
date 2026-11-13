@@ -322,3 +322,34 @@ def test_batch_ions_with_a_precision_target_is_refused(base):
     precision = Precision(target="sputter_yield", rel=0.05)
     with pytest.raises(SpecError, match="precision"):
         Scan(base, grid={"ion.energy_keV": [10.0]}, ions=precision, batch_ions=100)
+
+
+# -- keep_seed: a one-point scan that runs its point with the scan's own seed ------------
+
+
+def test_keep_seed_is_off_by_default_and_not_written(base):
+    scan = Scan(base, seed=4711)
+    assert scan.keep_seed is False
+    assert "keep_seed" not in scan.to_dict()
+
+
+def test_keep_seed_round_trips_through_scan_yaml(base, tmp_path):
+    path = tmp_path / "run.yaml"
+    Scan(base, seed=4711, keep_seed=True).to_yaml(path)
+    assert yaml.safe_load(path.read_text(encoding="utf-8"))["scan"]["keep_seed"] is True
+    again = Scan.from_yaml(path)
+    assert again.keep_seed is True
+    assert again.seed == 4711
+    assert len(again.points()) == 1
+
+
+def test_keep_seed_needs_one_unbatched_point_and_a_seed(base):
+    grid = {"ion.energy_keV": [10.0, 20.0]}
+    with pytest.raises(SpecError, match="scan.keep_seed"):
+        Scan(base, grid=grid, seed=1, keep_seed=True)
+    with pytest.raises(SpecError, match="scan.keep_seed"):
+        Scan(base, seed=1, batch_ions=10, keep_seed=True)
+    with pytest.raises(SpecError, match="scan.keep_seed"):
+        Scan(base, seed=1, ions=Precision("sputter_yield", rel=0.05), keep_seed=True)
+    with pytest.raises(SpecError, match="scan.keep_seed"):
+        Scan(base, keep_seed=True)

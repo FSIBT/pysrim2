@@ -16,7 +16,8 @@ Layout of a scan folder::
     cache/                     the result cache (unless cache=False or another folder is named)
 
 Seeds: a point runs with ``derive_seed(base_seed, int(id[:15], 16))``, so a point keeps its
-seed when points are added or reordered. Batch ``b`` of a point with batches
+seed when points are added or reordered. A scan with ``keep_seed`` (one point) runs that point
+with the scan's seed itself. Batch ``b`` of a point with batches
 runs with ``derive_seed(point_seed, b)``. A failed unit (a point, or a batch) is retried
 ``retries`` times with the same seed, then the point gets status ``failed``; the scan goes on.
 
@@ -337,6 +338,7 @@ def run_scan(
                 ions=scan.ions,
                 seed=base_seed,
                 batch_ions=scan.batch_ions,
+                keep_seed=scan.keep_seed,
             )
         )
         store = _open_cache(cache, folder)
@@ -560,7 +562,10 @@ class _ScanRun:
         self.ran: set[int] = set()
         self.extract = combine(scan.extract)
         self.names = set(scan.param_names) | _RESERVED
-        self.seeds = [derive_seed(base_seed, int(p.id[:15], 16)) for p in self.points]
+        if scan.keep_seed:  # the one point runs with the scan's own seed (see Scan)
+            self.seeds = [scan.seed]
+        else:
+            self.seeds = [derive_seed(base_seed, int(p.id[:15], 16)) for p in self.points]
         self.specs = [
             p.spec.with_overrides([f"seed={seed}"])
             for p, seed in zip(self.points, self.seeds, strict=True)

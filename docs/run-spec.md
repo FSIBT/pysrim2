@@ -211,6 +211,21 @@ SRIM directory next to the outputs (the directory the results are read from);
 `TRIM.copy_output_files` copies it along with them. `RunSpec.with_overrides`
 applies the same `key=value` assignments as `--set`.
 
+## Scan section
+
+A `run.yaml` with a `scan:` section (next to `spec:`) is a scan, read with
+`Scan.from_yaml`. Its keys are described in [Scans](scans.md):
+
+| Key | Meaning |
+|---|---|
+| `grid` | mapping of dotted keys to lists of values (cartesian product) |
+| `points` | list of mappings, one row per point (zipped) |
+| `extract` | extractors (names, `{name: params}`, or `python:` references) |
+| `ions` | ions per point, or `precision` (a precision goal) instead |
+| `batch_ions` | split each point into batches of this many ions |
+| `seed` | base seed of the scan (recorded in `scan.yaml`) |
+| `keep_seed` | `true`: a one-point scan runs that point with `seed` itself (no derived seed); written only when set |
+
 ## Command line
 
 See {doc}`cli`.

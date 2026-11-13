@@ -909,3 +909,28 @@ def test_a_refused_foreign_folder_keeps_no_lock_file(tmp_path):
         run_scan(energy_scan(), workers=1, runner=fixture_runner, scan_dir=project, cache=False)
     assert sorted(p.name for p in project.iterdir()) == ["notes.txt"]
     assert not (project / LOCK_NAME).exists()
+
+
+def spec_recording_runner(spec):
+    """Stands in for SRIM: writes the spec the run got into the state folder."""
+    name = f"spec-{time.monotonic_ns()}.json"
+    Path(os.environ[STATE_VAR], name).write_text(
+        json.dumps(spec.to_dict(inline=True)), encoding="utf-8"
+    )
+    return fixture_runner(spec)
+
+
+def test_keep_seed_runs_the_point_with_the_scan_seed(tmp_path, state_dir):
+    scan = Scan(BASE, seed=4711, keep_seed=True)
+    run_scan(scan, workers=1, runner=spec_recording_runner, scan_dir=tmp_path / "s", cache=False)
+    recorded = [json.loads(p.read_text()) for p in sorted(state_dir.glob("spec-*.json"))]
+    assert len(recorded) == 1
+    assert recorded[0] == BASE.with_overrides(["seed=4711"]).to_dict(inline=True)
+
+
+def test_without_keep_seed_the_point_gets_a_derived_seed(tmp_path, state_dir):
+    scan = Scan(BASE, seed=4711)
+    run_scan(scan, workers=1, runner=spec_recording_runner, scan_dir=tmp_path / "s", cache=False)
+    recorded = [json.loads(p.read_text()) for p in sorted(state_dir.glob("spec-*.json"))]
+    point = scan.points()[0]
+    assert recorded[0]["seed"] == derive_seed(4711, int(point.id[:15], 16))
