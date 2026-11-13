@@ -56,7 +56,11 @@ def test_a_missing_file_reads_as_no_entries(tmp_path):
 
 def test_entries_that_are_not_recent_entries_are_skipped(tmp_path):
     path = tmp_path / "recent.json"
-    good = {"path": str(tmp_path / "run.yaml"), "kind": SETUP, "opened": "2026-11-12T00:00:00+00:00"}
+    good = {
+        "path": str(tmp_path / "run.yaml"),
+        "kind": SETUP,
+        "opened": "2026-11-12T00:00:00+00:00",
+    }
     bad_kind = {**good, "kind": "elsewhere"}
     no_path = {"kind": RUN, "opened": good["opened"]}
     path.write_text(json.dumps(["nonsense", bad_kind, no_path, good]), encoding="utf-8")
