@@ -258,3 +258,58 @@ def test_a_batched_point_is_read_as_merged_results(tmp_path, readers):
     point.mkdir(parents=True)
     (point / "units.csv").write_text("unit\n")
     assert open_point(tmp_path, "points/abc") == ("batched", point)
+
+
+def test_run_samples_of_a_single_run_are_its_trim_dat_ions(tmp_path, boron_data, monkeypatch):
+    from run_folders import DONE, finished_scan
+
+    from srim.app import runs as runs_module
+    from srim.beam.exact import sample_ions, write_trim_dat
+
+    spec = RunSpec.from_dict(boron_data)
+    scan = beam_scan(spec)
+    folder = tmp_path / "setup-runs" / "stamp"
+    result = finished_scan(folder, scan, [DONE])
+    point_dir = folder / "points" / scan.points()[0].id[:16]
+    write_trim_dat(
+        sample_ions(spec, n=25, seed=2),
+        point_dir / "TRIM.DAT",
+        atomic_number=5,
+        description="test",
+        seed=2,
+    )
+    frame = runs_module.run_samples(result, folder)
+    assert len(frame) == 25
+    assert "energy_keV" in frame.columns
+
+
+def test_run_samples_is_none_without_a_trim_dat_or_for_a_scan(tmp_path, boron_data):
+    from run_folders import DONE, finished_scan
+
+    from srim.app.runs import run_samples
+
+    spec = RunSpec.from_dict(boron_data)
+    folder = tmp_path / "plain"
+    single = finished_scan(folder, beam_scan(spec), [DONE])
+    assert run_samples(single, folder) is None  # no TRIM.DAT: no distribution to sample
+    grid = Scan(spec, grid={"ion.energy_keV": [10.0, 20.0]}, seed=7)
+    two = finished_scan(tmp_path / "grid", grid, [DONE, DONE])
+    assert run_samples(two, tmp_path / "grid") is None
+
+
+def test_run_samples_does_not_read_a_run_longer_than_the_plot_cap(
+    tmp_path, boron_data, monkeypatch
+):
+    from run_folders import DONE, finished_scan
+
+    from srim.app import runs as runs_module
+
+    spec = RunSpec.from_dict({**boron_data, "number_ions": runs_module.PLOT_ROW_CAP + 1})
+    folder = tmp_path / "big"
+    result = finished_scan(folder, beam_scan(spec, batch_ions=99_999), [DONE])
+
+    def must_not_read(_results):
+        raise AssertionError("the TRIM.DAT of a run this long must not be read")
+
+    monkeypatch.setattr(runs_module, "sampled_ions", must_not_read)
+    assert runs_module.run_samples(result, folder) is None

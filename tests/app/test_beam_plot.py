@@ -115,3 +115,20 @@ def test_a_density_that_raises_hides_the_plot_instead_of_crashing(plot, monkeypa
     monkeypatch.setattr(Gaussian, "pdf", boom)
     plot.set_distribution({"gaussian": {"mean": 20.0, "sigma": 1.0}}, "energy_keV", None, None)
     assert plot.isHidden()
+
+
+def test_samples_add_one_histogram_over_the_density_and_none_removes_it(plot):
+    plot.set_distribution({"gaussian": {"mean": 20.0, "sigma": 1.0}}, "energy_keV", None, None)
+    assert len(plot.axes.containers) == 0
+    plot.set_samples([1, 2, 2, 3])
+    assert len(plot.axes.containers) == 1
+    assert len(plot.axes.lines) == 1  # the density is still drawn
+    plot.set_samples(None)
+    assert len(plot.axes.containers) == 0
+    assert len(plot.axes.lines) == 1
+
+
+def test_samples_kept_across_a_redraw_of_the_density(plot):
+    plot.set_samples([20.0, 20.5, 21.0])
+    plot.set_distribution({"gaussian": {"mean": 20.0, "sigma": 1.0}}, "energy_keV", None, None)
+    assert len(plot.axes.containers) == 1

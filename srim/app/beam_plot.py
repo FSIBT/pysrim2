@@ -26,6 +26,8 @@ from srim.spec import SpecError
 
 #: points of a smooth density over its support
 POINTS = 400
+#: bins of the histogram of sampled values
+SAMPLE_BINS = 40
 
 _AXIS_LABELS = {
     "energy_keV": "Energy (keV)",
@@ -55,6 +57,7 @@ class DistributionPlot(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.canvas)
         self._last: tuple | None = None
+        self._samples: np.ndarray | None = None
         self.setVisible(False)
 
     # --- showing -----------------------------------------------------------------------
@@ -72,6 +75,14 @@ class DistributionPlot(QWidget):
             return
         self._last = args
         self._draw()
+
+    def set_samples(self, values) -> None:
+        """Draw the sampled ``values`` as a normalised histogram over the density (None removes
+        them). The histogram of a finished exact run is set here, and cleared when the setup
+        changes."""
+        self._samples = None if values is None else np.asarray(values, dtype=float).copy()
+        if self._last is not None:
+            self._draw()
 
     def changeEvent(self, event):  # noqa: N802 (Qt's name)
         super().changeEvent(event)
@@ -102,6 +113,8 @@ class DistributionPlot(QWidget):
             low, high = shape.support()
             xs = np.linspace(low, high, POINTS)
             ys = np.asarray(shape.pdf(xs), dtype=float)
+        if self._samples is not None and self._samples.size:
+            self.axes.hist(self._samples, bins=SAMPLE_BINS, density=True, color=accent, alpha=0.35)
         self.axes.plot(xs, ys, color=accent, linewidth=1.5)
         for edge in edges or ():
             self.axes.axvline(edge, color=foreground, linestyle="--", linewidth=0.8)

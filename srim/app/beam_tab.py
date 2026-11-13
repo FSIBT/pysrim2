@@ -457,7 +457,7 @@ class BeamTab(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(self.scroll)
 
-        document.changed.connect(self._refresh)
+        document.changed.connect(self._on_document_changed)
         self._refresh()
 
     def _bin_spin(self, default: int, key: str) -> QSpinBox:
@@ -523,6 +523,18 @@ class BeamTab(QWidget):
             # Bins written as edges are kept as they are: the count shows, but is not edited here.
             spin.setEnabled(mode == "binned" and isinstance(ion.get(key), Mapping) and not given)
             spin.setToolTip("The bin edges are kept as written in the setup" if given else "")
+
+    def _on_document_changed(self) -> None:
+        # The sampled ions of a run belong to the setup it ran: a change of the setup clears them.
+        self.show_run_samples(None)
+        self._refresh()
+
+    def show_run_samples(self, ions) -> None:
+        """Draw the sampled ions of a finished exact run over each quantity's density (a frame of
+        :func:`srim.beam.run.sampled_ions`; None removes them)."""
+        for key, plot in self.plots.items():
+            values = ions[key] if ions is not None and key in ions.columns else None
+            plot.set_samples(values)
 
     def _refresh_plots(self, doc: dict, values: dict) -> None:
         base_dir = self.document.base_dir

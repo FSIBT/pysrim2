@@ -17,10 +17,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
+
 from srim.app.model import to_spec
+from srim.app.plots import PLOT_ROW_CAP
 from srim.app.scan_model import to_scan
 from srim.app.settings import RATE_KEYS, AppSettings
-from srim.beam import beam_scan, open_results
+from srim.beam import beam_scan, open_results, sampled_ions
 from srim.beam.binned import make_bins
 from srim.output import Results
 from srim.scan import Precision, Scan
@@ -158,6 +161,35 @@ def open_point(folder: Path, rel_path: str):
     if (point / "units.csv").is_file():
         return open_results(point)
     return Results(point)
+
+
+#: the statuses of a point whose outputs are read (its folder is complete)
+SHOWN_STATUSES = ("done", "max_ions", "cached")
+
+
+def run_samples(result, folder) -> pd.DataFrame | None:
+    """The ions that a finished single exact run sampled (its TRIM.DAT), or None.
+
+    None for a run with other than one point, a point that did not finish with its outputs,
+    a run without a TRIM.DAT (a binned beam, or no distribution), and a run of more ions than
+    :data:`~srim.app.plots.PLOT_ROW_CAP` (its TRIM.DAT is not read whole). ``result`` is the
+    scan's :class:`~srim.scan.ScanResult`, ``folder`` the scan folder.
+    """
+    if result is None or folder is None or len(result.scan.points()) != 1:
+        return None
+    if len(result.table) != 1:
+        return None
+    point = result.scan.points()[0]
+    if point.spec.number_ions > PLOT_ROW_CAP:
+        return None
+    row = result.table.iloc[0]
+    path = row.get("path")
+    if row.get("status") not in SHOWN_STATUSES or not isinstance(path, str):
+        return None
+    try:
+        return sampled_ions(open_point(Path(folder), path))
+    except (ValueError, OSError, SpecError):
+        return None
 
 
 def _rate(calculation: int, ions_per_s: dict[str, float]) -> float:

@@ -271,9 +271,17 @@ not saved. Choosing No keeps the setup and the window open.
 - **View > Theme > System, Light, Dark**
 - **Help > Documentation** (opens this documentation) and **About pysrim2**
 
-The window has five tabs: **Geometry**, **Beam**, **Run settings**, **Progress** and
-**Results**. The first three edit the run setup. In 0.12.0 **Progress** and **Results** only
-say that they arrive in a later release.
+The window has these tabs: **Geometry**, **Beam**, **Run settings**, **Scan**, **Progress** and
+**Results**. The first four edit the run setup. **Progress** shows a run as it goes.
+
+**Results** draws the plots of a run's results, one point at a time (a single run has one point;
+a scan lists its finished points, and a point that failed is not listed). Plots that the run did
+not write, such as the stopping map without `RANGE_3D.txt`, are greyed out and say what they
+need. Selecting a plot draws it; a running run redraws the shown plot every few seconds (the
+refresh interval in the settings). **Copy data** and **Save data…** give the plot's data as CSV,
+the toolbar saves the picture, and **Pop out** opens the plot in a window of its own. After an
+exact run the **Beam** tab draws the ions that were sampled over each distribution. When the
+setup has changed since the run, the Results tab says **From the previous setup**.
 
 ## Settings file
 

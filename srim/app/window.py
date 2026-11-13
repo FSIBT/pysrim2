@@ -10,7 +10,6 @@ from PySide6.QtWidgets import (
     QApplication,
     QDialog,
     QFileDialog,
-    QLabel,
     QMainWindow,
     QMessageBox,
     QTabWidget,
@@ -25,9 +24,10 @@ from srim.app.geometry import GeometryTab
 from srim.app.guidance import Guidance, setup_guidance
 from srim.app.parallel_dialog import ParallelDialog
 from srim.app.progress_tab import ProgressTab
+from srim.app.results_tab import ResultsTab
 from srim.app.run_control import RunController
 from srim.app.run_settings import RunSettingsTab
-from srim.app.runs import ParallelChoice, parallel_advice, plan_run
+from srim.app.runs import ParallelChoice, parallel_advice, plan_run, run_samples
 from srim.app.scan_tab import ScanTab
 from srim.app.settings import AppSettings, save_settings
 from srim.app.setup import SetupWizard
@@ -45,8 +45,6 @@ EDITOR_TABS = (
     ("settings", "Run settings"),
     ("scan", "Scan"),
 )
-#: the tabs that only say they arrive later in 0.12
-PLAIN_TABS = ("Results",)
 #: the question Quit asks while a run goes
 STOP_AND_QUIT_TEXT = "A run is going. Stop it and quit?"
 #: how long Quit waits for a stopped run to end before the window closes anyway
@@ -94,11 +92,6 @@ class MainWindow(QMainWindow):
                 editor = ScanTab(self.document, self)
             self.editors[key] = editor
             self.tabs.addTab(editor, name)
-        self.plain_tabs: dict[str, QLabel] = {}
-        for name in PLAIN_TABS:
-            label = QLabel(f"{name}: arrives in a later release", self)
-            self.plain_tabs[name] = label
-            self.tabs.addTab(label, name)
         self.setCentralWidget(self.tabs)
 
         self.status = GuidanceBar(self)
@@ -109,9 +102,9 @@ class MainWindow(QMainWindow):
         self._build_menus()
         # The Progress tab shows the run and uses the Run actions as its buttons.
         self.progress = ProgressTab(self.run, self.pause_action, self.stop_action, self)
-        self.tabs.insertTab(
-            self.tabs.indexOf(self.plain_tabs["Results"]), self.progress, "Progress"
-        )
+        self.results = ResultsTab(self.run, self.document, self.settings, self)
+        self.tabs.addTab(self.progress, "Progress")
+        self.tabs.addTab(self.results, "Results")
 
         self.run.started.connect(self._on_run_started)
         self.run.finished.connect(self._on_run_ended)
@@ -282,8 +275,10 @@ class MainWindow(QMainWindow):
         self._update_run_actions()
         self.tabs.setCurrentWidget(self.progress)
 
-    def _on_run_ended(self, _result=None) -> None:
+    def _on_run_ended(self, result=None) -> None:
         self._update_run_actions()
+        # A finished exact run's sampled ions are drawn over the Beam tab's densities.
+        self.editors["beam"].show_run_samples(run_samples(result, self.run.folder))
 
     def _on_run_failed(self, message: str) -> None:
         self._update_run_actions()
