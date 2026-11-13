@@ -16,7 +16,7 @@ def test_the_library_and_cli_never_import_qt(tmp_path):
         "import srim, srim.cli, srim.app, srim.installer.app\n"
         "import srim.app.routes, srim.app.settings, srim.app.guidance, srim.app.model\n"
         "import srim.app.materials, srim.app.elements, srim.app.numbers, srim.app.drawing\n"
-        "import srim.app.quantity, srim.app.scan_model, srim.app.runs\n"
+        "import srim.app.quantity, srim.app.scan_model, srim.app.runs, srim.app.plots\n"
         "import srim.core.isotopes, srim.core.compounds\n"
         "from srim import cli\n"
         "cli.build_parser().parse_args(['doctor'])\n"
@@ -30,3 +30,15 @@ def test_the_library_and_cli_never_import_qt(tmp_path):
         "assert not [m for m in sys.modules if m.startswith('PySide6')], 'Qt imported'\n"
     )
     subprocess.run([sys.executable, "-c", code], check=True, timeout=300, env=env)
+
+
+def test_the_plot_catalogue_does_not_import_matplotlib():
+    # A fresh interpreter: the catalogue is Qt-free, and matplotlib is only for the drawing
+    # functions of the GUI and the tests, which import it themselves.
+    code = (
+        "import sys\n"
+        "import srim.app.plots\n"
+        "loaded = [m for m in sys.modules if m == 'matplotlib' or m.startswith('matplotlib.')]\n"
+        "assert not loaded, loaded\n"
+    )
+    subprocess.run([sys.executable, "-c", code], check=True, timeout=300)

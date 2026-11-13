@@ -218,10 +218,19 @@ def read_trim_dat(path) -> pd.DataFrame:
     lines = [line for line in raw.decode("ascii").split("\r\n")[10:] if line.strip()]
     rows = [line.split() for line in lines]
     table = np.array([[float(v) for v in r[2:9]] for r in rows], dtype=float).reshape(-1, 7)
-    energy_eV, depth_A, y_A, z_A, cos_x, cos_y, cos_z = table.T
+    return trim_dat_frame(table)
+
+
+def trim_dat_frame(table) -> pd.DataFrame:
+    """The :func:`read_trim_dat` frame of a table of TRIM.DAT fields, one row per ion.
+
+    ``table`` has one row per ion and the seven fields after the name and Z: energy (eV), depth
+    X, Y, Z (Angstrom) and the direction cosines. ``ion`` is the row order, 1..n.
+    """
+    energy_eV, depth_A, y_A, z_A, cos_x, cos_y, cos_z = np.asarray(table, dtype=float).T
     frame = pd.DataFrame(
         {
-            "ion": np.arange(1, len(rows) + 1),
+            "ion": np.arange(1, len(energy_eV) + 1),
             "energy_keV": energy_eV / 1000.0,
             "angle_deg": np.degrees(np.arccos(np.clip(cos_x, -1.0, 1.0))),
             "azimuth_deg": np.mod(np.degrees(np.arctan2(cos_z, cos_y)), 360.0),
