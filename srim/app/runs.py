@@ -27,8 +27,20 @@ from srim.beam import beam_scan, open_results, sampled_ions
 from srim.beam.binned import make_bins
 from srim.output import Results
 from srim.scan import Precision, Scan
+from srim.scan.events import (
+    PointCached,
+    PointFailed,
+    PointFinished,
+    PointQueued,
+    PointStarted,
+    PointStopped,
+    ScanFinished,
+    ScanStarted,
+)
+from srim.scan.result import ScanResult, read_scan_result
 from srim.scan.spec import is_binned
 from srim.spec import SpecError
+from srim.ui.tui.state import ScanState, is_number
 
 #: the ions per second of the calculations when none was measured: a quick calculation (1)
 #: runs fast, the others are full cascades
@@ -210,3 +222,104 @@ def _units(spec) -> int:
             return len(make_bins(spec))
     except SpecError:
         return 1
+
+
+# -- reading a run folder back ------------------------------------------------------------
+
+#: what the window says when a run folder has no result (a run that stopped or crashed)
+UNFINISHED_TEXT = "This run did not finish; showing the points that have results."
+#: the columns of a scan table that are not extracted values
+_TABLE_META = ("id", "n_ions", "seeds", "status", "error", "path")
+
+
+def has_outputs(point_dir: Path) -> bool:
+    """A point's folder holds its run.yaml (or units.csv, when it was batched)."""
+    return (point_dir / "run.yaml").is_file() or (point_dir / "units.csv").is_file()
+
+
+def read_run(folder) -> tuple[ScanResult, bool]:
+    """The scan result of a run folder, and whether the run finished.
+
+    A finished run (``result/scan.csv`` is there) is read as it was written. Otherwise the table
+    is built from the scan's points: ``done`` for a point whose folder has outputs, else
+    ``missing``. Raises :class:`FileNotFoundError` for a folder without ``scan.yaml``.
+    """
+    folder = Path(folder)
+    if (folder / "result" / "scan.csv").is_file():
+        return read_scan_result(folder), True
+    scan = Scan.from_yaml(folder / "scan.yaml")
+    rows = []
+    for point in scan.points():
+        rel = f"points/{point.id[:16]}"
+        if has_outputs(folder / rel):
+            rows.append({"index": point.index, "status": "done", "path": rel})
+        else:
+            rows.append({"index": point.index, "status": "missing"})
+    return ScanResult.from_rows(scan, rows, base_dir=folder), False
+
+
+def _mtime(path: Path, default: float) -> float:
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return default
+
+
+def loaded_state(result: ScanResult, folder) -> ScanState:
+    """The :class:`~srim.ui.tui.state.ScanState` of a run read back, so the Progress tab shows
+    its final statuses. The events are replayed from the table: a ``missing`` point stays
+    queued, and a loaded state has no workers. Times are the files' modification times.
+    """
+    folder = Path(folder)
+    scan = result.scan
+    points = scan.points()
+    ids = {point.id: point.index for point in points}
+    start = _mtime(folder / "scan.yaml", 0.0)
+    finished = (folder / "result" / "scan.csv").is_file()
+    end = (
+        _mtime(folder / "result" / "scan.csv", start)
+        if finished
+        else max(start, _mtime(folder, start))
+    )
+    state = ScanState(scan)
+    state.apply(ScanStarted(len(points), 0, scan.seed or 0, str(folder), time=start))
+    for point in points:
+        state.apply(PointQueued(point.index, point.id, time=start))
+    table = result.table
+    values_of = [c for c in table.columns if c not in scan.param_names and c not in _TABLE_META]
+    counts = {"done": 0, "failed": 0}
+    for _, row in table.iterrows():
+        index = ids.get(row.get("id"))
+        if index is None:
+            continue
+        point = points[index]
+        status = row.get("status")
+        error = row.get("error") if isinstance(row.get("error"), str) else None
+        if status in ("done", "max_ions", "cached"):
+            if status == "cached":
+                state.apply(PointCached(index, point.id, 0, time=end))
+            else:
+                state.apply(PointStarted(index, point.id, 0, 1, time=start))
+            n_ions = row.get("n_ions")
+            values = {c: row[c] for c in values_of}
+            state.apply(
+                PointFinished(
+                    index,
+                    point.id,
+                    values,
+                    int(n_ions) if is_number(n_ions) else 0,
+                    0.0,
+                    time=end,
+                )
+            )
+            counts["done"] += 1
+        elif status == "failed":
+            state.apply(PointFailed(index, point.id, error or "failed", 1, True, time=end))
+            counts["failed"] += 1
+        elif status == "stopped":
+            state.apply(PointStopped(index, point.id, error, time=end))
+    state.apply(
+        ScanFinished(counts["done"], counts["failed"], end - start, stopped=not finished, time=end)
+    )
+    state.workers.clear()
+    return state

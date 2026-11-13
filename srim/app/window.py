@@ -24,6 +24,7 @@ from srim.app.geometry import GeometryTab
 from srim.app.guidance import Guidance, setup_guidance
 from srim.app.parallel_dialog import ParallelDialog
 from srim.app.progress_tab import ProgressTab
+from srim.app.recent import RUN, SETUP, add_recent, entry_problem, load_recent, new_entry
 from srim.app.results_tab import ResultsTab
 from srim.app.run_control import RunController
 from srim.app.run_settings import RunSettingsTab
@@ -103,6 +104,7 @@ class MainWindow(QMainWindow):
 
         self.theme_actions: dict[str, object] = {}
         self._build_menus()
+        self._refresh_recent_menu()
         # The Progress tab shows the run and uses the Run actions as its buttons.
         self.progress = ProgressTab(self.run, self.pause_action, self.stop_action, self)
         self.results = ResultsTab(self.run, self.document, self.settings, self)
@@ -132,6 +134,10 @@ class MainWindow(QMainWindow):
         self.open_action = file_menu.addAction("&Open setup…")
         self.open_action.setShortcut(QKeySequence("Ctrl+O"))
         self.open_action.triggered.connect(self.open_setup_file)
+        self.recent_menu = file_menu.addMenu("Open &recent")
+        self.recent_menu.aboutToShow.connect(self._refresh_recent_menu)
+        self.open_run_action = file_menu.addAction("Open &run folder…")
+        self.open_run_action.triggered.connect(self.open_run_folder)
         self.save_action = file_menu.addAction("&Save setup")
         self.save_action.setShortcut(QKeySequence("Ctrl+S"))
         self.save_action.triggered.connect(self.save_setup)
@@ -216,25 +222,88 @@ class MainWindow(QMainWindow):
         self._update_run_actions()
         self._show_status()
 
+    def _busy(self) -> bool:
+        """True while a run goes or a run folder is being read: the setup is not changed then."""
+        return self.run.running or self.run.loading
+
     def _update_run_actions(self) -> None:
         """The Run actions, and the File and Edit actions and editors a run locks."""
         running = self.run.running
+        busy = self._busy()
         document = self.document
         blocking = any(problem.blocking for problem in document.problems)
-        self.start_action.setEnabled(not running and not blocking)
+        self.start_action.setEnabled(not busy and not blocking)
         self.pause_action.setEnabled(running)
         self.stop_action.setEnabled(running)
         if not running and self.pause_action.isChecked():
             self.pause_action.setChecked(False)
-        self.new_action.setEnabled(not running)
-        self.open_action.setEnabled(not running)
+        self.new_action.setEnabled(not busy)
+        self.open_action.setEnabled(not busy)
+        self.open_run_action.setEnabled(not busy)
+        self.recent_menu.setEnabled(not busy)
+        # A run folder that did not finish has no result/scan.csv: the export has nothing to read.
         self.save_results_action.setEnabled(
-            not running and self.run.result is not None and self.run.folder is not None
+            not busy
+            and self.run.result is not None
+            and self.run.folder is not None
+            and not self.run.partial
         )
-        self.undo_action.setEnabled(document.can_undo and not running)
-        self.redo_action.setEnabled(document.can_redo and not running)
+        self.undo_action.setEnabled(document.can_undo and not busy)
+        self.redo_action.setEnabled(document.can_redo and not busy)
         for editor in self.editors.values():
-            editor.setEnabled(not running)
+            editor.setEnabled(not busy)
+
+    # --- recent setups and runs ----------------------------------------------------------
+
+    def _refresh_recent_menu(self) -> None:
+        """File > Open recent: the saved entries, newest first. An entry that cannot be opened
+        now is greyed out, and its tooltip says why."""
+        menu = self.recent_menu
+        menu.clear()
+        entries = load_recent()
+        if not entries:
+            menu.addAction("No recent setups or runs").setEnabled(False)
+            return
+        for entry in entries:
+            problem = entry_problem(entry)
+            path = Path(entry.path)
+            action = menu.addAction(f"{path.parent.name}/{path.name}")
+            action.setEnabled(problem is None and not self._busy())
+            action.setToolTip(problem or entry.path)
+            action.triggered.connect(lambda _checked=False, e=entry: self._open_recent(e))
+
+    def _remember(self, path, kind: str) -> None:
+        """Put a setup or a run folder at the front of the recent list (a file that cannot be
+        written is said in the status bar, and the list is left as it was)."""
+        try:
+            add_recent(new_entry(path, kind))
+        except OSError as error:
+            self._set_setup_messages([Guidance(f"Could not save the recent items: {error}")])
+        self._refresh_recent_menu()
+
+    def _open_recent(self, entry) -> None:
+        if entry.kind == RUN:
+            self._open_run(entry.path)
+        else:
+            self._open_setup(entry.path)
+
+    def open_run_folder(self) -> None:
+        """File > Open run folder…: a finished or an unfinished run folder (RunController.load)."""
+        self._commit_pending()
+        start = str(self.document.base_dir) if self.document.base_dir else ""
+        folder = QFileDialog.getExistingDirectory(self, "Open run folder", start)
+        if folder:
+            self._open_run(folder)
+
+    def _open_run(self, folder) -> None:
+        """Open a run folder: the unsaved edits are asked about first, then the folder is read."""
+        if self._closing or self._busy():
+            return
+        self._commit_pending()
+        if not self._may_discard():
+            return
+        self.run.load(folder)
+        self._update_run_actions()
 
     # --- runs --------------------------------------------------------------------------
 
@@ -291,6 +360,8 @@ class MainWindow(QMainWindow):
         self._samples_token += 1
         token = self._samples_token
         folder = self.run.folder
+        if folder is not None:
+            self._remember(folder, RUN)
         self.editors["beam"].show_run_samples(None)
         run_in_thread(
             lambda: run_samples(result, folder),
@@ -352,12 +423,19 @@ class MainWindow(QMainWindow):
         path, _ = QFileDialog.getOpenFileName(self, "Open run setup", folder, FILE_FILTER)
         if not path:
             return  # cancelled: nothing is asked and nothing changes
+        self._open_setup(path)
+
+    def _open_setup(self, path) -> None:
+        """Open the setup file at ``path`` (unsaved edits are asked about first)."""
+        self._commit_pending()
         if not self._may_discard():
             return
         try:
             self.document.open(path)
         except (SpecError, OSError) as error:
             QMessageBox.warning(self, "Open setup", str(error))
+            return
+        self._remember(path, SETUP)
 
     def save_setup(self) -> None:
         self._commit_pending()
@@ -401,6 +479,8 @@ class MainWindow(QMainWindow):
             self.document.save(path)
         except (SpecError, OSError) as error:
             QMessageBox.warning(self, "Save setup", str(error))
+            return
+        self._remember(path, SETUP)
 
     # --- setup and checks ----------------------------------------------------------
 

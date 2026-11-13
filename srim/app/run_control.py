@@ -13,16 +13,30 @@ are saved once, at the end.
 
 Stop sets the scan's stop event: the scan kills its running points and keeps the finished ones.
 Pause sets the scan's pause event: no new point starts until it is cleared.
+
+:meth:`RunController.load` opens a run folder: its scan is read in a thread, then its setup is
+opened into the document and its result and state are shown as the end of a run would show them
+(``finished``). A folder that did not finish shows the points that have outputs (``partial``).
 """
 
 import queue
 import threading
 from copy import deepcopy
 from datetime import UTC, datetime
+from pathlib import Path
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
-from srim.app.runs import ParallelChoice, plan_run, remember_rate, run_folder
+from srim.app.recent import RUN, RecentEntry, entry_problem
+from srim.app.runs import (
+    UNFINISHED_TEXT,
+    ParallelChoice,
+    loaded_state,
+    plan_run,
+    read_run,
+    remember_rate,
+    run_folder,
+)
 from srim.app.settings import save_settings
 from srim.app.workers import run_in_thread
 from srim.scan import run_scan
@@ -43,8 +57,12 @@ def backend_for(route: str | None, choice: ParallelChoice, runner) -> str:
     return "local"
 
 
+def _text(error: BaseException) -> str:
+    return str(error).strip() or type(error).__name__
+
+
 def _message(error: BaseException) -> str:
-    text = str(error).strip() or type(error).__name__
+    text = _text(error)
     if isinstance(error, ScanBusy):
         return f"The run did not start: {text}"
     return f"The run did not finish: {text}"
@@ -79,6 +97,11 @@ class RunController(QObject):
         self._pause_event = threading.Event()
         self._ended = threading.Event()
         self._ended.set()  # no run has started yet
+        #: True while a run folder is read (see :meth:`load`)
+        self.loading = False
+        #: True when the loaded run did not finish (its result is the points with outputs)
+        self.partial = False
+        self._load_generation = 0
         self._timer = QTimer(self)
         self._timer.setInterval(DRAIN_MS)
         self._timer.timeout.connect(self._drain)
@@ -104,10 +127,13 @@ class RunController(QObject):
         folder = run_folder(document.path, datetime.now(UTC))
         backend = backend_for(self._window.settings.route, choice, self._runner)
 
+        self._load_generation += 1  # a folder still being read is no longer wanted
+        self.loading = False
         self.state = ScanState(scan)
         self.folder = folder
         self.snapshot = snapshot
         self.result = None
+        self.partial = False
         self._calculation = scan.base.calculation
         self._events = queue.Queue()
         self._stop_event = threading.Event()
@@ -138,6 +164,39 @@ class RunController(QObject):
 
         run_in_thread(work, self._done, self._failed)
 
+    def load(self, folder) -> None:
+        """Open the run folder ``folder``: its setup goes into the document (``document.open`` of
+        its ``scan.yaml``), and its result and state are shown as after a run.
+
+        The folder is read in a thread, so the GUI thread only takes the result. ``finished``
+        is emitted with the result when the folder was read and its setup opened; ``failed``
+        with the reason when not (a folder that is not a run, or a setup that cannot be read,
+        leaves the window as it was). A folder without ``result/scan.csv`` (a run that stopped
+        or crashed) is shown with its points that have outputs, and ``notice`` says so.
+        Raises :class:`RuntimeError` while a run goes.
+        """
+        if self._running:
+            raise RuntimeError("a run is already going")
+        self._load_generation += 1
+        generation = self._load_generation
+        self.loading = False
+        folder = Path(folder)
+        problem = entry_problem(RecentEntry(str(folder), RUN, ""))
+        if problem is not None:
+            self.failed.emit(f"The run did not open: {problem}")
+            return
+        self.loading = True
+
+        def read():
+            result, finished = read_run(folder)
+            return result, finished, loaded_state(result, folder)
+
+        run_in_thread(
+            read,
+            lambda outcome: self._loaded(generation, folder, *outcome),
+            lambda error: self._load_failed(generation, error),
+        )
+
     def pause(self, paused: bool) -> None:
         """Hold back (or let go) the points that have not started. Nothing happens when no run
         goes."""
@@ -162,6 +221,38 @@ class RunController(QObject):
         return self._ended.wait(msecs / 1000)
 
     # -- the run's end and its events (GUI thread) ------------------------------------
+
+    def _is_current_load(self, generation: int) -> bool:
+        # A late read is ignored when a newer load or a run has started, or the window closed.
+        return (
+            generation == self._load_generation and not self._running and not self._window._closing
+        )
+
+    def _loaded(self, generation: int, folder: Path, result, finished: bool, state) -> None:
+        if not self._is_current_load(generation):
+            return
+        self.loading = False
+        document = self._window.document
+        try:
+            document.open(folder / "scan.yaml")
+        except (SpecError, OSError) as error:
+            self.failed.emit(f"The run did not open: {error}")
+            return
+        self.folder = folder
+        self.result = result
+        self.state = state
+        self.snapshot = deepcopy(document.doc)
+        self.partial = not finished
+        if not finished:
+            self.notice.emit(UNFINISHED_TEXT)
+        self.updated.emit()
+        self.finished.emit(result)
+
+    def _load_failed(self, generation: int, error: BaseException) -> None:
+        if not self._is_current_load(generation):
+            return
+        self.loading = False
+        self.failed.emit(f"The run did not open: {_text(error)}")
 
     def _done(self, result) -> None:
         self._end(result=result)

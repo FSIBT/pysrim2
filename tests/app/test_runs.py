@@ -313,3 +313,88 @@ def test_run_samples_does_not_read_a_run_longer_than_the_plot_cap(
 
     monkeypatch.setattr(runs_module, "sampled_ions", must_not_read)
     assert runs_module.run_samples(result, folder) is None
+
+
+# -- reading a run folder back (a finished run, or one that stopped or crashed) -------------
+
+
+def _two_point_folder(tmp_path, boron_data, outcomes):
+    """A scan folder of two points with ``outcomes`` (run_folders.DONE or an error text)."""
+    from run_folders import finished_scan
+
+    from srim.app.scan_model import new_scan
+
+    scan_section = new_scan()
+    scan_section["grid"] = {"ion.energy_keV": [10.0, 20.0]}
+    scan_section["ions"] = 10
+    scan = to_scan({**deepcopy(boron_data), "_scan": scan_section}, tmp_path)
+    result = finished_scan(tmp_path / "run", scan, outcomes)
+    result.to_csv(tmp_path / "run" / "result")  # as the executor leaves a finished run
+    return result
+
+
+def test_a_finished_run_folder_is_read_as_finished(tmp_path, boron_data):
+    from run_folders import DONE
+
+    from srim.app.runs import UNFINISHED_TEXT, read_run
+
+    _two_point_folder(tmp_path, boron_data, [DONE, "SRIM failed"])
+    result, finished = read_run(tmp_path / "run")
+    assert finished is True
+    assert list(result.table["status"]) == ["done", "failed"]
+    assert UNFINISHED_TEXT == "This run did not finish; showing the points that have results."
+
+
+def test_a_run_folder_without_its_result_shows_the_points_with_outputs(tmp_path, boron_data):
+    import shutil
+
+    from run_folders import DONE
+
+    from srim.app.runs import read_run
+
+    _two_point_folder(tmp_path, boron_data, [DONE, DONE])
+    shutil.rmtree(tmp_path / "run" / "result")
+    shutil.rmtree(tmp_path / "run" / "points" / _point_id(tmp_path / "run", 1))
+    result, finished = read_run(tmp_path / "run")
+    assert finished is False
+    assert list(result.table["status"]) == ["done", "missing"]
+    assert result.table.loc[0, "path"].startswith("points/")
+    assert result.table["path"].isna().tolist() == [False, True]
+
+
+def test_the_state_of_a_loaded_run_has_the_final_statuses(tmp_path, boron_data):
+    from run_folders import DONE
+
+    from srim.app.runs import loaded_state, read_run
+
+    _two_point_folder(tmp_path, boron_data, [DONE, "SRIM failed"])
+    result, _finished = read_run(tmp_path / "run")
+    state = loaded_state(result, tmp_path / "run")
+    assert state.finished is True
+    assert state.counts()["done"] == 1
+    assert state.counts()["failed"] == 1
+    assert state.failed_point().index == 1
+    assert state.scan_dir == tmp_path / "run"
+
+
+def test_the_state_of_an_unfinished_run_leaves_the_missing_points_queued(tmp_path, boron_data):
+    import shutil
+
+    from run_folders import DONE
+
+    from srim.app.runs import loaded_state, read_run
+
+    _two_point_folder(tmp_path, boron_data, [DONE, DONE])
+    shutil.rmtree(tmp_path / "run" / "result")
+    shutil.rmtree(tmp_path / "run" / "points" / _point_id(tmp_path / "run", 1))
+    result, _finished = read_run(tmp_path / "run")
+    state = loaded_state(result, tmp_path / "run")
+    assert state.counts()["done"] == 1
+    assert state.counts()["queued"] == 1
+
+
+def _point_id(folder, index):
+    """The folder name (``id[:16]``) of point ``index`` of the scan.yaml in ``folder``."""
+    from srim.scan import Scan
+
+    return Scan.from_yaml(folder / "scan.yaml").points()[index].id[:16]

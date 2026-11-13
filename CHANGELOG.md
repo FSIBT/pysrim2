@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The desktop app's File > Open recent lists the last ten setups and run folders (kept in the app's data folder), and File > Open run folder… opens a run folder: its setup, results and progress come back as after the run, with the points that have results when the run did not finish. An entry whose file or folder was moved or deleted is greyed out with the reason.
 - The desktop app's File > Save results… writes the last run's results in the library's formats (Parquet, HDF5, CSV, or the SRIM output files copied unchanged, with the collision details on request): a plain run's tables, or a scan's table and its chosen points. It asks before it replaces anything, and a format whose extra is not installed is greyed out with the install hint.
 - `Range3D` and the event parsers (`EXYZ`, `Backscat`, `Transmit`, `Sputter`) take `max_rows`: they read at most that many rows (the first ones) and their `truncated` attribute says whether rows were left out. The default reads every row, as before.
 - `pysrim2 install app` installs the desktop app: the new `app` extra (PySide6 and matplotlib) goes into the running pysrim2 (`uv tool`, pip or a source checkout, which is told the command). The library and the command line still never import Qt.

@@ -287,3 +287,95 @@ def test_quit_during_a_run_asks_and_no_keeps_it_going(make_window, setup_file, q
         assert win.close() is True
     assert not win.run.running
     assert multiprocessing.active_children() == []
+
+
+# -- opening a run folder (RunController.load) ---------------------------------------------
+
+
+def run_once(win, qtbot):
+    """Run the window's setup once with the fake runner; returns the run folder."""
+    with qtbot.waitSignal(win.run.finished, timeout=RUN_TIMEOUT):
+        win.run.start(ParallelChoice())
+    return win.run.folder
+
+
+def test_a_finished_run_loads_into_a_fresh_window(win, make_window, qtbot):
+    folder = run_once(win, qtbot)
+    fresh = make_window()
+    with qtbot.waitSignal(fresh.run.finished, timeout=RUN_TIMEOUT):
+        fresh.run.load(folder)
+    assert fresh.document.path == folder / "scan.yaml"
+    assert not fresh.document.is_modified
+    assert fresh.run.snapshot == fresh.document.doc
+    assert fresh.run.folder == folder
+    assert fresh.run.result is not None
+    assert fresh.run.state.finished
+    assert fresh.run.state.counts()["done"] == 1
+    assert not fresh.run.partial
+    assert not fresh.run.running and not fresh.run.loading
+
+
+def test_a_run_folder_without_a_result_loads_with_its_points_and_a_note(win, make_window, qtbot):
+    import shutil
+
+    from srim.app.runs import UNFINISHED_TEXT
+
+    folder = run_once(win, qtbot)
+    shutil.rmtree(folder / "result")
+    # A real SRIM run writes run.yaml next to its outputs; the fake runner does not.
+    (next((folder / "points").iterdir()) / "run.yaml").write_text("x", encoding="utf-8")
+    fresh = make_window()
+    notes = []
+    fresh.run.notice.connect(notes.append)
+    with qtbot.waitSignal(fresh.run.finished, timeout=RUN_TIMEOUT):
+        fresh.run.load(folder)
+    assert notes == [UNFINISHED_TEXT]
+    assert fresh.run.partial
+    assert fresh.run.state.counts()["done"] == 1
+
+
+def test_loading_reads_in_a_thread_and_is_loading_until_it_ends(win, make_window, qtbot):
+    folder = run_once(win, qtbot)
+    fresh = make_window()
+    with qtbot.waitSignal(fresh.run.finished, timeout=RUN_TIMEOUT):
+        fresh.run.load(folder)
+        assert fresh.run.loading  # the GUI thread returns before the read is done
+    assert not fresh.run.loading
+
+
+def test_a_folder_that_is_not_a_run_fails_with_the_problem(make_window, tmp_path, qtbot):
+    fresh = make_window()
+    messages = []
+    fresh.run.failed.connect(messages.append)
+    fresh.run.load(tmp_path)
+    assert messages == ["The run did not open: not a pysrim2 run folder"]
+    assert fresh.document.path is None
+    assert fresh.run.folder is None
+
+
+def test_a_run_folder_whose_setup_cannot_be_read_fails_and_keeps_the_window(
+    make_window, tmp_path, qtbot
+):
+    folder = tmp_path / "broken-runs" / "20261112T000000Z"
+    folder.mkdir(parents=True)
+    (folder / ".pysrim2-scan").write_text("pysrim2 scan folder\n", encoding="utf-8")
+    fresh = make_window()
+    messages = []
+    fresh.run.failed.connect(messages.append)
+    with qtbot.waitSignal(fresh.run.failed, timeout=RUN_TIMEOUT):
+        fresh.run.load(folder)
+    assert messages and messages[0].startswith("The run did not open: ")
+    assert fresh.run.folder is None
+    assert not fresh.run.loading
+
+
+def test_loading_is_refused_while_a_run_goes(make_window, setup_file, qtbot, tmp_path):
+    win = make_window(slow_runner)
+    win.document.open(setup_file)
+    win.run.start(ParallelChoice())
+    try:
+        with pytest.raises(RuntimeError, match="already going"):
+            win.run.load(tmp_path)
+    finally:
+        with qtbot.waitSignal(win.run.finished, timeout=STOP_TIMEOUT):
+            win.run.stop()

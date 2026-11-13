@@ -645,3 +645,145 @@ def test_a_late_sample_read_is_ignored_after_the_window_closed(
     win._closing = True
     done(pd.DataFrame({"energy_keV": [20.0, 20.5, 21.0]}))
     assert len(win.editors["beam"].plots["energy_keV"].axes.containers) == 0
+
+
+# -- File > Open recent, File > Open run folder…, recent setups and runs -------------------
+
+RUN_TIMEOUT = 60_000
+
+
+def recent_items(win):
+    """The entries of File > Open recent, in menu order (separators left out)."""
+    return [action for action in win.recent_menu.actions() if not action.isSeparator()]
+
+
+def a_run_of(qtbot, tmp_path, write_setup, boron_data):
+    """A window whose setup (in ``tmp_path/boron``) has been run once with the fake runner;
+    returns the window and the run folder."""
+    from runners import fixture_runner as runner
+
+    path = write_setup(tmp_path / "boron" / "run.yaml", boron_data)
+    win = MainWindow(AppSettings(route="wine"), checks_fn=lambda route: [], run_runner=runner)
+    qtbot.addWidget(win)
+    win.document.open(path)
+    with qtbot.waitSignal(win.run.finished, timeout=RUN_TIMEOUT):
+        win.run.start(ParallelChoice())
+    # A real SRIM run writes run.yaml next to its outputs; the fake runner does not.
+    for point in (win.run.folder / "points").iterdir():
+        (point / "run.yaml").write_text("x", encoding="utf-8")
+    return win, win.run.folder
+
+
+def fresh_window(qtbot):
+    from runners import fixture_runner as runner
+
+    win = MainWindow(AppSettings(route="wine"), checks_fn=lambda route: [], run_runner=runner)
+    qtbot.addWidget(win)
+    return win
+
+
+def pick_folder(monkeypatch, folder):
+    monkeypatch.setattr(
+        window_module.QFileDialog,
+        "getExistingDirectory",
+        staticmethod(lambda *args, **kwargs: str(folder)),
+    )
+
+
+def test_the_file_menu_has_open_recent_and_open_run_folder(qtbot):
+    win = fresh_window(qtbot)
+    file_menu = next(a.menu() for a in win.menuBar().actions() if a.text() == "&File")
+    texts = [a.text() for a in file_menu.actions()]
+    assert "Open &recent" in texts
+    assert "Open &run folder…" in texts
+    assert [item.text() for item in recent_items(win)] == ["No recent setups or runs"]
+
+
+def test_a_finished_run_is_the_first_recent_item(qtbot, tmp_path, write_setup, boron_data):
+    win, folder = a_run_of(qtbot, tmp_path, write_setup, boron_data)
+    first = recent_items(win)[0]
+    assert first.isEnabled()
+    assert first.toolTip() == str(folder)
+    assert folder.name in first.text()
+
+
+def test_opening_a_recent_run_in_a_fresh_window_shows_the_setup_and_results(
+    qtbot, tmp_path, write_setup, boron_data
+):
+    _win, folder = a_run_of(qtbot, tmp_path, write_setup, boron_data)
+    fresh = fresh_window(qtbot)
+    with qtbot.waitSignal(fresh.run.finished, timeout=RUN_TIMEOUT):
+        recent_items(fresh)[0].trigger()
+    assert fresh.document.path == folder / "scan.yaml"
+    assert not fresh.document.is_modified
+    assert fresh.results.banner.isHidden()
+    assert not fresh.results.item_for("ionization").isDisabled()
+    assert fresh.save_results_action.isEnabled()
+
+
+def test_a_run_folder_without_its_result_opens_with_the_message(
+    qtbot, tmp_path, write_setup, boron_data, monkeypatch
+):
+    import shutil
+
+    from srim.app.runs import UNFINISHED_TEXT
+
+    _win, folder = a_run_of(qtbot, tmp_path, write_setup, boron_data)
+    shutil.rmtree(folder / "result")
+    (next((folder / "points").iterdir()) / "run.yaml").write_text("x", encoding="utf-8")
+    fresh = fresh_window(qtbot)
+    pick_folder(monkeypatch, folder)
+    with qtbot.waitSignal(fresh.run.finished, timeout=RUN_TIMEOUT):
+        fresh.open_run_action.trigger()
+    assert UNFINISHED_TEXT in fresh.status.shown_text()
+    assert fresh.run.partial
+    assert not fresh.save_results_action.isEnabled()
+
+
+def test_a_moved_setup_is_greyed_out_with_its_problem(qtbot, tmp_path, boron_data, write_setup):
+    from srim.app.recent import SETUP, add_recent, new_entry
+
+    path = write_setup(tmp_path / "moved" / "run.yaml", boron_data)
+    add_recent(new_entry(path, SETUP))
+    path.unlink()
+    win = fresh_window(qtbot)
+    item = recent_items(win)[0]
+    assert not item.isEnabled()
+    assert item.toolTip() == "the file was moved or deleted"
+
+
+def test_opening_a_setup_adds_it_to_the_recent_list(
+    qtbot, tmp_path, boron_data, write_setup, monkeypatch
+):
+    from srim.app.recent import load_recent
+
+    path = write_setup(tmp_path / "boron" / "run.yaml", boron_data)
+    win = fresh_window(qtbot)
+    monkeypatch.setattr(
+        window_module.QFileDialog,
+        "getOpenFileName",
+        staticmethod(lambda *args, **kwargs: (str(path), "")),
+    )
+    win.open_setup_file()
+    assert [entry.path for entry in load_recent()] == [str(path)]
+    assert recent_items(win)[0].toolTip() == str(path)  # the menu follows the list
+
+
+def test_open_run_folder_asks_before_discarding_unsaved_edits(
+    qtbot, tmp_path, write_setup, boron_data, monkeypatch
+):
+    _win, folder = a_run_of(qtbot, tmp_path, write_setup, boron_data)
+    fresh = fresh_window(qtbot)
+    fresh.document.edit(lambda doc: doc.__setitem__("number_ions", 7))
+    asked = []
+
+    def question(*args, **kwargs):
+        asked.append(args[2])
+        return QMessageBox.StandardButton.No
+
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(question))
+    pick_folder(monkeypatch, folder)
+    fresh.open_run_action.trigger()
+    assert asked == [window_module.DISCARD_TEXT]
+    assert fresh.run.folder is None
+    assert fresh.document.is_modified
