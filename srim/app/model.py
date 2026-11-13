@@ -104,6 +104,14 @@ def _without_app_keys(value: Any) -> Any:
     return value
 
 
+def _state(doc: dict) -> dict:
+    """What undo and "modified" compare: the spec as :func:`clean` gives it, and the scan."""
+    out = clean(doc)
+    if "_scan" in doc:
+        out["_scan"] = deepcopy(doc["_scan"])
+    return out
+
+
 def is_distributed(doc: dict) -> bool:
     """True when a beam value is a mapping (a distribution), or azimuth or position is set."""
     ion = doc.get("ion") or {}
@@ -182,6 +190,11 @@ def target_for_key(key: str) -> str | None:
         return None
     if head == "number_ions":
         return "beam/number_ions"
+    if head == "scan":
+        field = re.split(r"[.\[]", rest, maxsplit=1)[0]
+        if field in ("grid", "points", ""):
+            return "scan/vary"
+        return "scan/precision" if field == "precision" else f"scan/{field}"
     if head == "beam":
         return "beam/mode"
     if head == "calculation":
@@ -247,6 +260,10 @@ def problems(doc: dict, base_dir: Any = None) -> list[Guidance]:
     field it names) is listed, then each of its warnings as a note that does not block a run.
     """
     missing = _missing(doc)
+    if "_scan" in doc:
+        from srim.app import scan_model  # lazy: scan_model imports this module
+
+        missing += scan_model.scan_missing(doc)
     if missing:
         return missing
     found = []
@@ -254,6 +271,8 @@ def problems(doc: dict, base_dir: Any = None) -> list[Guidance]:
         warnings.simplefilter("always")
         try:
             to_spec(doc, base_dir)
+            if "_scan" in doc:
+                scan_model.to_scan(doc, base_dir)
         except SpecError as error:
             text = str(error)
             match = _KEY.match(text)
@@ -312,11 +331,11 @@ class History:
         self._redo.clear()
 
     def mark_saved(self, current: dict) -> None:
-        self._saved = clean(current)
+        self._saved = _state(current)
 
     def is_modified(self, current: dict) -> bool:
-        baseline = self._saved if self._saved is not None else clean(new_document())
-        return clean(current) != baseline
+        baseline = self._saved if self._saved is not None else _state(new_document())
+        return _state(current) != baseline
 
     def _trim(self, stack: list[dict]) -> None:
         overflow = len(stack) - self.limit

@@ -8,11 +8,14 @@ from copy import deepcopy
 from pathlib import Path
 
 import pytest
+import yaml
 
 pytest.importorskip("PySide6")
 pytest.importorskip("pytestqt")
 
 from srim.app.document import DocumentModel  # noqa: E402
+from srim.app.scan_model import new_scan  # noqa: E402
+from srim.scan import Scan  # noqa: E402
 from srim.spec import RunSpec, SpecError  # noqa: E402
 
 SPREAD = "19 1\n20 2\n21 1\n"
@@ -285,5 +288,108 @@ def test_a_histogram_file_that_is_gone_refuses_the_save(tmp_path, boron_data, wr
     target = tmp_path / "copy" / "run.yaml"
     target.parent.mkdir()
     with pytest.raises(SpecError):
+        doc.save(target)
+    assert not target.exists()
+
+
+# --- the scan section ---------------------------------------------------------------
+
+SCAN_FILES = {
+    "explicit_points": {
+        "points": [
+            {"ion.energy_keV": 10.0, "target[0].thickness_nm": 50.0},
+            {"ion.energy_keV": 20.0, "target[0].thickness_nm": 100.0},
+        ],
+        "extract": ["implant_summary"],
+        "ions": 100,
+    },
+    "python_extractor": {
+        "grid": {"ion.energy_keV": [10, 20]},
+        "extract": ["implant_summary", "python:tests.app.extractors:depth_sum"],
+        "ions": 100,
+    },
+    "precision_target": {
+        "grid": {"ion.angle_deg": [0, 7]},
+        "precision": {"target": "sputter_yield", "rel": 0.05, "min_ions": 100, "max_ions": 500},
+    },
+    "batches_and_seed": {
+        "grid": {"ion.energy_keV": [10, 20]},
+        "ions": 1000,
+        "batch_ions": 100,
+        "seed": 3,
+    },
+}
+
+
+def fresh_folder(tmp_path):
+    """An empty folder to save into (a save does not create its folder)."""
+    folder = tmp_path / "new"
+    folder.mkdir(exist_ok=True)
+    return folder
+
+
+def write_scan_file(path, boron_data, scan):
+    """A hand-written run file: the spec of ``boron_data`` and the ``scan:`` section ``scan``."""
+    spec = RunSpec.from_dict(boron_data).to_dict()
+    version = spec.pop("version")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        yaml.safe_dump({"version": version, "spec": spec, "scan": scan}, sort_keys=False),
+        encoding="utf-8",
+    )
+    return path
+
+
+@pytest.mark.parametrize("name", sorted(SCAN_FILES))
+def test_a_scan_file_opens_and_saves_to_the_same_setup_and_scan(tmp_path, boron_data, name):
+    old = write_scan_file(tmp_path / "old" / "run.yaml", boron_data, SCAN_FILES[name])
+    doc = DocumentModel()
+    doc.open(old)
+    new = fresh_folder(tmp_path) / "run.yaml"
+    doc.save(new)
+    assert RunSpec.from_yaml(new).to_dict() == RunSpec.from_yaml(old).to_dict()
+    assert Scan.from_yaml(new).to_dict() == Scan.from_yaml(old).to_dict()
+
+
+def test_a_scan_file_with_a_python_extractor_is_written_back_as_a_reference(tmp_path, boron_data):
+    old = write_scan_file(tmp_path / "old" / "run.yaml", boron_data, SCAN_FILES["python_extractor"])
+    doc = DocumentModel()
+    doc.open(old)
+    assert doc.problems == []
+    doc.save(fresh_folder(tmp_path) / "run.yaml")
+    assert (
+        "python:tests.app.extractors:depth_sum" in (fresh_folder(tmp_path) / "run.yaml").read_text()
+    )
+
+
+def test_a_plain_run_saved_has_no_scan_section(tmp_path, boron_data, write_setup):
+    old = write_setup(tmp_path / "old" / "run.yaml", boron_data)
+    doc = DocumentModel()
+    doc.open(old)
+    assert "_scan" not in doc.doc
+    doc.save(fresh_folder(tmp_path) / "run.yaml")
+    assert "scan:" not in (fresh_folder(tmp_path) / "run.yaml").read_text()
+
+
+def test_a_scan_is_part_of_the_undo_history(tmp_path, boron_data):
+    path = write_scan_file(tmp_path / "run.yaml", boron_data, SCAN_FILES["explicit_points"])
+    doc = DocumentModel()
+    doc.open(path)
+    assert not doc.is_modified
+
+    def more_ions(d):
+        d["_scan"]["ions"] = 500
+
+    doc.edit(more_ions)
+    assert doc.is_modified
+    doc.undo()
+    assert doc.doc["_scan"]["ions"] == 100 and not doc.is_modified
+
+
+def test_a_scan_with_nothing_to_vary_cannot_be_saved(tmp_path, boron_data, write_setup):
+    doc = opened(tmp_path / "base" / "run.yaml", boron_data, write_setup)
+    doc.edit(lambda d: d.update({"_scan": new_scan()}))
+    target = fresh_folder(tmp_path) / "run.yaml"
+    with pytest.raises(SpecError, match="Add a value to vary"):
         doc.save(target)
     assert not target.exists()

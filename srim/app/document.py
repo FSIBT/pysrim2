@@ -15,6 +15,7 @@ from pathlib import Path
 from PySide6.QtCore import QObject, Signal
 
 import srim
+from srim.app import scan_model
 from srim.app.guidance import Guidance
 from srim.app.model import History, from_spec, new_document, prepare_for_save, problems, to_spec
 from srim.beam.shapes import Histogram
@@ -107,17 +108,21 @@ class DocumentModel(QObject):
     def open(self, path: str | Path) -> None:
         """Read the ``run.yaml`` at ``path``. Raises :class:`~srim.spec.SpecError`.
 
-        On error the document is unchanged. On success the history starts again, so undo
-        cannot return to the document that was open before.
+        A ``scan:`` section becomes the document's ``_scan``. On error the document is
+        unchanged. On success the history starts again, so undo cannot return to the document
+        that was open before.
         """
         path = Path(path).absolute()
         try:
             spec = RunSpec.from_yaml(path)
+            section = scan_model.section_from_file(path)
         except OSError as error:
             raise SpecError(f"cannot read {path}: {error.strerror or error}") from error
         except UnicodeDecodeError as error:
             raise SpecError(f"{path} is not a text file: {error}") from error
         doc = from_spec(spec)
+        if section is not None:
+            doc["_scan"] = scan_model.scan_from_section(section)
         self._doc = doc
         self._path = path
         self._history = History()
@@ -129,7 +134,8 @@ class DocumentModel(QObject):
 
         Raises :class:`~srim.spec.SpecError` for the first blocking problem, or for a histogram
         file that does not exist. Histogram files are copied to ``beam/`` next to ``path``, and
-        the file records them relative to that folder.
+        the file records them relative to that folder. A setup with a scan is written as a
+        scan's ``run.yaml`` (:meth:`srim.scan.Scan.to_yaml`), otherwise as a plain one.
         """
         path = Path(path).absolute()
         blocking = [problem for problem in self._problems if problem.blocking]
@@ -142,9 +148,15 @@ class DocumentModel(QObject):
         for source, dest in copies:
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source, dest)
-        spec = to_spec(prepared, folder)
-        _relative_histograms(spec, folder)
-        spec.to_yaml(path, provenance={"app": f"pysrim2 {srim.__version__}"})
+        provenance = {"app": f"pysrim2 {srim.__version__}"}
+        if "_scan" in prepared:
+            scan = scan_model.to_scan(prepared, folder)
+            _relative_histograms(scan.base, folder)
+            scan.to_yaml(path, provenance=provenance)
+        else:
+            spec = to_spec(prepared, folder)
+            _relative_histograms(spec, folder)
+            spec.to_yaml(path, provenance=provenance)
         # The document now refers to the copies, relative to its new folder.
         self._doc = prepared
         self._path = path
