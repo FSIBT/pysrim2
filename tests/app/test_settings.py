@@ -45,3 +45,49 @@ def test_save_leaves_no_temp_files_behind(tmp_path):
 def test_settings_path_is_under_the_data_dir(monkeypatch, tmp_path):
     monkeypatch.setenv("PYSRIM2_HOME", str(tmp_path))
     assert settings_path() == tmp_path / "app" / "settings.json"
+
+
+def test_the_rates_and_the_refresh_interval_round_trip(tmp_path):
+    path = tmp_path / "app" / "settings.json"
+    settings = AppSettings(ions_per_s={"2": 150.5, "1": 2000.0}, refresh_seconds=30)
+    save_settings(settings, path)
+    assert load_settings(path) == settings
+
+
+def test_a_file_without_the_new_fields_gives_their_defaults(tmp_path):
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps({"route": "wine", "theme": "dark"}))
+    loaded = load_settings(path)
+    assert loaded.ions_per_s == {}
+    assert loaded.refresh_seconds == 5
+
+
+def test_a_bad_rate_entry_is_dropped_and_the_others_kept(tmp_path):
+    path = tmp_path / "settings.json"
+    path.write_text(
+        json.dumps(
+            {
+                "theme": "dark",
+                "ions_per_s": {"2": -1, "x": 5, "3": 40.5, "4": True, "5": "fast"},
+                "refresh_seconds": 0,
+            }
+        )
+    )
+    loaded = load_settings(path)
+    assert loaded.ions_per_s == {"3": 40.5}
+    assert loaded.refresh_seconds == 5
+    assert loaded.theme == "dark"
+
+
+def test_the_refresh_interval_is_kept_within_one_second_to_an_hour(tmp_path):
+    path = tmp_path / "settings.json"
+    for value, expected in ((1, 1), (3600, 3600), (3601, 5), (True, 5), (2.5, 5)):
+        path.write_text(json.dumps({"refresh_seconds": value}))
+        assert load_settings(path).refresh_seconds == expected
+
+
+@pytest.mark.parametrize("rates", [[1, 2], "2", None])
+def test_a_rates_section_of_the_wrong_type_gives_no_rates(tmp_path, rates):
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps({"ions_per_s": rates}))
+    assert load_settings(path).ions_per_s == {}

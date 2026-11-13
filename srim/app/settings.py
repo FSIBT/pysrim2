@@ -6,21 +6,29 @@ crash never leaves half a file behind.
 """
 
 import json
+import math
 import os
 import tempfile
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from srim.app.routes import ROUTES
 from srim.paths import data_dir
 
 THEMES = ("system", "light", "dark")
+#: the calculations whose ions-per-second rate the app remembers (as text, the JSON keys)
+RATE_KEYS = tuple(str(n) for n in range(1, 8))
+#: the run view's refresh interval, in whole seconds
+REFRESH_RANGE = (1, 3600)
 
 
 @dataclass
 class AppSettings:
     route: str | None = None
     theme: str = "system"
+    #: the last measured ions per second of each calculation, keyed "1".."7"
+    ions_per_s: dict[str, float] = field(default_factory=dict)
+    refresh_seconds: int = 5
 
 
 def settings_path() -> Path:
@@ -35,7 +43,23 @@ def _valid(data: dict) -> AppSettings:
     theme = data.get("theme")
     if isinstance(theme, str) and theme in THEMES:
         settings.theme = theme
+    rates = data.get("ions_per_s")
+    if isinstance(rates, dict):
+        for key, value in rates.items():
+            if key in RATE_KEYS and _positive(value):
+                settings.ions_per_s[key] = float(value)
+    refresh = data.get("refresh_seconds")
+    low, high = REFRESH_RANGE
+    if isinstance(refresh, int) and not isinstance(refresh, bool) and low <= refresh <= high:
+        settings.refresh_seconds = refresh
     return settings
+
+
+def _positive(value) -> bool:
+    """True for a finite number above zero (a bool is not a number here)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    return math.isfinite(value) and value > 0
 
 
 def load_settings(path: Path | None = None) -> AppSettings:
