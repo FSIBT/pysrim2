@@ -606,7 +606,10 @@ class ScanTab(QWidget):
         self._set_precision(key, value, PRECISION_DEFAULTS[key])
 
     def _set_precision(self, key: str, value: Any, default: Any) -> None:
-        """Store ``value`` under ``key`` of the precision target; None or the default is left out."""
+        """Store ``value`` under ``key`` of the precision target.
+
+        None or the default is left out.
+        """
 
         def fn(scan: dict) -> None:
             if scan.get("precision") is None:
