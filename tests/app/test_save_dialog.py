@@ -99,8 +99,8 @@ def test_the_window_has_save_results_enabled_only_with_a_result(qtbot, tmp_path)
     window = MainWindow(AppSettings(route="wine"), checks_fn=lambda route: [])
     qtbot.addWidget(window)
     assert not window.save_results_action.isEnabled()
-    window.run.result = object()
-    window.run.folder = tmp_path
+    window.run.result = single_run(tmp_path / "run")
+    window.run.folder = tmp_path / "run"
     window._update_run_actions()
     assert window.save_results_action.isEnabled()
 

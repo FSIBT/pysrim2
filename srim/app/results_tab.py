@@ -44,7 +44,13 @@ from PySide6.QtWidgets import (
 from srim.app.model import clean
 from srim.app.plot_canvas import PlotCanvas, PlotWindow
 from srim.app.plots import CATALOGUE, missing_reason, plot_data
-from srim.app.runs import SHOWN_STATUSES, open_point
+from srim.app.runs import (
+    MISSING_OUTPUTS_TEXT,
+    SHOWN_STATUSES,
+    has_outputs,
+    open_point,
+    outputs_missing,
+)
 from srim.app.scan_plots import (
     CURVE_LIMIT,
     draw_overlay,
@@ -131,11 +137,6 @@ def _label(names, values) -> str:
     return ", ".join(f"{name} = {values[name]}" for name in names)
 
 
-def _has_outputs(point_dir: Path) -> bool:
-    """A point's folder holds its run.yaml (or units.csv, when it was batched)."""
-    return (point_dir / "run.yaml").is_file() or (point_dir / "units.csv").is_file()
-
-
 def _finished_points(result, folder: Path) -> tuple[list[PointEntry], list[str]]:
     """The points of a finished run that can be shown, and the errors of the failed ones."""
     names = list(result.scan.param_names)
@@ -143,7 +144,7 @@ def _finished_points(result, folder: Path) -> tuple[list[PointEntry], list[str]]
     for _, row in result.table.iterrows():
         path = row.get("path")
         status = row.get("status")
-        if status in SHOWN_STATUSES and isinstance(path, str) and _has_outputs(folder / path):
+        if status in SHOWN_STATUSES and isinstance(path, str) and has_outputs(folder / path):
             entries.append(PointEntry(_label(names, {n: row[n] for n in names}), path))
         elif status == "failed" and isinstance(row.get("error"), str):
             errors.append(row["error"])
@@ -156,7 +157,7 @@ def _live_points(state, folder: Path) -> tuple[list[PointEntry], list[str]]:
     for index in sorted(state.points):
         point = state.points[index]
         rel = f"points/{point.id[:16]}"
-        if point.status in SHOWN_STATUSES and _has_outputs(folder / rel):
+        if point.status in SHOWN_STATUSES and has_outputs(folder / rel):
             entries.append(PointEntry(_label(state.param_names, point.params), rel))
         elif point.status == "failed" and point.error:
             errors.append(point.error)
@@ -194,6 +195,8 @@ class ResultsTab(QWidget):
         self._errors: list[str] = []
         self._results = None
         self._unreadable = False
+        #: True when a finished run's points have no output folders (see outputs_missing)
+        self._missing = False
         self._items: dict[str, QTreeWidgetItem] = {}
         #: the scan's table, and its points that have outputs (refreshed with the points)
         self._table = None
@@ -346,7 +349,10 @@ class ResultsTab(QWidget):
             item = self._items[plot.key]
             item.setDisabled(reason is not None)
             item.setToolTip(0, reason or "")
-        scan_reason = None if self._scan_rows else NO_RESULTS_TEXT
+        if self._scan_rows:
+            scan_reason = None
+        else:
+            scan_reason = MISSING_OUTPUTS_TEXT if self._missing else NO_RESULTS_TEXT
         for key, item in self._items.items():
             if is_scan_key(key):
                 item.setDisabled(scan_reason is not None)
@@ -420,7 +426,7 @@ class ResultsTab(QWidget):
             if (
                 row.get("status") in SHOWN_STATUSES
                 and isinstance(path, str)
-                and _has_outputs(Path(folder) / path)
+                and has_outputs(Path(folder) / path)
             ):
                 rows.append(ScanRow(int(index), point_label(names, row), path))
         return rows
@@ -431,6 +437,7 @@ class ResultsTab(QWidget):
         self._entries = entries
         self._errors = errors
         self._total = total
+        self._missing = outputs_missing(self.controller.result, self.controller.folder)
         self._table = self._scan_table()
         self._scan_rows = self._scan_points()
         self._scan_group.setHidden(total <= 1)
@@ -460,6 +467,8 @@ class ResultsTab(QWidget):
     def _empty_text(self) -> str:
         if self._unreadable:
             return UNREADABLE_TEXT
+        if self._missing:
+            return MISSING_OUTPUTS_TEXT
         if self._errors:
             return f"{NO_RESULTS_TEXT}\n{self._errors[0]}"
         return NO_RESULTS_TEXT

@@ -12,10 +12,12 @@ from srim.app.runs import (
     DEFAULT_IONS_PER_S,
     ParallelChoice,
     open_point,
+    outputs_missing,
     parallel_advice,
     plan_run,
     remember_rate,
     run_folder,
+    setup_path_for_run,
 )
 from srim.app.scan_model import scan_from_section, to_scan
 from srim.app.settings import AppSettings
@@ -398,3 +400,36 @@ def _point_id(folder, index):
     from srim.scan import Scan
 
     return Scan.from_yaml(folder / "scan.yaml").points()[index].id[:16]
+
+
+def test_the_default_save_as_of_a_run_folder_is_the_setup_beside_its_runs(tmp_path):
+    setup = tmp_path / "boron" / "run.yaml"
+    folder = run_folder(setup, datetime(2026, 11, 12, tzinfo=UTC))
+    assert setup_path_for_run(folder / "scan.yaml") == setup
+    plain = tmp_path / "moved" / "20261112T000000Z" / "scan.yaml"
+    assert setup_path_for_run(plain) == tmp_path / "moved.yaml"
+
+
+def test_a_finished_run_whose_point_folders_are_gone_has_its_outputs_missing(tmp_path, boron_data):
+    import shutil
+
+    from run_folders import DONE
+
+    from srim.app.runs import read_run
+
+    _two_point_folder(tmp_path, boron_data, [DONE, DONE])
+    result, _finished = read_run(tmp_path / "run")
+    assert not outputs_missing(result, tmp_path / "run")
+    shutil.rmtree(tmp_path / "run" / "points" / _point_id(tmp_path / "run", 1))
+    assert not outputs_missing(result, tmp_path / "run")  # the other point still has outputs
+    shutil.rmtree(tmp_path / "run" / "points")
+    assert outputs_missing(result, tmp_path / "run")
+
+
+def test_a_run_where_no_point_finished_has_no_outputs_missing(tmp_path, boron_data):
+    from srim.app.runs import read_run
+
+    _two_point_folder(tmp_path, boron_data, ["SRIM failed", "SRIM failed"])
+    result, _finished = read_run(tmp_path / "run")
+    assert not outputs_missing(result, tmp_path / "run")
+    assert not outputs_missing(None, tmp_path / "run")

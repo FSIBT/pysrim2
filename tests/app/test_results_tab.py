@@ -21,7 +21,7 @@ from srim.app.model import to_spec  # noqa: E402
 from srim.app.plot_canvas import PlotCanvas  # noqa: E402
 from srim.app.plots import CATALOGUE  # noqa: E402
 from srim.app.results_tab import NO_RESULTS_TEXT, ResultsTab  # noqa: E402
-from srim.app.runs import ParallelChoice, plan_run  # noqa: E402
+from srim.app.runs import MISSING_OUTPUTS_TEXT, ParallelChoice, plan_run  # noqa: E402
 from srim.app.settings import AppSettings  # noqa: E402
 from srim.app.window import MainWindow  # noqa: E402
 from srim.beam.exact import sample_ions, write_trim_dat  # noqa: E402
@@ -402,3 +402,29 @@ def test_an_overlay_says_how_many_points_had_no_data(qtbot, tab, run, document, 
         tab.plot_list.setCurrentItem(tab.item_for(OVERLAY_KEY))
     title = tab.canvas.figure.axes[0].get_title()
     assert title == f"{BY_KEY['ionization'].title} (1 of 3 points had no data)"
+
+
+def test_a_finished_run_whose_point_folders_are_gone_says_its_results_are_missing(
+    qtbot, tab, run, document, folder
+):
+    import shutil
+
+    finish(run, document, folder, scan_of(document), [DONE])
+    shutil.rmtree(folder / "points")
+    run.finished.emit(run.result)
+    assert tab.empty_label.text() == MISSING_OUTPUTS_TEXT
+    assert tab.empty_label.isVisibleTo(tab)
+    assert not tab.canvas.isVisibleTo(tab)
+
+
+def test_a_scan_whose_point_folders_are_gone_says_so_on_its_scan_group(
+    qtbot, tab, run, document, folder
+):
+    import shutil
+
+    scan = scan_of(document, grid={"ion.energy_keV": [10.0, 20.0]})
+    finish(run, document, folder, scan, [DONE, DONE])
+    shutil.rmtree(folder / "points")
+    run.finished.emit(run.result)
+    assert tab.item_for("scan:summary").isDisabled()
+    assert tab.item_for("scan:summary").toolTip(0) == MISSING_OUTPUTS_TEXT

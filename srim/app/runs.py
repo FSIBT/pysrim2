@@ -98,6 +98,22 @@ def run_folder(setup_path: Path, now: datetime) -> Path:
     return folder
 
 
+#: the suffix of the folder that holds a setup's run folders (see :func:`run_folder`)
+RUNS_SUFFIX = "-runs"
+
+
+def setup_path_for_run(scan_path: Path) -> Path:
+    """The default file that Save As offers for the setup of the run folder ``scan_path`` (its
+    ``scan.yaml``): ``<dir>/<stem>.yaml`` for ``<dir>/<stem>-runs/<stamp>/scan.yaml``, the reverse
+    of :func:`run_folder`. The name is kept when the folder is not named ``<stem>-runs``.
+    """
+    runs = Path(scan_path).parent.parent
+    stem = runs.name
+    if stem.endswith(RUNS_SUFFIX) and len(stem) > len(RUNS_SUFFIX):
+        stem = stem[: -len(RUNS_SUFFIX)]
+    return runs.parent / f"{stem}.yaml"
+
+
 def plan_run(doc: dict, base_dir: Any, choice: ParallelChoice) -> Scan:
     """The library's scan of the setup ``doc``: its ``_scan`` when it has one, else a plain run.
 
@@ -232,9 +248,29 @@ UNFINISHED_TEXT = "This run did not finish; showing the points that have results
 _TABLE_META = ("id", "n_ions", "seeds", "status", "error", "path")
 
 
+#: what the app says when a finished run's points are in its table but their folders are gone
+MISSING_OUTPUTS_TEXT = "The results of this run are missing from the run folder."
+
+
 def has_outputs(point_dir: Path) -> bool:
     """A point's folder holds its run.yaml (or units.csv, when it was batched)."""
     return (point_dir / "run.yaml").is_file() or (point_dir / "units.csv").is_file()
+
+
+def outputs_missing(result, folder) -> bool:
+    """True when ``result`` (a finished run's scan result, read from ``folder``) has points that
+    finished, and none of their output folders is in ``folder`` any more (deleted or moved).
+
+    False when there is no result or folder, or when no point finished.
+    """
+    if result is None or folder is None or "status" not in result.table.columns:
+        return False
+    done = result.table[result.table["status"].isin(SHOWN_STATUSES)]
+    if done.empty:
+        return False
+    paths = done["path"] if "path" in done.columns else []
+    folder = Path(folder)
+    return not any(isinstance(path, str) and has_outputs(folder / path) for path in paths)
 
 
 def read_run(folder) -> tuple[ScanResult, bool]:
@@ -282,9 +318,17 @@ def loaded_state(result: ScanResult, folder) -> ScanState:
         else max(start, _mtime(folder, start))
     )
     state = ScanState(scan)
-    state.apply(ScanStarted(len(points), 0, scan.seed or 0, str(folder), time=start))
+    state.apply(
+        ScanStarted(
+            n_points=len(points),
+            workers=0,
+            base_seed=scan.seed or 0,
+            scan_dir=str(folder),
+            time=start,
+        )
+    )
     for point in points:
-        state.apply(PointQueued(point.index, point.id, time=start))
+        state.apply(PointQueued(index=point.index, id=point.id, time=start))
     table = result.table
     values_of = [c for c in table.columns if c not in scan.param_names and c not in _TABLE_META]
     counts = {"done": 0, "failed": 0}
@@ -297,29 +341,44 @@ def loaded_state(result: ScanResult, folder) -> ScanState:
         error = row.get("error") if isinstance(row.get("error"), str) else None
         if status in ("done", "max_ions", "cached"):
             if status == "cached":
-                state.apply(PointCached(index, point.id, 0, time=end))
+                state.apply(PointCached(index=index, id=point.id, batch=0, time=end))
             else:
-                state.apply(PointStarted(index, point.id, 0, 1, time=start))
+                state.apply(PointStarted(index=index, id=point.id, worker=0, attempt=1, time=start))
             n_ions = row.get("n_ions")
             values = {c: row[c] for c in values_of}
             state.apply(
                 PointFinished(
-                    index,
-                    point.id,
-                    values,
-                    int(n_ions) if is_number(n_ions) else 0,
-                    0.0,
+                    index=index,
+                    id=point.id,
+                    values=values,
+                    n_ions=int(n_ions) if is_number(n_ions) else 0,
+                    seconds=0.0,
                     time=end,
                 )
             )
             counts["done"] += 1
         elif status == "failed":
-            state.apply(PointFailed(index, point.id, error or "failed", 1, True, time=end))
+            state.apply(
+                PointFailed(
+                    index=index,
+                    id=point.id,
+                    error=error or "failed",
+                    attempt=1,
+                    final=True,
+                    time=end,
+                )
+            )
             counts["failed"] += 1
         elif status == "stopped":
-            state.apply(PointStopped(index, point.id, error, time=end))
+            state.apply(PointStopped(index=index, id=point.id, error=error, time=end))
     state.apply(
-        ScanFinished(counts["done"], counts["failed"], end - start, stopped=not finished, time=end)
+        ScanFinished(
+            n_done=counts["done"],
+            n_failed=counts["failed"],
+            seconds=end - start,
+            stopped=not finished,
+            time=end,
+        )
     )
     state.workers.clear()
     return state

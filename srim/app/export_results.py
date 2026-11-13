@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from srim import export
-from srim.app.runs import SHOWN_STATUSES, open_point
+from srim.app.runs import SHOWN_STATUSES, has_outputs, open_point
 from srim.scan.result import read_scan_result
 from srim.spec import RunSpec
 
@@ -118,10 +118,6 @@ class RunContents:
     points: tuple[PointChoice, ...]
 
 
-def _has_outputs(point_dir: Path) -> bool:
-    return (point_dir / "run.yaml").is_file() or (point_dir / "units.csv").is_file()
-
-
 def _rows(folder: Path, result):
     """One (point, row dict, exportable, reason) per table row, in table order."""
     by_id = {point.id: point for point in result.scan.points()}
@@ -134,7 +130,7 @@ def _rows(folder: Path, result):
         path = row.get("path")
         if status not in SHOWN_STATUSES:
             reason = f"not finished ({status})"
-        elif not isinstance(path, str) or not _has_outputs(folder / path):
+        elif not isinstance(path, str) or not has_outputs(folder / path):
             reason = "no outputs"
         else:
             reason = ""
