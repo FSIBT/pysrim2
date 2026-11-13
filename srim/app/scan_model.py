@@ -35,15 +35,9 @@ LAYER_SCAN_FIELDS = (
 
 
 def new_scan() -> dict:
-    """An empty scan: nothing to vary, no ions yet, the default extractor."""
-    return {
-        "grid": {},
-        "extract": list(DEFAULT_EXTRACT),
-        "ions": None,
-        "batch_ions": None,
-        "seed": None,
-        "keep_seed": False,
-    }
+    """An empty scan (what ticking "Run as a scan" adds): nothing to vary, no ions yet, and the
+    default extractor. The other keys of the section are left out until the user sets them."""
+    return {"grid": {}, "extract": list(DEFAULT_EXTRACT), "ions": None}
 
 
 def scan_keys(doc: dict) -> list[tuple[str, str]]:

@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The desktop app keeps a broken `materials.json` (My materials) as `materials.json.bak` before a save rewrites it, so no saved material is lost without a copy.
 - `Scan(..., keep_seed=True)` (`keep_seed: true` in a scan section) runs a one-point scan with the scan's own seed, so a single run has the `TRIM.IN` of its run spec. `srim.beam.beam_scan(spec)` is the scan that `run_beam` runs for a spec, and `srim.scan.read_scan_result(folder)` reads a finished scan folder back.
 - The desktop app's run setup can hold a scan: the `scan:` section of a `run.yaml` is opened, kept with undo and saved with the setup (a file without one is written as before), and the setup says what the scan still needs (what to vary, the ions per point).
+- The desktop app has a Scan tab (after Run settings): "Run as a scan" turns a setup into a scan, the parameters to vary take typed values or a range (linear or logarithmic), the ions per point are a fixed number or a precision target, the values to extract are ticked, and the seed and the batch size are set; explicit points and Python extractors of a file are shown and kept.
 
 ### Fixed
 

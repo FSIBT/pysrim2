@@ -109,14 +109,7 @@ def test_a_bracketed_layer_key_is_accepted_by_the_library_too():
 
 
 def test_a_new_scan_is_empty_and_has_the_default_extractor():
-    assert new_scan() == {
-        "grid": {},
-        "extract": ["implant_summary"],
-        "ions": None,
-        "batch_ions": None,
-        "seed": None,
-        "keep_seed": False,
-    }
+    assert new_scan() == {"grid": {}, "extract": ["implant_summary"], "ions": None}
 
 
 def test_section_keys_are_normalised_and_missing_extract_is_the_default():

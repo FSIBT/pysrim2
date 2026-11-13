@@ -8,7 +8,7 @@ pytest.importorskip("pytestqt")
 
 from PySide6.QtCore import QUrl  # noqa: E402
 from PySide6.QtGui import QPalette  # noqa: E402
-from PySide6.QtWidgets import QMessageBox  # noqa: E402
+from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
 
 import srim  # noqa: E402
 from srim.app import (
@@ -17,6 +17,7 @@ from srim.app import (
 )
 from srim.app import window as window_module  # noqa: E402
 from srim.app.guidance import Guidance  # noqa: E402
+from srim.app.scan_model import new_scan  # noqa: E402
 from srim.app.settings import AppSettings, load_settings  # noqa: E402
 from srim.app.theme import apply_theme  # noqa: E402
 from srim.app.window import MainWindow  # noqa: E402
@@ -40,6 +41,7 @@ def test_the_window_has_the_tabs_and_the_menus(qtbot):
         "Geometry",
         "Beam",
         "Run settings",
+        "Scan",
         "Progress",
         "Results",
     ]
@@ -325,10 +327,21 @@ def test_a_click_selects_the_tab_and_focuses_the_field(qtbot, target, tab, rest)
 
 def test_the_run_settings_tab_is_the_settings_editor(qtbot):
     win = window_with(qtbot)
-    assert set(win.editors) == {"geometry", "beam", "settings"}
+    assert set(win.editors) == {"geometry", "beam", "settings", "scan"}
     assert isinstance(win.editors["beam"], BeamTab)
     assert isinstance(win.editors["settings"], RunSettingsTab)
     assert win.tabs.tabText(win.tabs.indexOf(win.editors["settings"])) == "Run settings"
+
+
+def test_a_click_on_a_scan_line_selects_the_scan_tab_and_focuses_the_table(qtbot):
+    win = window_with(qtbot)
+    win.show()
+    qtbot.waitExposed(win)
+    win.document.edit(lambda doc: doc.__setitem__("_scan", new_scan()))
+    win.status.jump.emit("scan/vary")
+    assert win.tabs.currentWidget() is win.editors["scan"]
+    table = win.editors["scan"].table
+    qtbot.waitUntil(lambda: QApplication.focusWidget() is table)
 
 
 def test_the_edit_menu_has_undo_and_redo_with_the_standard_keys(qtbot):

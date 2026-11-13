@@ -23,6 +23,7 @@ from srim.app.document import DocumentModel
 from srim.app.geometry import GeometryTab
 from srim.app.guidance import Guidance, setup_guidance
 from srim.app.run_settings import RunSettingsTab
+from srim.app.scan_tab import ScanTab
 from srim.app.settings import AppSettings, save_settings
 from srim.app.setup import SetupWizard
 from srim.app.statusbar import GuidanceBar
@@ -32,7 +33,12 @@ from srim.cli import collect_checks
 from srim.spec import SpecError
 
 #: the editor tabs, by key (the first part of a guidance target) and tab name
-EDITOR_TABS = (("geometry", "Geometry"), ("beam", "Beam"), ("settings", "Run settings"))
+EDITOR_TABS = (
+    ("geometry", "Geometry"),
+    ("beam", "Beam"),
+    ("settings", "Run settings"),
+    ("scan", "Scan"),
+)
 #: the tabs that only say they arrive later in 0.12
 PLAIN_TABS = ("Progress", "Results")
 THEME_LABELS = {"system": "&System", "light": "&Light", "dark": "&Dark"}
@@ -61,7 +67,7 @@ class MainWindow(QMainWindow):
         self._setup_messages: list[Guidance] = []
         self.document = document if document is not None else DocumentModel(self)
 
-        # Editors are keyed "geometry", "beam" and "settings".
+        # Editors are keyed "geometry", "beam", "settings" and "scan".
         self.editors: dict[str, QWidget] = {}
         self.tabs = QTabWidget(self)
         for key, name in EDITOR_TABS:
@@ -69,8 +75,10 @@ class MainWindow(QMainWindow):
                 editor = GeometryTab(self.document, self)
             elif key == "beam":
                 editor = BeamTab(self.document, self)
-            else:
+            elif key == "settings":
                 editor = RunSettingsTab(self.document, self)
+            else:
+                editor = ScanTab(self.document, self)
             self.editors[key] = editor
             self.tabs.addTab(editor, name)
         for name in PLAIN_TABS:
