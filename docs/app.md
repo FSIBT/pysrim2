@@ -1,10 +1,12 @@
 # Desktop app
 
-`pysrim2 app` opens a window for pysrim2. In 0.12.0 it guides you through setting up
-SRIM: it shows how SRIM runs on your machine, installs what is still missing, and checks
-the result. It also edits a run setup: the target (Geometry tab), the beam (Beam tab) and the
-run settings (Run settings tab). Starting runs and reading results follow later in the 0.12
-series.
+`pysrim2 app` opens a window for pysrim2. It guides you through setting up SRIM: it shows how
+SRIM runs on your machine, installs what is still missing, and checks the result. It also edits
+a run setup: the target (Geometry tab), the beam (Beam tab), the run settings (Run settings tab)
+and an optional scan (Scan tab). It runs the setup, shows the run as it goes (Progress tab), and
+shows and saves the results (Results tab).
+
+![The Geometry tab of the boron reference setup: the layers, and the target drawn to scale](gallery/images/app_setup.png)
 
 The app is optional. The library (`import srim`) and the command line never import Qt, so
 they work without it.
@@ -255,8 +257,174 @@ the edits since the setup was opened or created (the last 200). Each change to a
 one edit, so a typed number is one step once you press Enter or leave the field. Opening another
 file starts a new history, so Undo never returns to the setup that was open before.
 
-New, Open and Quit ask **Discard the changes to this setup?** when the setup has edits that are
-not saved. Choosing No keeps the setup and the window open.
+New, Open, Open recent, Open run folder and Quit ask **Discard the changes to this setup?** when the
+setup has edits that are not saved. Choosing No keeps the setup and the window open.
+
+## Scans
+
+The **Scan** tab turns the setup into a scan: the same run for many values of a parameter. Tick
+**Run as a scan** to add one; unticking it removes the scan. A setup without a scan is one run.
+
+- **Parameters to vary** is a table with one row per parameter. Each row has a parameter (a list of
+  the usual ones, or **Other…** for any parameter by its name, for example `ion.energy_keV` or
+  `target.0.thickness_nm`) and its values, typed and separated by commas, semicolons or spaces.
+  **Range…** fills the values from a start, a stop and a number of values, in linear or logarithmic
+  steps (logarithmic needs both ends above zero). **Add row** and **Remove row** change the table.
+- **Ions** is either a **Fixed number of ions** per point or a **Precision target**: the scan runs
+  batches until the error of the chosen value is within the relative or absolute error, between a
+  minimum and a maximum number of ions, in batches of **Ions per batch**. The ions per point are
+  separate from the number of ions on the **Beam** tab, which is the number of a single run.
+  **Batch of ions** splits a point into batches of that size; **One run per point** (the default)
+  does not split it.
+- **Values from each point** ticks the values to extract (for example `implant_summary`,
+  `sputter_yield` or `energy_to_recoils`). `vacancy_at` (a depth in nm) and `ions_in_layer` (a layer,
+  0 for the surface) need their parameter, which the tab asks for. The values become the columns of
+  the scan's table and the choices of the Summary on the Results tab.
+- **Random seed** is the seed of the scan. Left blank, the scan draws a seed for each point.
+
+Some things are shown but not changed here: explicit points from a file, a `python:` extractor, an
+extractor the tab does not offer, and **keep_seed** (a line that says a single run uses the setup's
+own seed). The library judges every value: a number the tab cannot read is refused and its text
+stays, and the status bar names what the scan still needs.
+
+## Running
+
+**Run > Start** (Ctrl+R, or **Start** on the toolbar) runs the setup. If the setup has no file yet,
+or has changes that are not saved, Start saves it first (asking for a file when it is new); when you
+cancel that, nothing starts. A setup the library refuses says why and does not start.
+
+A run that is estimated to take more than two minutes is offered parallel workers in a dialog, on a
+machine with at least two cores. The estimate uses the ions per second that the app measured before
+for the setup's calculation (kept in `settings.json`, see Settings file), or a default for each
+calculation. The dialog says how long the run may take and how many units of work it has (a binned
+beam has one unit per bin). Its choices are:
+
+- **Run in parallel** runs with the number of **Workers** (one core is left free by default).
+  **Split into batches of** splits a single point with more than 1000 ions into batches that run at
+  the same time. Batches use different random numbers than one run, so the results agree
+  statistically, not point for point; the dialog says so. **Run in containers** is offered when a
+  container runtime is installed and the run is estimated at an hour or more.
+- **Run as one** runs in one worker, as an ordinary run does.
+- **Cancel** starts nothing.
+
+A run writes to a **run folder** next to the setup, named after it: `<setup name>-runs/<UTC time>/`,
+for example `boron-runs/20261112T101500Z/`. A second run in the same second gets `-2`, `-3` and so on.
+The folder holds the scan (`scan.yaml`), one folder per point (`points/<id>/`) with the SRIM outputs,
+and, once the run has finished, `result/scan.csv`. It is the same as a scan folder of the library
+(see {doc}`scans`).
+
+While a run goes the setup is locked: its editors, Start, File > New setup, Open setup, Open recent,
+Open run folder and Undo and Redo are unavailable. The **Progress** tab opens by itself.
+
+- **Pause** (Run > Pause, a check box) holds back the points that have not started; clear it to go on.
+- **Stop** kills the points that are running and keeps the points that have finished. The run ends as
+  stopped, and its results are the points that finished.
+- **Quit** during a run asks **A run is going. Stop it and quit?** Yes stops the run, waits for it to
+  end (up to thirty seconds) and then quits; No keeps the window and the run open.
+
+The ions per second that the run measured for the setup's calculation are saved when the run ends, so
+the next estimate is closer.
+
+## Progress
+
+The **Progress** tab shows the run as it goes, and as it ended, until the next run starts:
+
+- the summary line, with the elapsed time and the estimated time left, and the number of points that
+  are done, running, queued, cached, failed or stopped;
+- the workers, each with the point it runs and its ions per second;
+- a table of the points, with the status, ions and values of each. A click on a column heading sorts
+  the points by that column, and a second click reverses the order;
+- **Open log** opens the `error.log` of the selected point, or of the last point that failed, in the
+  desktop's default program;
+- **Warnings and errors (newest first)**, the last twenty.
+
+Pause and Stop on this tab are the Run actions. A run folder that is opened later (see Recent runs
+below) shows its final state here.
+
+## Results
+
+The **Results** tab draws the plots of a run's results. A single run has one point, and the tab shows
+its plots directly. A scan lists its points in a **Point** box, one at a time; a point that failed is
+not listed. The plots are in groups:
+
+- **Depth profiles**: ionization, vacancies, phonons, energy to recoils and the ion range profile.
+- **Ion distributions**: where the ions stop (needs `RANGE_3D.txt`), and the energies of the
+  backscattered and transmitted ions and of the sputtered atoms.
+- **Damage**: the collision cascades (needs `COLLISON.txt`) and the damage energy.
+- **Beam**: the energies and angles sampled over the distributions of an exact run.
+- **Scan** (for a scan only): the **Summary** and the overlays (below).
+
+A plot that the points cannot give is greyed out, and its tooltip says what it needs (for example
+*needs RANGE_3D.txt; enable 'Ranges (RANGE_3D.txt)' in Run settings*). Plots are read from the outputs
+of the run, and the per-ion files are read only up to 200 000 rows, so a plot of a very large run is
+drawn from its first rows.
+
+![The Results tab of a finished run, with the ionization profile of 3 MeV gold in SiC](gallery/images/app_results.png)
+
+Selecting a plot draws it once. A running run draws the shown plot again every few seconds: the
+interval is `refresh_seconds` in `settings.json` (5 by default). Before any result exists the tab says
+**No results yet.**, and when every point failed it says why.
+
+Under the plot, **Log x** and **Log y** change the scales, and the toolbar moves, zooms and saves the
+picture. **Copy data** puts the plot's data on the clipboard as CSV, and **Save data…** writes the same
+CSV to a file. **Pop out** opens the plot in a window of its own, which closes with the main window.
+
+The **Scan** group of a scan has two kinds of view:
+
+- **Summary** plots an extracted value (the **y** box) against a parameter (the **x** box), with one
+  line per value of a parameter in the **colour** box (or none). The error of a value is drawn as an
+  error bar when the scan has one. During a run the summary follows the points as they finish.
+- An **Overlay** for each depth profile draws one curve per point. Tick the points to draw them, or
+  narrow the list with the **Filter**, a condition such as `ion.energy_keV` > 10. At most twelve curves
+  are drawn: with more ticked, the note says *Showing 12 of N curves; use the filter to choose*.
+
+Each point keeps the same colour, line style and marker in every plot of the scan, so a point can be
+followed from one plot to the next. A finished exact run's sampled ions are drawn over the densities
+of the **Beam** tab.
+
+When the setup has changed since the run, the Results tab shows **From the previous setup**. The
+results are still the run's; the banner says the setup is not the one that ran. Undoing the change
+hides the banner.
+
+A run folder that did not finish (it was stopped or crashed) is shown with the points that have
+results, and the status bar says *This run did not finish; showing the points that have results.*
+
+## Saving results
+
+**File > Save results…** saves the last finished run's results in the library's formats. It is
+available after a run has finished (not for a run folder that did not finish), and not while a run
+goes. The dialog asks for:
+
+- a **Folder** (**Browse…**) and a **Name**;
+- the **Formats**: **Parquet** (a folder of tables), **HDF5** (one file), **CSV** (a folder of tables
+  with their metadata) and the **SRIM output files** (copied unchanged). Parquet needs the `parquet`
+  extra of pysrim2 (pyarrow) and HDF5 the `hdf5` extra (tables); a format whose extra is not installed
+  is greyed out, and its tooltip names the extra;
+- **Include collision details (can be large)**: the collision table of each point, written in chunks.
+  It is off by default;
+- for a scan, **All points** or **Chosen points**, with the points to save.
+
+With a name `N`, a plain run writes `N.parquet/`, `N.h5`, `N-csv/`, `N-raw/` (the outputs of the point,
+`*.txt`, `TRIM.IN`, `TRIM.DAT` and `run.yaml`, copied unchanged) and `N-run.yaml` (the run's
+`scan.yaml`). A scan writes its table as `N-scan.parquet` or, in HDF5, as the table `scan` of `N.h5`;
+its CSV is `N-scan-csv/`; each chosen point is written under `N-<id>`, where `<id>` is the first eight
+characters of the point's id. Nothing in the run folder is changed.
+
+Before it writes anything, the save checks every file it would write. If one exists, the dialog asks
+before it is replaced, and only the files the save would write are removed. The save runs in a
+thread, and its status line says *Saving…*.
+
+## Recent runs
+
+**File > Open recent** lists the last ten setups and run folders, newest first. A setup is recorded
+when it is opened or saved, and a run folder when its run ends. The list is kept in `recent.json` in
+the app's folder (see Settings file). An entry that cannot be opened now is greyed out, and its
+tooltip says why: the file or the folder was moved or deleted, or the folder is not a pysrim2 run
+folder.
+
+**File > Open run folder…** opens a run folder that you choose: a folder that a run made, with its
+`scan.yaml`. Its setup is opened into the window, and its results and final progress are shown as
+they were at the end of the run. Unsaved edits are asked about first, as for any other open.
 
 ## Themes
 
@@ -265,28 +433,24 @@ not saved. Choosing No keeps the setup and the window open.
 
 ## Menus and tabs
 
-- **File > New setup**, **Open setup…**, **Save setup**, **Save setup as…** and **Quit** (Ctrl+Q)
+- **File > New setup**, **Open setup…**, **Open recent**, **Open run folder…**, **Save setup**,
+  **Save setup as…**, **Save results…** and **Quit** (Ctrl+Q)
 - **Edit > Undo** and **Redo**
 - **Setup > Run setup…**
+- **Run > Start** (Ctrl+R), **Pause** and **Stop** (also on the toolbar)
 - **View > Theme > System, Light, Dark**
 - **Help > Documentation** (opens this documentation) and **About pysrim2**
 
 The window has these tabs: **Geometry**, **Beam**, **Run settings**, **Scan**, **Progress** and
-**Results**. The first four edit the run setup. **Progress** shows a run as it goes.
-
-**Results** draws the plots of a run's results, one point at a time (a single run has one point;
-a scan lists its finished points, and a point that failed is not listed). Plots that the run did
-not write, such as the stopping map without `RANGE_3D.txt`, are greyed out and say what they
-need. Selecting a plot draws it; a running run redraws the shown plot every few seconds (the
-refresh interval in the settings). **Copy data** and **Save data…** give the plot's data as CSV,
-the toolbar saves the picture, and **Pop out** opens the plot in a window of its own. After an
-exact run the **Beam** tab draws the ions that were sampled over each distribution. When the
-setup has changed since the run, the Results tab says **From the previous setup**.
+**Results**. The first four edit the run setup. **Progress** shows a run as it goes, and
+**Results** its results.
 
 ## Settings file
 
 The app's choices are stored in `<data dir>/app/settings.json`, where `<data dir>` is the
 pysrim2 data directory (see {doc}`installation`). It holds the `route` (`native`, `wine`,
-`container`, or `null` before a choice) and the `theme` (`system`, `light` or `dark`). A
-missing or broken file gives the defaults, so the app always starts. You can delete the file
-to start from the defaults again.
+`container`, or `null` before a choice), the `theme` (`system`, `light` or `dark`), the
+`ions_per_s` of each calculation (the latest measured rate, used for the parallel estimate) and
+the `refresh_seconds` of the Results tab (5 by default; the window has no field for it). The
+recent setups and runs are in `<data dir>/app/recent.json`. A missing or broken file gives the
+defaults, so the app always starts. You can delete a file to start from its defaults again.
