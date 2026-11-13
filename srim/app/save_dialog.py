@@ -56,7 +56,8 @@ class SaveResultsDialog(QDialog):
         self.failure: str | None = None
         self._busy = False
 
-        self.folder_edit = QLineEdit(str(self.run_folder.parent), self)
+        # Next to the setup: the run folder is <setup folder>/<stem>-runs/<stamp>.
+        self.folder_edit = QLineEdit(str(self.run_folder.parent.parent), self)
         self.browse_button = QPushButton("Browse…", self)
         self.name_edit = QLineEdit(self.contents.name, self)
         folder_row = QHBoxLayout()
@@ -215,13 +216,12 @@ class SaveResultsDialog(QDialog):
         try:
             request = self.request()
             existing = [
-                path
-                for path in exports.targets(self.run_folder, request)
-                if os.path.lexists(path)
+                path for path in exports.targets(self.run_folder, request) if os.path.lexists(path)
             ]
         except (OSError, ValueError, SpecError) as problem:
             self.status_label.setText(str(problem))
             return
+        replace = bool(existing)
         if existing:
             answer = QMessageBox.question(
                 self,
@@ -234,20 +234,17 @@ class SaveResultsDialog(QDialog):
             )
             if answer != QMessageBox.StandardButton.Yes:
                 return
-            try:
-                exports.remove_targets(existing)
-            except OSError as problem:
-                self.status_label.setText(f"Not saved: {problem}")
-                return
         self._set_busy(True)
+        # The old files are removed by export_run, in the thread, only after the new ones are
+        # written: a failed save keeps them.
         run_in_thread(
-            lambda: self._export(request),
+            lambda: self._export(request, replace),
             lambda outcome: self._exported(request, outcome),
             self._failed,
         )
 
-    def _export(self, request: ExportRequest):
-        written = exports.export_run(self.run_folder, request)
+    def _export(self, request: ExportRequest, replace: bool):
+        written = exports.export_run(self.run_folder, request, replace=replace)
         return written, exports.skipped_points(self.run_folder, request)
 
     def _exported(self, request: ExportRequest, outcome) -> None:

@@ -231,3 +231,56 @@ def test_a_missing_extra_is_refused_before_writing(tmp_path, monkeypatch):
     with pytest.raises(ImportError, match="pyarrow"):
         export_run(run, ExportRequest(tmp_path / "out", "boron", ("parquet", "csv")))
     assert not (tmp_path / "out").exists()
+
+
+def test_replace_removes_the_targets_and_keeps_the_rest(tmp_path):
+    run = tmp_path / "run"
+    single_run(run)
+    out = tmp_path / "out"
+    export_run(run, ExportRequest(out, "boron", ("csv",)))
+    export_run(run, ExportRequest(out, "other", ("csv",)))
+    (out / "boron-csv" / "stale.txt").write_text("old")
+    (out / "boron-other.txt").write_text("unrelated")
+    request = ExportRequest(out, "boron", ("csv",))
+    export_run(run, request, replace=True)
+    assert not (out / "boron-csv" / "stale.txt").exists()
+    assert (out / "boron-csv" / "ioniz.csv").is_file()
+    assert (out / "boron-other.txt").read_text() == "unrelated"
+    assert (out / "other-csv" / "ioniz.csv").is_file()
+
+
+def test_a_failed_export_keeps_the_previous_files_and_leaves_nothing_new(tmp_path, monkeypatch):
+    from srim import export
+
+    run = tmp_path / "run"
+    two_point_scan(run, [DONE, DONE])
+    out = tmp_path / "out"
+    export_run(run, ExportRequest(out, "grid", ("csv",)))
+    before = {p.relative_to(out): p.read_bytes() for p in out.rglob("*") if p.is_file()}
+    real = export.results_to_csv
+    calls = []
+
+    def failing_on_second(results, directory, **kwargs):
+        calls.append(directory)
+        if len(calls) == 2:
+            raise OSError("disk full")
+        return real(results, directory, **kwargs)
+
+    monkeypatch.setattr(export, "results_to_csv", failing_on_second)
+    with pytest.raises(OSError, match="disk full"):
+        export_run(run, ExportRequest(out, "grid", ("csv",)), replace=True)
+    calls.clear()
+    with pytest.raises(OSError, match="disk full"):
+        export_run(run, ExportRequest(out, "fresh", ("csv",)))
+    after = {p.relative_to(out): p.read_bytes() for p in out.rglob("*") if p.is_file()}
+    assert after == before
+    assert not [p for p in out.iterdir() if p.name.startswith(".")]
+
+
+def test_replace_refuses_a_folder_inside_the_run_folder_before_removing(tmp_path):
+    run = tmp_path / "run"
+    single_run(run)
+    (run / "boron-run.yaml").write_text("keep me")
+    with pytest.raises(ValueError, match="outside the run folder"):
+        export_run(run, ExportRequest(run, "boron", ("csv",)), replace=True)
+    assert (run / "boron-run.yaml").read_text() == "keep me"

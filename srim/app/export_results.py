@@ -21,9 +21,11 @@ Nothing in the run folder is changed. :func:`export_run` checks every target fir
 for, and then in chunks (the library does that).
 """
 
+import dataclasses
 import importlib.util
 import os
 import shutil
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -230,9 +232,26 @@ def _writes(request: ExportRequest, plan: _Plan) -> list[tuple[str, Path]]:
     return writes
 
 
+def validate(run_folder, request: ExportRequest) -> _Plan:
+    """Check ``request`` against the run folder, without writing or removing anything.
+
+    Refuses a folder inside the run folder (ValueError), a format whose extra is missing
+    (ImportError), and a run with nothing to export. Returns the plan that :func:`export_run`
+    writes. Every caller that is about to remove or write goes through here first.
+    """
+    run_folder = Path(run_folder)
+    if _is_inside(request.folder, run_folder):
+        raise ValueError("choose a folder outside the run folder")
+    for fmt in request.formats:
+        reason = format_available(fmt)
+        if reason is not None:
+            raise ImportError(f"{fmt} export {reason}")
+    return _plan(run_folder, request)
+
+
 def targets(run_folder, request: ExportRequest) -> list[Path]:
     """The paths :func:`export_run` would write for ``request`` (none is checked or written)."""
-    plan = _plan(Path(run_folder), request)
+    plan = validate(run_folder, request)
     return [path for _kind, path in _writes(request, plan)]
 
 
@@ -262,9 +281,7 @@ def _copy_raw(point_dir: Path, dest: Path) -> list[Path]:
             if batch.is_dir():
                 for pattern in RAW_PATTERNS:
                     sources += [
-                        (p, p.relative_to(point_dir))
-                        for p in batch.glob(pattern)
-                        if p.is_file()
+                        (p, p.relative_to(point_dir)) for p in batch.glob(pattern) if p.is_file()
                     ]
     dest.mkdir(parents=True, exist_ok=True)
     copied = []
@@ -311,34 +328,48 @@ def _write_point(run_folder: Path, job: _Job, request: ExportRequest) -> list[Pa
     return written
 
 
-def export_run(run_folder, request: ExportRequest) -> list[Path]:
+def export_run(run_folder, request: ExportRequest, replace: bool = False) -> list[Path]:
     """Write the export of ``request`` for the finished run folder; returns the paths written.
 
+    Everything is first written to a hidden staging folder in the target folder. Only when every
+    write has succeeded are the old targets removed (with ``replace``) and the new files moved into
+    place; any exception removes the staging folder and is raised again, so a failed export leaves
+    the folder as it was.
+
     Raises :class:`FileExistsError` (naming the first path) before anything is written when a
-    target exists, :class:`ImportError` when a format's extra is missing, and :class:`ValueError`
-    when the export would write into the run folder or the run has nothing to export.
+    target exists and ``replace`` is not set. :func:`validate` errors (a folder inside the run
+    folder, a missing extra, nothing to export) are raised before anything is removed or written.
     """
     run_folder = Path(run_folder)
-    if _is_inside(request.folder, run_folder):
-        raise ValueError("choose a folder outside the run folder")
-    for fmt in request.formats:
-        reason = format_available(fmt)
-        if reason is not None:
-            raise ImportError(f"{fmt} export {reason}")
-    plan = _plan(run_folder, request)
-    writes = _writes(request, plan)
-    for _kind, path in writes:
-        if os.path.lexists(path):
-            raise FileExistsError(f"{path} already exists; choose another name or remove it")
+    plan = validate(run_folder, request)
+    existing = [p for _kind, p in _writes(request, plan) if os.path.lexists(p)]
+    if existing and not replace:
+        raise FileExistsError(f"{existing[0]} already exists; choose another name or remove it")
     request.folder.mkdir(parents=True, exist_ok=True)
+    staging = request.folder / f".{request.name}.staging-{uuid.uuid4().hex[:8]}"
+    staging.mkdir()
+    try:
+        staged = _write_all(run_folder, plan, dataclasses.replace(request, folder=staging))
+        remove_targets(existing)
+        moved = []
+        for item in staged:
+            target = request.folder / item.name
+            shutil.move(os.fspath(item), os.fspath(target))
+            moved.append(target)
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+    return moved
+
+
+def _write_all(run_folder: Path, plan: _Plan, request: ExportRequest) -> list[Path]:
+    """Every file and folder of the export, written into ``request.folder`` (the staging folder)."""
     written = []
     if plan.scan_table:
         written += _write_scan_table(plan, request)
     for job in plan.jobs:
         written += _write_point(run_folder, job, request)
-    scan_yaml = run_folder / "scan.yaml"
     target = request.folder / f"{request.name}-run.yaml"
-    shutil.copy2(scan_yaml, target)
+    shutil.copy2(run_folder / "scan.yaml", target)
     written.append(target)
     return written
 
