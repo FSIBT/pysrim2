@@ -83,6 +83,8 @@ def test_entries_without_srim_run(name, tmp_path, capsys):
     if name.startswith("tui_"):  # the live-view pictures need the tui extra
         pytest.importorskip("textual")
         pytest.importorskip("textual_plotext")
+    if name.startswith("app_"):  # the app's window pictures need the app extra (PySide6)
+        pytest.importorskip("PySide6")
     assert make.main(["--out", str(tmp_path), name]) == 0
     output = tmp_path / make.load(name).OUTPUT
     assert output.is_file() and output.stat().st_size > 0

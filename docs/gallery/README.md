@@ -23,12 +23,13 @@ An entry that runs many ions keeps the count in a module-level `IONS`: the SRIM 
 Run from the repository root:
 
 ```bash
-uv run --extra plot --extra tui python docs/gallery/make.py          # all entries
-uv run --extra plot --extra tui python docs/gallery/make.py --list   # list the entries
-uv run --extra plot --extra tui python docs/gallery/make.py heatmap  # one or more names
+uv run --extra plot --extra tui --extra app python docs/gallery/make.py          # all entries
+uv run --extra plot --extra tui --extra app python docs/gallery/make.py --list   # list the entries
+uv run --extra plot --extra tui --extra app python docs/gallery/make.py heatmap  # one or more names
 ```
 
-Entries that need SRIM are skipped with a message when SRIM is not installed. Install
+The `app` extra (PySide6) is needed by the two entries of the desktop app (`app_setup`,
+`app_results`); they run offscreen. Entries that need SRIM are skipped with a message when SRIM is not installed. Install
 it with `pysrim2 install` (on Linux, under wine) first. `--out DIR` writes the pictures
 somewhere else than `images/`.
 

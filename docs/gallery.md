@@ -91,6 +91,33 @@ density the beam was defined with. Needs SRIM.
 :language: python
 ```
 
+(gallery-app_setup)=
+## The desktop app: the boron reference setup on the Geometry tab
+
+![The desktop app with the boron reference setup: the layers and the target to scale](gallery/images/app_setup.png)
+
+The window of `pysrim2 app` with the boron reference case of {doc}`first-simulation`
+(100 nm of gold on silicon). The target is drawn to scale beside the layer table, and the
+status bar says the setup is complete. The script builds the setup in code and needs the
+`app` extra; it makes no SRIM run.
+
+```{literalinclude} gallery/app_setup.py
+:language: python
+```
+
+(gallery-app_results)=
+## The desktop app: the results of a finished run
+
+![The desktop app's Results tab with the ionization profile of 3 MeV gold in SiC](gallery/images/app_results.png)
+
+The Results tab of a finished run, with the ionization profile of 3 MeV gold in SiC. The run
+folder is built from the outputs of `test_files/2` as a run leaves it, so no SRIM run is
+needed. See {doc}`app` for the tabs.
+
+```{literalinclude} gallery/app_results.py
+:language: python
+```
+
 (gallery-agent_boron)=
 ## The agent example: 200 boron ions into gold on silicon
 
@@ -115,9 +142,12 @@ Run from the repository root. The pictures are rebuilt on a machine with SRIM
 (`pysrim2 install`); entries that need SRIM are skipped with a message without it.
 
 ```shell
-uv run --extra plot --extra tui python docs/gallery/make.py          # all entries
-uv run --extra plot --extra tui python docs/gallery/make.py --list   # list the entries
-uv run --extra plot --extra tui python docs/gallery/make.py heatmap  # one or more names
+uv run --extra plot --extra tui --extra app python docs/gallery/make.py          # all entries
+uv run --extra plot --extra tui --extra app python docs/gallery/make.py --list   # list the entries
+uv run --extra plot --extra tui --extra app python docs/gallery/make.py heatmap  # one or more names
 ```
+
+The `app` extra (PySide6) is needed for the two pictures of the desktop app; the window
+runs offscreen, so no display is needed.
 
 Each committed image must stay under 300 KB.
