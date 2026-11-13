@@ -28,6 +28,7 @@ from srim.app.results_tab import ResultsTab
 from srim.app.run_control import RunController
 from srim.app.run_settings import RunSettingsTab
 from srim.app.runs import ParallelChoice, parallel_advice, plan_run, run_samples
+from srim.app.save_dialog import SaveResultsDialog
 from srim.app.scan_tab import ScanTab
 from srim.app.settings import AppSettings, save_settings
 from srim.app.setup import SetupWizard
@@ -137,6 +138,8 @@ class MainWindow(QMainWindow):
         self.save_as_action = file_menu.addAction("Save setup &as…")
         self.save_as_action.setShortcut(QKeySequence("Ctrl+Shift+S"))
         self.save_as_action.triggered.connect(self.save_setup_as)
+        self.save_results_action = file_menu.addAction("Save &results…")
+        self.save_results_action.triggered.connect(self.save_results)
         file_menu.addSeparator()
         self.quit_action = file_menu.addAction("&Quit")
         self.quit_action.setShortcut(QKeySequence("Ctrl+Q"))
@@ -225,6 +228,9 @@ class MainWindow(QMainWindow):
             self.pause_action.setChecked(False)
         self.new_action.setEnabled(not running)
         self.open_action.setEnabled(not running)
+        self.save_results_action.setEnabled(
+            not running and self.run.result is not None and self.run.folder is not None
+        )
         self.undo_action.setEnabled(document.can_undo and not running)
         self.redo_action.setEnabled(document.can_redo and not running)
         for editor in self.editors.values():
@@ -373,6 +379,22 @@ class MainWindow(QMainWindow):
         if not target.suffix:
             target = target.with_suffix(".yaml")
         self._save_to(target)
+
+    def save_results(self) -> None:
+        """File > Save results…: the last finished run's results in the library's formats."""
+        folder = self.run.folder
+        if self.run.running or self._closing or folder is None or self.run.result is None:
+            return
+        try:
+            dialog = SaveResultsDialog(Path(folder), parent=self)
+        except (OSError, SpecError, ValueError) as error:
+            QMessageBox.warning(self, "Save results", f"The results cannot be saved: {error}")
+            return
+        try:
+            if dialog.exec() == QDialog.DialogCode.Accepted and dialog.message:
+                self._set_setup_messages([Guidance(dialog.message)])
+        finally:
+            dialog.deleteLater()
 
     def _save_to(self, path: Path) -> None:
         try:

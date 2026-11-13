@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The desktop app's File > Save results… writes the last run's results in the library's formats (Parquet, HDF5, CSV, or the SRIM output files copied unchanged, with the collision details on request): a plain run's tables, or a scan's table and its chosen points. It asks before it replaces anything, and a format whose extra is not installed is greyed out with the install hint.
 - `Range3D` and the event parsers (`EXYZ`, `Backscat`, `Transmit`, `Sputter`) take `max_rows`: they read at most that many rows (the first ones) and their `truncated` attribute says whether rows were left out. The default reads every row, as before.
 - `pysrim2 install app` installs the desktop app: the new `app` extra (PySide6 and matplotlib) goes into the running pysrim2 (`uv tool`, pip or a source checkout, which is told the command). The library and the command line still never import Qt.
 - `pysrim2 app` opens the desktop window: a welcome screen and a guided setup (it opens by itself on the first check if no route is chosen yet or a check is not ready, and Setup > Run setup… reopens it) that chooses native, wine (Linux only) or container (the recommended one is preselected; macOS offers only the container), installs what is missing and checks the result. The app never runs a command that needs admin rights; it shows those for you to run in a terminal and then press Check again.
