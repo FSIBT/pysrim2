@@ -17,7 +17,6 @@ plot does not parse its file.
 """
 
 import os
-import re
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -31,9 +30,10 @@ from ..beam.exact import trim_dat_frame
 from ..beam.plot import _spec_of
 from ..beam.shapes import Shape
 from ..beam.spec import effective
+from ..output import Backscat, Range3D, Sputter, Transmit
 from ..output._chunks import concat_chunks, iter_lines, iter_row_chunks
-from ..output._common import _find_output, _squeeze, _to_float, double_regex
-from ..output.collision import EVENT_COLUMNS, Collision
+from ..output._common import _find_output
+from ..output.collision import _EVENT_DTYPES, EVENT_COLUMNS, Collision
 
 #: the most rows a per-ion plot reads (the first rows of the files, in file order)
 PLOT_ROW_CAP = 200_000
@@ -42,68 +42,11 @@ PLOT_ROW_CAP = 200_000
 _BINS = 50
 #: points of the drawn defined density
 _CURVE_POINTS = 400
-#: a SRIM table has at most this many lines before its header line
-_MAX_HEADER_LINES = 200
 #: header lines of a TRIM.DAT file
 _TRIM_DAT_HEADER_LINES = 10
 _DEPTH_COLUMNS = ("depth_nm", "depth_A")
 
-_NUMBER = double_regex.encode()
-
-# --- streaming readers of the per-ion files (the same rows as the library's parsers) ----------
-
 _RANGE3D_FILE = "RANGE_3D.txt"
-_RANGE3D_HEADER = re.compile(rb"-+(?:[ \t]+-+)+[ \t]*")
-_RANGE3D_ROW = re.compile(rb"[ \t]*(\d{7})" + (rb"[ \t]+(" + _NUMBER + rb")") * 3 + rb"[ \t]*")
-_RANGE3D_COLUMNS = ["ion", "depth_A", "y_A", "z_A"]
-_RANGE3D_DTYPES = [int, float, float, float]
-
-_EVENT_HEADER = re.compile(rb"[ \t]*Numb[ \t]+Numb.*")
-_EVENT_FIELDS = [rb"[SBT]", rb"\d+", rb"\d+", _NUMBER, rb"-?[ \t]*" + _NUMBER] + [_NUMBER] * 5
-_EVENT_ROW = re.compile(rb"[ \t]*" + rb"[ \t]+".join(b"(" + f + b")" for f in _EVENT_FIELDS))
-_EVENT_FRAME_COLUMNS = [
-    "ion", "atomic_number", "energy_eV", "depth_A", "y_A", "z_A", "cos_x", "cos_y", "cos_z",
-]  # fmt: skip
-_EVENT_DTYPES = [int, int] + [float] * 7
-#: the seven TRIM.DAT fields after the name and Z (the energy, depth, lateral and cosines)
-_TRIM_FIELDS = ("energy_eV", "depth_A", "y_A", "z_A", "cos_x", "cos_y", "cos_z")
-
-_COLLISION_DTYPES = [
-    int if c == "ion" else object if c in ("kind", "atom") else float for c in EVENT_COLUMNS
-]
-
-
-def _number(token: bytes) -> float:
-    return _to_float(_squeeze(token))
-
-
-def _table_rows(path: str, header_end, row) -> Iterator[tuple]:
-    """The regex groups of every data line of a SRIM table, streamed after its header line.
-
-    Lines that do not match are skipped, as the library's table reader does.
-    """
-    found = False
-    for index, raw in enumerate(iter_lines(path, None, keepends=True)):
-        line = raw.rstrip(b"\r\n")
-        if not found:
-            if header_end.fullmatch(line):
-                found = True
-            elif index + 1 >= _MAX_HEADER_LINES:
-                return
-            continue
-        match = row.fullmatch(line)
-        if match:
-            yield match.groups()
-
-
-def _range3d_rows(folder: str) -> Iterator[list]:
-    for g in _table_rows(os.path.join(folder, _RANGE3D_FILE), _RANGE3D_HEADER, _RANGE3D_ROW):
-        yield [int(g[0]), _number(g[1]), _number(g[2]), _number(g[3])]
-
-
-def _event_rows(folder: str, filename: str) -> Iterator[list]:
-    for g in _table_rows(os.path.join(folder, filename), _EVENT_HEADER, _EVENT_ROW):
-        yield [int(g[1]), int(g[2])] + [_number(g[i]) for i in range(3, 10)]
 
 
 def _collision_rows(folder: str) -> Iterator[list]:
@@ -270,20 +213,37 @@ def _damage_energy(results) -> pd.DataFrame:
     return _with_depth_nm(frame)
 
 
+def _parsed_frame(folders: list[str], parse: Callable[[str, int], Any]) -> pd.DataFrame:
+    """The frame of the first :data:`PLOT_ROW_CAP` rows over ``folders``.
+
+    ``parse(folder, max_rows)`` is a library parser (its ``df`` and ``truncated``); each folder
+    gives the rows the cap has left, and reading stops at the first folder that had more.
+    """
+    frames = []
+    total = 0
+    capped = False
+    for folder in folders:
+        part = parse(folder, PLOT_ROW_CAP - total)
+        frames.append(part.df)
+        total += len(part.df)
+        if part.truncated:
+            capped = True
+            break
+    frame = frames[0] if len(frames) == 1 else pd.concat(frames, ignore_index=True)
+    if capped:
+        frame.attrs["capped"] = True
+    return frame
+
+
 def _range3d(results) -> pd.DataFrame:
-    frame = _capped_frame(
-        _chain(_output_folders(results, _RANGE3D_FILE), _range3d_rows),
-        _RANGE3D_COLUMNS,
-        _RANGE3D_DTYPES,
-    )
-    return _with_lateral(frame)
+    folders = _output_folders(results, _RANGE3D_FILE)
+    return _with_lateral(_parsed_frame(folders, lambda folder, n: Range3D(folder, max_rows=n)))
 
 
-def _events(filename: str) -> Callable[[Any], pd.DataFrame]:
+def _events(parser, filename: str) -> Callable[[Any], pd.DataFrame]:
     def data(results):
         folders = _output_folders(results, filename)
-        rows = _chain(folders, lambda folder: _event_rows(folder, filename))
-        return _capped_frame(rows, _EVENT_FRAME_COLUMNS, _EVENT_DTYPES)
+        return _parsed_frame(folders, lambda folder, n: parser(folder, max_rows=n))
 
     return data
 
@@ -292,9 +252,13 @@ def _collision(results) -> pd.DataFrame:
     frame = _capped_frame(
         _chain(_output_folders(results, "COLLISON.txt"), _collision_rows),
         EVENT_COLUMNS,
-        _COLLISION_DTYPES,
+        _EVENT_DTYPES,
     )
     return _with_lateral(frame)
+
+
+#: the seven TRIM.DAT fields after the name and Z (the energy, depth, lateral and cosines)
+_TRIM_FIELDS = ("energy_eV", "depth_A", "y_A", "z_A", "cos_x", "cos_y", "cos_z")
 
 
 def _beam(parameter: str) -> Callable[[Any], pd.DataFrame]:
@@ -462,7 +426,7 @@ CATALOGUE: tuple[PlotDef, ...] = (
         "Ion distributions",
         "Energies of backscattered ions",
         "needs BACKSCAT.txt; enable 'Backscattered ions (BACKSCAT.txt)' in Run settings",
-        _events("BACKSCAT.txt"),
+        _events(Backscat, "BACKSCAT.txt"),
         _draw_energies,
     ),  # fmt: skip
     _plot(
@@ -470,7 +434,7 @@ CATALOGUE: tuple[PlotDef, ...] = (
         "Ion distributions",
         "Energies of transmitted ions",
         "needs TRANSMIT.txt; enable 'Transmitted ions (TRANSMIT.txt)' in Run settings",
-        _events("TRANSMIT.txt"),
+        _events(Transmit, "TRANSMIT.txt"),
         _draw_energies,
     ),  # fmt: skip
     _plot(
@@ -478,7 +442,7 @@ CATALOGUE: tuple[PlotDef, ...] = (
         "Ion distributions",
         "Energies of sputtered atoms",
         "needs SPUTTER.txt; enable 'Sputtered atoms (SPUTTER.txt)' in Run settings",
-        _events("SPUTTER.txt"),
+        _events(Sputter, "SPUTTER.txt"),
         _draw_energies,
     ),  # fmt: skip
     _plot(

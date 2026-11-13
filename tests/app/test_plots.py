@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 from srim.app import plots
-from srim.app.plots import CATALOGUE, PLOT_ROW_CAP, missing_reason, plot_data
+from srim.app.plots import _AVAILABLE, CATALOGUE, PLOT_ROW_CAP, missing_reason, plot_data
 from srim.beam.exact import sample_ions, write_trim_dat
 from srim.output import Results
 from srim.output.range3d import Range3D
@@ -40,6 +40,10 @@ def ax():
     from matplotlib.figure import Figure
 
     return Figure().add_subplot()
+
+
+#: the stray recoil lines of test_files/SiC-C are a library warning; these tests read that file
+SIC_C_WARNING = pytest.mark.filterwarnings("ignore:COLLISON.txt:UserWarning")
 
 
 def beam_spec(*, energy=None, angle=7.0, number_ions=200, mode="exact"):
@@ -101,6 +105,10 @@ def test_the_catalogue_has_the_planned_plots_in_order():
         ("Beam", "beam_energy", "Sampled energies over the distribution"),
         ("Beam", "beam_angle", "Sampled angles over the distribution"),
     ]
+
+
+def test_every_plot_has_an_availability_check():
+    assert set(_AVAILABLE) == {plot.key for plot in CATALOGUE}
 
 
 def test_the_row_cap_is_200_000():
@@ -172,16 +180,22 @@ def test_a_stream_of_exactly_the_cap_is_not_capped(monkeypatch):
     assert "capped" not in df.attrs
 
 
-def test_the_per_ion_plots_do_not_parse_their_whole_file(monkeypatch):
-    def refuse(self, *args, **kwargs):
-        raise AssertionError("the whole file must not be parsed for a plot")
+def test_the_per_ion_plots_read_through_the_parser_with_the_cap(monkeypatch):
+    # the library parser does the reading, and it is asked for no more than the row cap
+    asked = []
+    original = Range3D.__init__
 
-    count = Results(str(FIXTURES / "1")).range3d.num_ions
-    monkeypatch.setattr(Range3D, "__init__", refuse)
+    def record(self, directory, filename="RANGE_3D.txt", max_rows=None):
+        asked.append(max_rows)
+        original(self, directory, filename, max_rows=max_rows)
+
+    monkeypatch.setattr(Range3D, "__init__", record)
     df = plot_data(BY_KEY["stopping_map"], Results(str(FIXTURES / "1")))
-    assert len(df) == count
+    assert asked == [PLOT_ROW_CAP]
+    assert len(df) == Results(str(FIXTURES / "1")).range3d.num_ions
 
 
+@SIC_C_WARNING
 def test_collision_map_is_capped_at_the_row_cap(monkeypatch):
     monkeypatch.setattr(plots, "PLOT_ROW_CAP", 100)
     results = Results(str(FIXTURES / "SiC-C"))
@@ -192,6 +206,7 @@ def test_collision_map_is_capped_at_the_row_cap(monkeypatch):
     assert {"depth_nm", "lateral_nm"} <= set(df.columns)
 
 
+@SIC_C_WARNING
 def test_collision_map_without_the_cap_is_at_most_the_cap():
     df = plot_data(BY_KEY["collision_map"], Results(str(FIXTURES / "SiC-C")))
     assert 0 < len(df) <= PLOT_ROW_CAP
@@ -209,6 +224,7 @@ def test_event_plots_read_their_fixture(key, folder):
     assert {"energy_eV", "atomic_number", "ion"} <= set(df.columns)
 
 
+@SIC_C_WARNING
 def test_every_drawable_plot_draws_on_an_agg_figure(ax):
     for results in (Results(str(FIXTURES / "1")), Results(str(FIXTURES / "SiC-C"))):
         for plot in CATALOGUE:
@@ -231,6 +247,7 @@ def test_event_plots_draw_on_their_fixtures(ax):
         assert fresh.get_title() == plot.title
 
 
+@SIC_C_WARNING
 def test_a_capped_frame_says_so_in_the_title(ax, monkeypatch):
     monkeypatch.setattr(plots, "PLOT_ROW_CAP", 100)
     df = plot_data(BY_KEY["collision_map"], Results(str(FIXTURES / "SiC-C")))
@@ -305,3 +322,36 @@ def test_beam_energy_draws_the_sampled_beam_and_the_density(tmp_path, ax):
     assert ax.get_title() == plot.title
     assert ax.get_xlabel() == "energy_keV"
     assert len(ax.lines) == 1  # the defined density
+
+
+def test_beam_angle_draws_the_sampled_angles(tmp_path, ax):
+    spec = beam_spec(energy=15.0, angle={"uniform": {"low": 5.0, "high": 9.0}})
+    results = beam_results(tmp_path, spec)
+    plot = BY_KEY["beam_angle"]
+    frame = plot_data(plot, results)
+    assert frame["angle_deg"].between(5.0, 9.0).all()
+    plot.draw(frame, ax)
+    assert ax.get_title() == plot.title
+    assert ax.get_xlabel() == "angle_deg"
+    assert len(ax.lines) == 1  # the defined density
+
+
+@SIC_C_WARNING
+def test_every_drawable_plot_draws_an_empty_frame(ax):
+    for results in (Results(str(FIXTURES / "1")), Results(str(FIXTURES / "SiC-C"))):
+        for plot in CATALOGUE:
+            if missing_reason(plot, results) is not None:
+                continue
+            fresh = ax.figure.add_subplot()
+            frame = plot_data(plot, results).iloc[:0]
+            plot.draw(frame, fresh)
+            assert fresh.get_title() == plot.title, plot.key
+
+
+def test_an_empty_beam_frame_draws_the_defined_density(tmp_path, ax):
+    results = beam_results(tmp_path, beam_spec())
+    plot = BY_KEY["beam_energy"]
+    frame = plot_data(plot, results).iloc[:0]
+    assert "density" in frame.attrs
+    plot.draw(frame, ax)
+    assert len(ax.lines) == 1
