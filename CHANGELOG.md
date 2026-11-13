@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The desktop app's run setup can hold a scan: the `scan:` section of a `run.yaml` is opened, kept with undo and saved with the setup (a file without one is written as before), and the setup says what the scan still needs (what to vary, the ions per point).
 - The desktop app has a Scan tab (after Run settings): "Run as a scan" turns a setup into a scan, the parameters to vary take typed values or a range (linear or logarithmic), the ions per point are a fixed number or a precision target, the values to extract are ticked, and the seed and the batch size are set; explicit points and Python extractors of a file are shown and kept.
 - The desktop app's Run menu (and toolbar) starts, pauses and stops a run of the setup: Start (Ctrl+R) saves an unsaved setup first, a long run is offered parallel workers, batches of ions or containers, and the setup is locked while it goes. Quit asks before it stops a run, and a stopped run keeps the points it finished.
+- The desktop app's Progress tab shows a run as it goes: the time elapsed and the time left, how many points are done, running, queued or failed, the workers with their ions per second, a table of the points (sorted by a click on a column heading, with "Open log" for the selected or the last failed point) and the warnings and errors, newest first. It keeps the final state until the next run starts.
 
 ### Fixed
 

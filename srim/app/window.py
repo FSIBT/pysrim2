@@ -24,6 +24,7 @@ from srim.app.document import DocumentModel
 from srim.app.geometry import GeometryTab
 from srim.app.guidance import Guidance, setup_guidance
 from srim.app.parallel_dialog import ParallelDialog
+from srim.app.progress_tab import ProgressTab
 from srim.app.run_control import RunController
 from srim.app.run_settings import RunSettingsTab
 from srim.app.runs import ParallelChoice, parallel_advice, plan_run
@@ -45,7 +46,7 @@ EDITOR_TABS = (
     ("scan", "Scan"),
 )
 #: the tabs that only say they arrive later in 0.12
-PLAIN_TABS = ("Progress", "Results")
+PLAIN_TABS = ("Results",)
 #: the question Quit asks while a run goes
 STOP_AND_QUIT_TEXT = "A run is going. Stop it and quit?"
 #: how long Quit waits for a stopped run to end before the window closes anyway
@@ -106,6 +107,11 @@ class MainWindow(QMainWindow):
 
         self.theme_actions: dict[str, object] = {}
         self._build_menus()
+        # The Progress tab shows the run and uses the Run actions as its buttons.
+        self.progress = ProgressTab(self.run, self.pause_action, self.stop_action, self)
+        self.tabs.insertTab(
+            self.tabs.indexOf(self.plain_tabs["Results"]), self.progress, "Progress"
+        )
 
         self.run.started.connect(self._on_run_started)
         self.run.finished.connect(self._on_run_ended)
@@ -274,7 +280,7 @@ class MainWindow(QMainWindow):
 
     def _on_run_started(self) -> None:
         self._update_run_actions()
-        self.tabs.setCurrentWidget(self.plain_tabs["Progress"])
+        self.tabs.setCurrentWidget(self.progress)
 
     def _on_run_ended(self, _result=None) -> None:
         self._update_run_actions()
