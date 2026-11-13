@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -67,6 +68,8 @@ class PlotCanvas(QWidget):
         self.toolbar = NavigationToolbar2QT(self.canvas, self)
         self.message = QLabel(self)
         self.message.setWordWrap(True)
+        # An empty or one-line message takes its height only: the spare height goes to the canvas.
+        self.message.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
 
         self.log_x = QCheckBox("Log x", self)
         self.log_y = QCheckBox("Log y", self)
@@ -88,7 +91,7 @@ class PlotCanvas(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.message)
         layout.addWidget(self.toolbar)
-        layout.addWidget(self.canvas)
+        layout.addWidget(self.canvas, 1)
         layout.addLayout(controls)
 
         self._generation = 0

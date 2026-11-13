@@ -176,7 +176,9 @@ def grab_results(out: Path, key: str = "ionization") -> Path:
 
             def drawn() -> bool:
                 axes = canvas.figure.axes
-                return canvas.message.text() == "" and bool(axes) and axes[0].get_title() == plot.title
+                return (
+                    canvas.message.text() == "" and bool(axes) and axes[0].get_title() == plot.title
+                )
 
             _wait(app, drawn, f"the {key} plot")
             return _grab(app, window, out)

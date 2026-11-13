@@ -83,6 +83,17 @@ def test_a_plot_that_cannot_be_drawn_says_what_it_needs(qtbot, canvas, results):
     assert not canvas.copy_button.isEnabled()
 
 
+def test_the_canvas_takes_the_spare_height_and_the_empty_message_none(qtbot, canvas, results):
+    # The message is empty while a plot is shown; the figure must take the spare height.
+    canvas.resize(800, 900)
+    canvas.show()
+    with qtbot.waitSignal(canvas.drawn, timeout=10000):
+        canvas.show_plot(BY_KEY["ionization"], results)
+    qtbot.waitUntil(lambda: canvas.canvas.height() > 0)
+    assert canvas.message.text() == ""
+    assert canvas.canvas.height() > 10 * canvas.message.height()
+
+
 def test_copy_data_puts_the_csv_of_the_plot_on_the_clipboard(qtbot, canvas, results):
     with qtbot.waitSignal(canvas.drawn, timeout=10000):
         canvas.show_plot(BY_KEY["ionization"], results)

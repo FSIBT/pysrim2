@@ -29,8 +29,13 @@ SETUP = {
             "density_g_cm3": 19.3,
             "phase": 0,
             "elements": [
-                {"symbol": "Au", "stoich": 1.0, "displacement_eV": 25.0, "lattice_eV": 3.0,
-                 "surface_eV": 3.0}
+                {
+                    "symbol": "Au",
+                    "stoich": 1.0,
+                    "displacement_eV": 25.0,
+                    "lattice_eV": 3.0,
+                    "surface_eV": 3.0,
+                }
             ],
         },
         {
@@ -39,8 +44,13 @@ SETUP = {
             "density_g_cm3": 2.33,
             "phase": 0,
             "elements": [
-                {"symbol": "Si", "stoich": 1.0, "displacement_eV": 15.0, "lattice_eV": 2.0,
-                 "surface_eV": 4.7}
+                {
+                    "symbol": "Si",
+                    "stoich": 1.0,
+                    "displacement_eV": 15.0,
+                    "lattice_eV": 2.0,
+                    "surface_eV": 4.7,
+                }
             ],
         },
     ],
