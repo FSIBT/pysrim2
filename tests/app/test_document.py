@@ -352,17 +352,35 @@ def test_a_scan_file_opens_and_saves_to_the_same_setup_and_scan(tmp_path, boron_
     assert Scan.from_yaml(new).to_dict() == Scan.from_yaml(old).to_dict()
 
 
-def test_a_keep_seed_scan_file_has_no_blocking_problem_and_round_trips(tmp_path, boron_data):
-    old = write_scan_file(
-        tmp_path / "old" / "run.yaml", boron_data, SCAN_FILES["keep_seed_one_point"]
-    )
+def test_a_keep_seed_single_run_file_opens_as_a_plain_setup_and_round_trips_as_one(
+    tmp_path, boron_data
+):
+    wrapper = {"ions": 100, "seed": boron_data["seed"], "keep_seed": True}
+    old = write_scan_file(tmp_path / "old" / "run.yaml", boron_data, wrapper)
     doc = DocumentModel()
     doc.open(old)
+    assert "_scan" not in doc.doc  # the wrapper of a single run is not a scan
     assert not [problem for problem in doc.problems if problem.blocking]
     new = fresh_folder(tmp_path) / "run.yaml"
     doc.save(new)
     assert RunSpec.from_yaml(new).to_dict() == RunSpec.from_yaml(old).to_dict()
-    assert Scan.from_yaml(new).to_dict() == Scan.from_yaml(old).to_dict()
+    assert "scan" not in yaml.safe_load(new.read_text(encoding="utf-8"))
+
+
+def test_a_scan_with_a_grid_opens_as_a_scan_and_round_trips_its_grid(tmp_path, boron_data):
+    from srim.app.scan_model import new_scan
+
+    scan = new_scan()
+    scan["grid"] = {"ion.energy_keV": [10.0, 20.0]}
+    scan["ions"] = 50
+    doc = DocumentModel()
+    doc.edit(lambda d: d.update(deepcopy(boron_data), _scan=scan))
+    first = fresh_folder(tmp_path) / "run.yaml"
+    doc.save(first)
+    reopened = DocumentModel()
+    reopened.open(first)
+    assert reopened.doc["_scan"]["grid"] == {"ion.energy_keV": [10.0, 20.0]}
+    assert reopened.doc["_scan"]["ions"] == 50
 
 
 def test_a_scan_file_with_a_python_extractor_is_written_back_as_a_reference(tmp_path, boron_data):
@@ -425,3 +443,12 @@ def test_a_setup_in_a_run_folder_is_in_the_run_folder_until_it_is_saved_elsewher
     assert not doc.in_run_folder
     doc.new()
     assert not doc.in_run_folder
+
+
+def test_a_single_point_scan_with_its_own_seed_stays_a_scan(tmp_path, boron_data):
+    old = write_scan_file(
+        tmp_path / "old" / "run.yaml", boron_data, SCAN_FILES["keep_seed_one_point"]
+    )
+    doc = DocumentModel()
+    doc.open(old)
+    assert doc.doc["_scan"]["keep_seed"] is True  # its seed differs from the setup's: a scan

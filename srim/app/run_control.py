@@ -228,8 +228,15 @@ class RunController(QObject):
             generation == self._load_generation and not self._running and not self._window.closing
         )
 
+    def _release_load(self, generation: int) -> None:
+        # A read that is dropped (the window closed) releases the folder, unless a newer load
+        # owns the flag now. A run that started has already cleared it.
+        if generation == self._load_generation:
+            self.loading = False
+
     def _loaded(self, generation: int, folder: Path, result, finished: bool, state) -> None:
         if not self._is_current_load(generation):
+            self._release_load(generation)
             return
         self.loading = False
         document = self._window.document
@@ -250,6 +257,7 @@ class RunController(QObject):
 
     def _load_failed(self, generation: int, error: BaseException) -> None:
         if not self._is_current_load(generation):
+            self._release_load(generation)
             return
         self.loading = False
         self.failed.emit(f"The run did not open: {_text(error)}")

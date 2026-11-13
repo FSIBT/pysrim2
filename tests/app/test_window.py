@@ -945,6 +945,7 @@ def test_a_run_folder_read_that_ends_after_the_window_closed_is_ignored(
     done(read())
     assert fresh.run.folder is None
     assert fresh.document.path is None
+    assert not fresh.run.loading  # the dropped read releases the folder
 
 
 def test_an_older_run_folder_read_that_ends_last_is_ignored(
@@ -1035,3 +1036,25 @@ def test_opening_a_run_folders_scan_yaml_as_a_setup_is_not_recorded_as_a_setup(
     fresh.open_setup_file()
     assert fresh.document.in_run_folder
     assert [entry.path for entry in load_recent() if entry.path.endswith("scan.yaml")] == []
+
+
+def test_a_reopened_single_run_is_a_plain_setup_with_the_scan_tab_off(
+    qtbot, tmp_path, write_setup, boron_data, monkeypatch
+):
+    _win, folder = a_run_of(qtbot, tmp_path, write_setup, boron_data)
+    fresh = _open_run(qtbot, monkeypatch, folder)
+    assert "_scan" not in fresh.document.doc
+    assert not fresh.editors["scan"].enabled_box.isChecked()
+
+
+def test_start_after_editing_a_reopened_single_run_runs_the_edited_count(
+    qtbot, tmp_path, write_setup, boron_data, monkeypatch
+):
+    _win, folder = a_run_of(qtbot, tmp_path, write_setup, boron_data)
+    fresh = _open_run(qtbot, monkeypatch, folder)
+    fresh.document.edit(lambda doc: doc.__setitem__("number_ions", 7))
+    _answer_save_dialog(monkeypatch, tmp_path / "edited.yaml", [])
+    with qtbot.waitSignal(fresh.run.finished, timeout=RUN_TIMEOUT):
+        fresh.start_action.trigger()
+    assert fresh.run.result.scan.points()[0].spec.number_ions == 7
+    assert fresh.run.result.scan.points()[0].spec.seed == boron_data["seed"]
