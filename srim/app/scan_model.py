@@ -9,7 +9,6 @@ Nothing here imports Qt. :mod:`srim.app.model` calls :func:`scan_missing` and :f
 from its ``problems``, so this module imports the model's helpers lazily or not at all there.
 """
 
-import math
 from collections.abc import Mapping
 from copy import deepcopy
 from pathlib import Path
@@ -17,8 +16,8 @@ from typing import Any
 
 import yaml
 
-from srim.app.model import layer_label, to_spec
 from srim.app.guidance import Guidance
+from srim.app.model import layer_label, to_spec
 from srim.scan import Precision, Scan
 from srim.scan.spec import _SECTION_KEYS, DEFAULT_EXTRACT, normalise_key
 from srim.spec import SpecError
@@ -154,7 +153,8 @@ def scan_missing(doc: dict) -> list[Guidance]:
     """What the scan still needs from the user (the library is not asked yet)."""
     scan = doc["_scan"]
     out = []
-    if not scan.get("grid") and not scan.get("points"):
+    # a one-point keep_seed scan needs no value to vary: its one point is the base run
+    if not scan.get("keep_seed") and not scan.get("grid") and not scan.get("points"):
         out.append(Guidance("Add a value to vary on the Scan tab", "scan/vary"))
     if scan.get("ions") is None and scan.get("precision") is None:
         out.append(Guidance("Enter the ions per point on the Scan tab", "scan/ions"))

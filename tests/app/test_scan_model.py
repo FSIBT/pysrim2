@@ -174,6 +174,12 @@ def test_an_empty_grid_asks_for_a_value_to_vary():
     ]
 
 
+def test_a_keep_seed_scan_of_one_point_needs_no_value_to_vary():
+    doc = scanned(ions=100, seed=3, keep_seed=True)
+    assert problems(doc) == []
+    assert len(to_scan(doc).points()) == 1
+
+
 def test_missing_ions_asks_for_the_ions_per_point():
     doc = scanned(grid={"ion.energy_keV": [10, 20]})
     assert [(g.text, g.target) for g in problems(doc)] == [

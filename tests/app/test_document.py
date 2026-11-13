@@ -312,6 +312,7 @@ SCAN_FILES = {
         "grid": {"ion.angle_deg": [0, 7]},
         "precision": {"target": "sputter_yield", "rel": 0.05, "min_ions": 100, "max_ions": 500},
     },
+    "keep_seed_one_point": {"ions": 100, "seed": 3, "keep_seed": True},
     "batches_and_seed": {
         "grid": {"ion.energy_keV": [10, 20]},
         "ions": 1000,
@@ -345,6 +346,19 @@ def test_a_scan_file_opens_and_saves_to_the_same_setup_and_scan(tmp_path, boron_
     old = write_scan_file(tmp_path / "old" / "run.yaml", boron_data, SCAN_FILES[name])
     doc = DocumentModel()
     doc.open(old)
+    new = fresh_folder(tmp_path) / "run.yaml"
+    doc.save(new)
+    assert RunSpec.from_yaml(new).to_dict() == RunSpec.from_yaml(old).to_dict()
+    assert Scan.from_yaml(new).to_dict() == Scan.from_yaml(old).to_dict()
+
+
+def test_a_keep_seed_scan_file_has_no_blocking_problem_and_round_trips(tmp_path, boron_data):
+    old = write_scan_file(
+        tmp_path / "old" / "run.yaml", boron_data, SCAN_FILES["keep_seed_one_point"]
+    )
+    doc = DocumentModel()
+    doc.open(old)
+    assert not [problem for problem in doc.problems if problem.blocking]
     new = fresh_folder(tmp_path) / "run.yaml"
     doc.save(new)
     assert RunSpec.from_yaml(new).to_dict() == RunSpec.from_yaml(old).to_dict()
