@@ -11,7 +11,9 @@ palette, as in :mod:`srim.app.beam_plot`, and the palette is taken again when it
 matplotlib is imported here only; this is a Qt module and the library never imports it.
 """
 
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
 from matplotlib.figure import Figure
@@ -92,7 +94,10 @@ class PlotCanvas(QWidget):
         self._generation = 0
         self._busy = False
         self._disposed = False
-        self._plot: PlotDef | None = None
+        #: the key of the view on the canvas (a plot's key, or a scan view's key)
+        self._key: str | None = None
+        self._draw_fn: Callable[[Any, Any], None] | None = None
+        self._main_axes = None
         self._frame = None
         self._set_data_actions(False)
 
@@ -105,18 +110,33 @@ class PlotCanvas(QWidget):
         data arrives. The same plot (a new point, say) keeps the figure and the buttons until the
         new data arrives. A request made before the last one has finished is dropped when it ends.
         """
-        keep = self._frame is not None and self._plot is not None and self._plot.key == plot.key
+        self.show_job(plot.key, lambda: plot_data(plot, results), plot.draw)
+
+    def show_job(
+        self,
+        key: str,
+        load: Callable[[], Any],
+        draw: Callable[[Any, Any], None],
+    ) -> None:
+        """Draw the frame that ``load()`` returns (read in a thread) with ``draw(frame, ax)``.
+
+        ``key`` names the view (a plot's key, or a scan view's): the same key keeps the figure and
+        the buttons until the new frame arrives. ``load`` raising ``ValueError`` shows its message
+        instead of a figure. The same rules as :meth:`show_plot` hold.
+        """
+        keep = self._frame is not None and self._key == key
         self._generation += 1
         generation = self._generation
-        self._plot = plot
+        self._key = key
+        self._draw_fn = draw
         self._busy = True
         if not keep:
             self._frame = None
             self._set_data_actions(False)
             self.message.setText(DRAWING_TEXT)
         run_in_thread(
-            lambda: plot_data(plot, results),
-            lambda frame: self._drawn(generation, plot, frame),
+            load,
+            lambda frame: self._drawn(generation, frame),
             lambda error: self._failed(generation, error),
         )
 
@@ -127,16 +147,27 @@ class PlotCanvas(QWidget):
             return
         self.show_plot(plot, results)
 
+    def refresh_job(
+        self,
+        key: str,
+        load: Callable[[], Any],
+        draw: Callable[[Any, Any], None],
+    ) -> None:
+        """:meth:`show_job` again, unless a request is outstanding (see :meth:`refresh`)."""
+        if self._busy:
+            return
+        self.show_job(key, load, draw)
+
     def dispose(self) -> None:
         """The canvas's window has closed: a late result is ignored from now on."""
         self._disposed = True
 
-    def _drawn(self, generation: int, plot: PlotDef, frame) -> None:
+    def _drawn(self, generation: int, frame) -> None:
         if self._disposed or generation != self._generation:
             return
         self._busy = False
         self._frame = frame
-        self._draw(plot, frame)
+        self._draw(frame)
         self.message.setText("")
         self._set_data_actions(True)
         self.drawn.emit()
@@ -152,13 +183,14 @@ class PlotCanvas(QWidget):
         self._set_data_actions(False)
         self.failed.emit(text)
 
-    def _draw(self, plot: PlotDef, frame) -> None:
+    def _draw(self, frame) -> None:
         foreground, background, accent = palette_colours(self)
         self.figure.clear()
         self.figure.set_facecolor(background)
         ax = self.figure.add_subplot()
+        self._main_axes = ax
         ax.set_prop_cycle(color=[accent, foreground])
-        plot.draw(frame, ax)
+        self._draw_fn(frame, ax)
         ax.set_facecolor(background)
         for spine in ax.spines.values():
             spine.set_color(foreground)
@@ -175,8 +207,9 @@ class PlotCanvas(QWidget):
         self.canvas.draw_idle()
 
     def _apply_scales(self, *_checked) -> None:
-        """The log or linear scales of the boxes, on the figure's axes."""
-        for ax in self.figure.axes:
+        """The log or linear scales of the boxes, on the drawn axes (not a colour bar's)."""
+        if self._main_axes is not None:
+            ax = self._main_axes
             ax.set_xscale("log" if self.log_x.isChecked() else "linear")
             ax.set_yscale("log" if self.log_y.isChecked() else "linear")
         self.canvas.draw_idle()
@@ -188,7 +221,7 @@ class PlotCanvas(QWidget):
     def changeEvent(self, event):  # noqa: N802 (Qt's name)
         super().changeEvent(event)
         if event.type() == QEvent.Type.PaletteChange and self._frame is not None:
-            self._draw(self._plot, self._frame)
+            self._draw(self._frame)
 
     # --- data ------------------------------------------------------------------------
 
@@ -202,7 +235,7 @@ class PlotCanvas(QWidget):
         """Save the data of the plot on the screen as a CSV file, chosen in a dialog."""
         if self._frame is None:
             return
-        default = f"{self._plot.key}.csv"
+        default = f"{self._key}.csv"
         path, _ = QFileDialog.getSaveFileName(self, "Save plot data", default, SAVE_FILTER)
         if not path:
             return

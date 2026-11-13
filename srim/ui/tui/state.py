@@ -124,6 +124,8 @@ class PointRow:
     reached: bool | None = None
     worker: int | None = None
     cached_units: int = 0
+    #: the batch indices finished so far (a precision point's batches, as they finish)
+    batches: list = field(default_factory=list)
 
 
 @dataclass
@@ -283,6 +285,8 @@ class ScanState:
             row.values[f"{name}_err"] = err
         row.planned = event.ions
         row.reached = self._reached(row.values)
+        if event.batch not in row.batches:
+            row.batches.append(event.batch)
         self._note_values(event.value_estimates)
 
     def _on_failed(self, event):

@@ -12,7 +12,7 @@ pytest.importorskip("pytestqt")
 
 from copy import deepcopy  # noqa: E402
 
-from PySide6.QtCore import QObject, Signal  # noqa: E402
+from PySide6.QtCore import QObject, Qt, Signal  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 from run_folders import DONE, finished_scan  # noqa: E402
 
@@ -81,9 +81,9 @@ def scan_of(document, grid=None):
     return Scan(base, grid=grid, seed=7)
 
 
-def finish(run, document, folder, scan, outcomes):
+def finish(run, document, folder, scan, outcomes, values=None):
     """The run ends with a result: the controller's attributes, then its ``finished`` signal."""
-    result = finished_scan(folder, scan, outcomes)
+    result = finished_scan(folder, scan, outcomes, values)
     run.result = result
     run.folder = folder
     run.snapshot = deepcopy(document.doc)
@@ -305,3 +305,88 @@ def test_the_samples_of_a_finished_exact_run_reach_the_beam_tab(
     qtbot.waitUntil(lambda: len(beam.plots["energy_keV"].axes.containers) == 1, timeout=10000)
     window.document.edit(lambda doc: doc.update(number_ions=300))
     assert len(beam.plots["energy_keV"].axes.containers) == 0
+
+
+SUMMARY_KEY = "scan:summary"
+OVERLAY_KEY = "scan:overlay:ionization"
+CURVE_NOTE = "Showing 12 of 20 curves; use the filter to choose"
+
+
+def test_a_two_parameter_scan_shows_the_scan_group_and_a_single_run_hides_it(
+    qtbot, tab, run, document, folder
+):
+    grid = {"ion.energy_keV": [10.0, 20.0], "ion.angle_deg": [5.0, 7.0]}
+    finish(run, document, folder, scan_of(document, grid=grid), [DONE] * 4)
+    group = tab.item_for(SUMMARY_KEY).parent()
+    assert group.text(0) == "Scan"
+    assert not group.isHidden()
+    assert tab.item_for(OVERLAY_KEY).parent() is group
+
+
+def test_a_single_run_hides_the_scan_group(qtbot, tab, run, document, folder):
+    finish(run, document, folder, scan_of(document), [DONE])
+    assert tab.item_for(SUMMARY_KEY).parent().isHidden()
+
+
+def test_the_summary_redraws_when_the_colour_changes(qtbot, tab, run, document, folder):
+    grid = {"ion.energy_keV": [10.0, 20.0], "ion.angle_deg": [5.0, 7.0]}
+    scan = scan_of(document, grid=grid)
+    values = [
+        {"depth_nm": p.params["ion.energy_keV"] / 10 + p.params["ion.angle_deg"]}
+        for p in scan.points()
+    ]
+    finish(run, document, folder, scan, [DONE] * 4, values)
+    tab.show()
+    with qtbot.waitSignal(tab.canvas.drawn, timeout=10000):
+        tab.plot_list.setCurrentItem(tab.item_for(SUMMARY_KEY))
+    assert tab.summary_bar.isVisibleTo(tab)
+    assert tab.summary_x.currentText() == "ion.energy_keV"
+    assert tab.summary_colour.currentText() == "ion.angle_deg"
+    assert len(tab.canvas.figure.axes) == 2  # the colour bar of the numeric colour
+    with qtbot.waitSignal(tab.canvas.drawn, timeout=10000):
+        tab.summary_colour.setCurrentText("none")
+    assert len(tab.canvas.figure.axes) == 1
+    assert tab.summary_y.currentText() == "depth_nm"
+
+
+def test_twenty_checked_points_draw_twelve_curves_and_say_so(qtbot, tab, run, document, folder):
+    grid = {"ion.energy_keV": [float(e) for e in range(10, 30)]}
+    finish(run, document, folder, scan_of(document, grid=grid), [DONE] * 20)
+    tab.show()
+    with qtbot.waitSignal(tab.canvas.drawn, timeout=10000):
+        tab.plot_list.setCurrentItem(tab.item_for(OVERLAY_KEY))
+    assert tab.overlay_points.count() == 20
+    assert tab.overlay_note.text() == ""  # the first twelve are checked by default
+    for row in range(tab.overlay_points.count()):
+        tab.overlay_points.item(row).setCheckState(Qt.CheckState.Checked)
+    assert tab.overlay_note.text() == CURVE_NOTE
+    qtbot.waitUntil(
+        lambda: (
+            len(tab.canvas.figure.axes) == 1
+            and len(tab.canvas.figure.axes[0].lines) == 12
+            and tab.canvas.message.text() == ""
+        ),
+        timeout=10000,
+    )
+
+
+def test_the_filter_checks_the_matching_points_and_a_bad_one_says_why(
+    qtbot, tab, run, document, folder
+):
+    grid = {"ion.energy_keV": [10.0, 20.0, 30.0]}
+    finish(run, document, folder, scan_of(document, grid=grid), [DONE] * 3)
+    tab.show()
+    with qtbot.waitSignal(tab.canvas.drawn, timeout=10000):
+        tab.plot_list.setCurrentItem(tab.item_for(OVERLAY_KEY))
+    tab.overlay_filter.setText("`ion.energy_keV` > 15")
+    tab.overlay_filter.returnPressed.emit()
+    checked = [
+        tab.overlay_points.item(row).text()
+        for row in range(tab.overlay_points.count())
+        if tab.overlay_points.item(row).checkState() == Qt.CheckState.Checked
+    ]
+    assert checked == ["ion.energy_keV=20.0", "ion.energy_keV=30.0"]
+    tab.overlay_filter.setText("`no such column` >")
+    tab.overlay_filter.returnPressed.emit()
+    assert tab.overlay_status.isVisibleTo(tab)
+    assert tab.overlay_status.text()
