@@ -16,6 +16,13 @@ from ._common import (
     symbol_regex,
 )
 
+#: the rule above the column names of RANGE_3D.txt (its last header line)
+_HEADER_END = re.compile(rb"-+(?:[ \t]+-+)+[ \t]*")
+#: an ion line: the 7-digit ion number, then depth, Y and Z
+_ROW = re.compile(
+    rb"[ \t]*(\d{7})" + (rb"[ \t]+(" + double_regex.encode() + rb")") * 3 + rb"[ \t]*"
+)
+
 
 class Range3D(SRIM_Output):
     """``RANGE_3D.txt`` Final position of every ion (needs ``ranges=1`` in TRIM)
@@ -26,6 +33,9 @@ class Range3D(SRIM_Output):
          directory of calculation
     filename : :obj:`str`, optional
          filename for Range3D. Default ``RANGE_3D.txt``
+    max_rows : :obj:`int`, optional
+         read at most this many ions (the first ones). Default ``None``: all of them. Check
+         :attr:`truncated` to see whether ions were left out.
 
     Attributes
     ----------
@@ -43,19 +53,19 @@ class Range3D(SRIM_Output):
     files.
     """
 
-    def __init__(self, directory, filename="RANGE_3D.txt"):
+    def __init__(self, directory, filename="RANGE_3D.txt", max_rows=None):
         path = os.path.join(directory, filename)
-        number = double_regex.encode()
-        row = re.compile(rb"[ \t]*(\d{7})" + (rb"[ \t]+(" + number + rb")") * 3 + rb"[ \t]*")
-        header, arrays = _read_numeric_table(
+        header, arrays, truncated = _read_numeric_table(
             path,
-            re.compile(rb"-+(?:[ \t]+-+)+[ \t]*"),
-            row,
+            _HEADER_END,
+            _ROW,
             [(0, "i"), (1, "f"), (2, "f"), (3, "f")],
             "RANGE_3D",
+            max_rows=max_rows,
         )
         self._source = path
         self._ion = None
+        self._truncated = truncated
         if arrays is None and not header:
             warnings.warn(f"{filename} is empty", stacklevel=2)
             self._ion_numbers = np.array([], dtype=int)
@@ -69,7 +79,8 @@ class Range3D(SRIM_Output):
         )
         if not match:
             raise SRIMOutputParseError("unable to extract ion from file")
-        if arrays is None or len(arrays[0]) == 0:
+        # a capped read of no rows is a valid parse: the header is there
+        if arrays is None or (len(arrays[0]) == 0 and max_rows is None):
             raise SRIMOutputParseError("unable to extract ion positions from file")
 
         self._ion = Ion(match.group(1).decode("ascii"), 1000.0 * _to_float(match.group(2)))

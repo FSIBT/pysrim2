@@ -91,7 +91,9 @@ def _element_names(names, count, output=None):
 _MAX_HEADER_LINES = 200
 
 
-def _read_numeric_table(path, header_end, row_regex, columns, name, chunk_rows=50000):
+def _read_numeric_table(
+    path, header_end, row_regex, columns, name, chunk_rows=50000, max_rows=None
+):
     """Read a SRIM table in one streaming pass, without holding the file in memory.
 
     Parameters
@@ -101,12 +103,14 @@ def _read_numeric_table(path, header_end, row_regex, columns, name, chunk_rows=5
     row_regex : compiled regex matching a whole (stripped) data line
     columns : list of ``(group index, "i" or "f")``; the arrays returned, in this order
     name : used in the warning about data lines that do not match ``row_regex``
+    max_rows : read at most this many data rows (the first ones); ``None`` reads all
 
     Returns
     -------
-    ``(header, arrays)``. ``header`` is the file text up to and including the last header
-    line (the first lines if there is none). ``arrays`` is ``None`` when the file is empty
-    or the header end was not found.
+    ``(header, arrays, truncated)``. ``header`` is the file text up to and including the last
+    header line (the first lines if there is none). ``arrays`` is ``None`` when the file is
+    empty or the header end was not found. ``truncated`` is True only when ``max_rows`` was
+    reached and a further data row existed (so rows were left out).
     Non-blank lines that do not match are skipped with one warning; a final line without a
     line break (SRIM may truncate it) is parsed if it matches, otherwise ignored silently.
     """
@@ -114,9 +118,11 @@ def _read_numeric_table(path, header_end, row_regex, columns, name, chunk_rows=5
     found = False
     bad = 0
     first_bad = None
+    truncated = False
 
     def rows():
-        nonlocal found, bad, first_bad
+        nonlocal found, bad, first_bad, truncated
+        count = 0
         for raw in iter_lines(path, None, keepends=True):
             line = raw.rstrip(b"\r\n")
             if not found:
@@ -128,6 +134,10 @@ def _read_numeric_table(path, header_end, row_regex, columns, name, chunk_rows=5
                 continue
             match = row_regex.fullmatch(line)
             if match:
+                if max_rows is not None and count >= max_rows:
+                    truncated = True
+                    return
+                count += 1
                 groups = match.groups()
                 yield [
                     int(groups[i]) if kind == "i" else _to_float(_squeeze(groups[i]))
@@ -142,14 +152,14 @@ def _read_numeric_table(path, header_end, row_regex, columns, name, chunk_rows=5
     frame = concat_chunks(iter_row_chunks(rows(), names, dtypes, chunk_rows), names, dtypes)
     header = b"".join(header)
     if not found:
-        return header, None
+        return header, None, False
     if bad:
         warnings.warn(
             f"{bad} line(s) in the {name} data section could not be parsed and were skipped "
             f"(first: {first_bad.decode('latin-1')!r})",
             stacklevel=4,
         )
-    return header, [frame[n].to_numpy() for n in names]
+    return header, [frame[n].to_numpy() for n in names], truncated
 
 
 def _squeeze(token):
@@ -172,6 +182,12 @@ def _find_output(directory, filename):
 
 class SRIM_Output:
     _source = None
+    _truncated = False
+
+    @property
+    def truncated(self):
+        """True when the parser was given a ``max_rows`` and left rows of the file out"""
+        return self._truncated
 
     def _dataframe_columns(self):
         """Ordered ``(column name, array)`` pairs for :attr:`df`; set by subclasses."""

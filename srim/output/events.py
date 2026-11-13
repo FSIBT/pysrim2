@@ -28,16 +28,32 @@ def _row_regex(*fields):
     return re.compile(rb"[ \t]*" + _WS.join(b"(" + f + b")" for f in fields) + rb"[ \t]*")
 
 
-def _read_or_empty(path, header_end, row, columns, name):
-    """``(header, arrays)`` from :func:`_read_numeric_table`; an empty file gives empty arrays and a
-    warning, a file without the table header raises :class:`SRIMOutputParseError`."""
-    header, arrays = _read_numeric_table(path, header_end, row, columns, name)
+def _read_or_empty(path, header_end, row, columns, name, max_rows=None):
+    """``(header, arrays, truncated)`` from :func:`_read_numeric_table`; an empty file gives
+    empty arrays and a warning, a file without the table header raises
+    :class:`SRIMOutputParseError`."""
+    header, arrays, truncated = _read_numeric_table(
+        path, header_end, row, columns, name, max_rows=max_rows
+    )
     if arrays is None:
         if header:
             raise SRIMOutputParseError(f"unable to extract table from {name}")
         warnings.warn(f"{name} is empty", stacklevel=3)
         arrays = _empty_arrays(columns)
-    return header, arrays
+    return header, arrays, truncated
+
+
+#: the rule above the column names of EXYZ.txt (its last header line)
+_EXYZ_HEADER_END = re.compile(rb"-+(?:[ \t]+-+)+[ \t]*")
+#: an EXYZ.txt line: ion number, energy [keV], depth, Y, Z, stopping, recoil energy loss
+_EXYZ_ROW = _row_regex(rb"\d+", *[_NUMBER] * 6)
+#: the last header line of the event files (TRIM.DAT layout: ``Numb  Numb  ...``)
+_EVENT_HEADER_END = re.compile(rb"[ \t]*Numb[ \t]+Numb.*")
+# SRIM writes the depth with an integer mantissa and an exponent (``5020011E-04``) and
+# separates a minus sign from the digits (``-  6202433E-06``)
+_EVENT_FIELDS = [rb"[SBT]", rb"\d+", rb"\d+", _NUMBER, rb"-?[ \t]*" + _NUMBER] + [_NUMBER] * 5
+#: an event line: type letter, ion number, Z, energy, depth, Y, Z and the direction cosines
+_EVENT_ROW = _row_regex(*_EVENT_FIELDS)
 
 
 def _ion_energy_eV(value, unit):
@@ -69,15 +85,17 @@ class EXYZ(SRIM_Output):
           - ``last_recoil_energy_eV``: energy lost to the last recoil [eV]
     """
 
-    def __init__(self, directory, filename="EXYZ.txt"):
+    def __init__(self, directory, filename="EXYZ.txt", max_rows=None):
         path = os.path.join(directory, filename)
-        header, arrays = _read_or_empty(
+        header, arrays, truncated = _read_or_empty(
             path,
-            re.compile(rb"-+(?:[ \t]+-+)+[ \t]*"),
-            _row_regex(rb"\d+", *[_NUMBER] * 6),
+            _EXYZ_HEADER_END,
+            _EXYZ_ROW,
             [(0, "i")] + [(j, "f") for j in range(1, 7)],
             filename,
+            max_rows=max_rows,
         )
+        self._truncated = truncated
         self._ion = None
         self._interval = float("nan")
         if header:
@@ -187,19 +205,18 @@ class _EventFile(SRIM_Output):
 
     _filename = None
 
-    def __init__(self, directory, filename=None):
+    def __init__(self, directory, filename=None, max_rows=None):
         filename = filename or self._filename
         path = os.path.join(directory, filename)
-        # SRIM writes the depth with an integer mantissa and an exponent (``5020011E-04``) and
-        # separates a minus sign from the digits (``-  6202433E-06``)
-        fields = [rb"[SBT]", rb"\d+", rb"\d+", _NUMBER, rb"-?[ \t]*" + _NUMBER] + [_NUMBER] * 5
-        header, arrays = _read_or_empty(
+        header, arrays, truncated = _read_or_empty(
             path,
-            re.compile(rb"[ \t]*Numb[ \t]+Numb.*"),
-            _row_regex(*fields),
+            _EVENT_HEADER_END,
+            _EVENT_ROW,
             [(1, "i"), (2, "i")] + [(j, "f") for j in range(3, 10)],
             filename,
+            max_rows=max_rows,
         )
+        self._truncated = truncated
         self._ion = None
         if header:
             match = re.search(

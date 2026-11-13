@@ -131,6 +131,8 @@ with `num_ions` the number of rows (SRIM can leave out a few ions).
 | `y_A` | A | final lateral position y |
 | `z_A` | A | final lateral position z |
 
+Pass `max_rows=n` to read only the first `n` rows (for example `Range3D(folder, max_rows=n)`, or `Backscat(folder, max_rows=n)` for the event files); `truncated` is then True when rows were left out. The default reads every row.
+
 ### `exyz` (EXYZ.txt)
 
 Energy, position and stopping of each ion along its path, sampled every time
