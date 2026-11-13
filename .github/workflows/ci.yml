@@ -55,7 +55,10 @@ jobs:
         env:
           PYTHON_VERSION: ${{ matrix.python }}
         run: |
-          uv run --python "$PYTHON_VERSION" pytest --cov=srim --cov-report=xml --cov-fail-under=70
+          # PySide6 has no wheels for 3.15 yet, so the Qt modules of the app cannot run there
+          fail_under=70
+          if [ "$PYTHON_VERSION" = "3.15" ]; then fail_under=65; fi
+          uv run --python "$PYTHON_VERSION" pytest --cov=srim --cov-report=xml --cov-fail-under="$fail_under"
 
   build:
     name: build
