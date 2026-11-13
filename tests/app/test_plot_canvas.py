@@ -149,3 +149,51 @@ def test_a_closed_pop_out_says_so(qtbot):
     window.show()
     with qtbot.waitSignal(window.closed, timeout=2000):
         window.close()
+
+
+def test_a_refresh_is_skipped_while_a_request_is_outstanding(canvas, results, captured):
+    canvas.show_plot(BY_KEY["ionization"], results)
+    assert len(captured) == 1
+    canvas.refresh(BY_KEY["ionization"], results)  # still outstanding: nothing new starts
+    assert len(captured) == 1
+    fn, done, _ = captured[0]
+    done(fn())
+    canvas.refresh(BY_KEY["ionization"], results)  # nothing outstanding: the refresh starts
+    assert len(captured) == 2
+
+
+def test_a_refresh_keeps_the_figure_and_buttons_until_the_new_data_arrives(
+    qtbot, canvas, results, captured
+):
+    canvas.show_plot(BY_KEY["ionization"], results)
+    fn, done, _ = captured[0]
+    done(fn())
+    assert canvas.copy_button.isEnabled()
+    canvas.refresh(BY_KEY["ionization"], results)
+    assert canvas.message.text() == ""  # no "Drawing…" flicker on a refresh
+    assert canvas.copy_button.isEnabled()
+    assert len(canvas.figure.axes) == 1
+    fn, done, _ = captured[-1]
+    with qtbot.waitSignal(canvas.drawn):
+        done(fn())
+
+
+def test_a_newly_chosen_plot_says_drawing_and_disables_the_buttons(canvas, results, captured):
+    canvas.show_plot(BY_KEY["ionization"], results)
+    fn, done, _ = captured[0]
+    done(fn())
+    canvas.show_plot(BY_KEY["vacancies"], results)
+    assert canvas.message.text() == "Drawing…"
+    assert not canvas.copy_button.isEnabled()
+
+
+def test_a_late_result_after_the_window_closed_is_ignored(qtbot, results, captured):
+    window = PlotWindow(BY_KEY["vacancies"])
+    qtbot.addWidget(window)
+    window.show()
+    window.canvas.show_plot(BY_KEY["vacancies"], results)
+    fn, done, failed = captured[-1]
+    window.close()
+    with qtbot.assertNotEmitted(window.canvas.drawn):
+        done(fn())
+    failed(RuntimeError("late"))  # a late failure is ignored too, without an error

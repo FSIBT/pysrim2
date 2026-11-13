@@ -546,3 +546,102 @@ def test_quit_during_a_run_asks_before_closing(
     )
     with qtbot.waitSignal(win.run.finished, timeout=15_000):
         win.close()
+
+
+def finished_window(qtbot, tmp_path, write_setup, boron_data, energy=None):
+    """A window whose run has finished (test_files/2 outputs, no TRIM.DAT), its results drawn
+    when the Results tab is shown."""
+    from copy import deepcopy
+
+    from run_folders import DONE, finished_scan
+
+    from srim.app.runs import ParallelChoice, plan_run
+
+    spec = dict(boron_data)
+    if energy is not None:
+        spec["ion"] = {**boron_data["ion"], "energy_keV": energy}
+    path = write_setup(tmp_path / "setup" / "run.yaml", spec)
+    win = MainWindow(AppSettings(route="wine"), checks_fn=lambda route: [])
+    qtbot.addWidget(win)
+    win.document.open(path)
+    scan = plan_run(win.document.doc, win.document.base_dir, ParallelChoice())
+    folder = tmp_path / "setup-runs" / "20261112T000000Z"
+    result = finished_scan(folder, scan, [DONE])
+    win.run.result = result
+    win.run.folder = folder
+    win.run.snapshot = deepcopy(win.document.doc)
+    return win, result
+
+
+def test_closing_the_window_closes_its_pop_outs(qtbot, tmp_path, write_setup, boron_data):
+    from srim.app.plots import CATALOGUE
+
+    win, result = finished_window(qtbot, tmp_path, write_setup, boron_data)
+    win.show()
+    win.tabs.setCurrentWidget(win.results)
+    with qtbot.waitSignal(win.results.canvas.drawn, timeout=10000):
+        win.run.finished.emit(result)
+        win.results.plot_list.setCurrentItem(win.results.item_for("ionization"))
+    win.results.pop_out.click()
+    pop = win.results.pop_outs[0]
+    assert pop.windowTitle() == next(p.title for p in CATALOGUE if p.key == "ionization")
+    assert pop.isVisible()
+    win.close()
+    assert not pop.isVisible()
+    assert win.results.pop_outs == []
+
+
+@pytest.fixture
+def held_threads(monkeypatch):
+    """The window's background reads are held: the test calls them itself, as it chooses."""
+    calls = []
+
+    def fake(fn, done, failed):
+        calls.append((fn, done))
+
+    monkeypatch.setattr(window_module, "run_in_thread", fake)
+    return calls
+
+
+def test_the_samples_of_a_finished_run_are_drawn_when_the_setup_is_unchanged(
+    qtbot, tmp_path, write_setup, boron_data, held_threads
+):
+    import pandas as pd
+
+    win, result = finished_window(
+        qtbot, tmp_path, write_setup, boron_data, energy={"gaussian": {"mean": 20.0, "sigma": 1.0}}
+    )
+    win.run.finished.emit(result)
+    _fn, done = held_threads[-1]
+    done(pd.DataFrame({"energy_keV": [20.0, 20.5, 21.0]}))
+    assert len(win.editors["beam"].plots["energy_keV"].axes.containers) == 1
+
+
+def test_a_late_sample_read_is_ignored_when_the_setup_changed_meanwhile(
+    qtbot, tmp_path, write_setup, boron_data, held_threads
+):
+    import pandas as pd
+
+    win, result = finished_window(
+        qtbot, tmp_path, write_setup, boron_data, energy={"gaussian": {"mean": 20.0, "sigma": 1.0}}
+    )
+    win.run.finished.emit(result)
+    _fn, done = held_threads[-1]
+    win.document.edit(lambda doc: doc.update(number_ions=300))
+    done(pd.DataFrame({"energy_keV": [20.0, 20.5, 21.0]}))
+    assert len(win.editors["beam"].plots["energy_keV"].axes.containers) == 0
+
+
+def test_a_late_sample_read_is_ignored_after_the_window_closed(
+    qtbot, tmp_path, write_setup, boron_data, held_threads
+):
+    import pandas as pd
+
+    win, result = finished_window(
+        qtbot, tmp_path, write_setup, boron_data, energy={"gaussian": {"mean": 20.0, "sigma": 1.0}}
+    )
+    win.run.finished.emit(result)
+    _fn, done = held_threads[-1]
+    win._closing = True
+    done(pd.DataFrame({"energy_keV": [20.0, 20.5, 21.0]}))
+    assert len(win.editors["beam"].plots["energy_keV"].axes.containers) == 0

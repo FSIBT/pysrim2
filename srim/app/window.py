@@ -73,6 +73,8 @@ class MainWindow(QMainWindow):
         self._closing = False
         self._setup_open = False
         self._generation = 0
+        #: bumped by each change of the setup and each run's end: a late sampled read is ignored
+        self._samples_token = 0
         self._setup_messages: list[Guidance] = []
         self.document = document if document is not None else DocumentModel(self)
         #: the run of the setup (``run_runner`` replaces SRIM in tests; see srim.app.run_control)
@@ -203,6 +205,7 @@ class MainWindow(QMainWindow):
     # --- the run setup -------------------------------------------------------------
 
     def _on_document_changed(self) -> None:
+        self._samples_token += 1
         document = self.document
         name = document.path.name if document.path is not None else "Untitled"
         self.setWindowTitle(f"pysrim2 — {name}[*]")
@@ -277,8 +280,22 @@ class MainWindow(QMainWindow):
 
     def _on_run_ended(self, result=None) -> None:
         self._update_run_actions()
-        # A finished exact run's sampled ions are drawn over the Beam tab's densities.
-        self.editors["beam"].show_run_samples(run_samples(result, self.run.folder))
+        # A finished exact run's sampled ions are read in a thread (they can be many) and drawn
+        # over the Beam tab's densities; a late result is ignored if the setup changed meanwhile.
+        self._samples_token += 1
+        token = self._samples_token
+        folder = self.run.folder
+        self.editors["beam"].show_run_samples(None)
+        run_in_thread(
+            lambda: run_samples(result, folder),
+            lambda ions: self._samples_read(token, ions),
+            lambda _error: self._samples_read(token, None),
+        )
+
+    def _samples_read(self, token: int, ions) -> None:
+        if self._closing or token != self._samples_token:
+            return
+        self.editors["beam"].show_run_samples(ions)
 
     def _on_run_failed(self, message: str) -> None:
         self._update_run_actions()
@@ -458,5 +475,8 @@ class MainWindow(QMainWindow):
             return
         # No wait here: a slow check keeps running in the background and its result is ignored.
         # The application waits for stragglers once, at exit (see srim.app.main).
+        # The pop-outs of the Results tab are windows of their own: they close with this window.
+        for window in list(self.results.pop_outs):
+            window.close()
         self._closing = True
         super().closeEvent(event)

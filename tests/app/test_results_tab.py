@@ -92,6 +92,13 @@ def finish(run, document, folder, scan, outcomes):
     return result
 
 
+def finish_shown(qtbot, tab, run, document, folder, scan, outcomes):
+    """The run ends while the Results tab is shown: the plot it selects is drawn (waited for)."""
+    tab.show()
+    with qtbot.waitSignal(tab.canvas.drawn, timeout=10000):
+        return finish(run, document, folder, scan, outcomes)
+
+
 @pytest.fixture
 def folder(tmp_path):
     return tmp_path / "setup-runs" / "20261112T000000Z"
@@ -124,7 +131,10 @@ def test_a_single_run_hides_the_point_choice(qtbot, tab, run, document, folder):
 
 
 def test_selecting_a_plot_draws_it_once_in_the_thread(qtbot, tab, run, document, folder):
-    finish(run, document, folder, scan_of(document), [DONE])
+    finish_shown(qtbot, tab, run, document, folder, scan_of(document), [DONE])
+    with qtbot.waitSignal(tab.canvas.drawn, timeout=10000):
+        tab.plot_list.setCurrentItem(tab.item_for("vacancies"))
+    assert tab.canvas.figure.axes[0].get_title() == BY_KEY["vacancies"].title
     with qtbot.waitSignal(tab.canvas.drawn, timeout=10000):
         tab.plot_list.setCurrentItem(tab.item_for("ionization"))
     axes = tab.canvas.figure.axes
@@ -133,25 +143,19 @@ def test_selecting_a_plot_draws_it_once_in_the_thread(qtbot, tab, run, document,
 
 
 def test_copy_data_puts_the_plot_csv_on_the_clipboard(qtbot, tab, run, document, folder):
-    finish(run, document, folder, scan_of(document), [DONE])
-    with qtbot.waitSignal(tab.canvas.drawn, timeout=10000):
-        tab.plot_list.setCurrentItem(tab.item_for("ionization"))
+    finish_shown(qtbot, tab, run, document, folder, scan_of(document), [DONE])
     tab.canvas.copy_data()
     header = QApplication.clipboard().text().splitlines()[0]
     assert "depth_nm" in header.split(",")
 
 
 def test_log_y_on_the_tab_sets_the_scale(qtbot, tab, run, document, folder):
-    finish(run, document, folder, scan_of(document), [DONE])
-    with qtbot.waitSignal(tab.canvas.drawn, timeout=10000):
-        tab.plot_list.setCurrentItem(tab.item_for("ionization"))
+    finish_shown(qtbot, tab, run, document, folder, scan_of(document), [DONE])
     tab.canvas.log_y.setChecked(True)
     assert tab.canvas.figure.axes[0].get_yscale() == "log"
 
 
-def test_editing_the_setup_shows_the_banner_and_undo_hides_it(
-    qtbot, tab, run, document, folder
-):
+def test_editing_the_setup_shows_the_banner_and_undo_hides_it(qtbot, tab, run, document, folder):
     finish(run, document, folder, scan_of(document), [DONE])
     assert not tab.banner.isVisibleTo(tab)
     document.edit(lambda doc: doc.update(number_ions=300))
@@ -161,18 +165,14 @@ def test_editing_the_setup_shows_the_banner_and_undo_hides_it(
     assert not tab.banner.isVisibleTo(tab)
 
 
-def test_a_change_of_the_scan_section_also_shows_the_banner(
-    qtbot, tab, run, document, folder
-):
+def test_a_change_of_the_scan_section_also_shows_the_banner(qtbot, tab, run, document, folder):
     finish(run, document, folder, scan_of(document), [DONE])
     document.edit(lambda doc: doc.update(_scan={"grid": {"ion.energy_keV": [10.0, 20.0]}}))
     assert tab.banner.isVisibleTo(tab)
 
 
 def test_pop_out_opens_the_plot_in_a_window_of_its_own(qtbot, tab, run, document, folder):
-    finish(run, document, folder, scan_of(document), [DONE])
-    with qtbot.waitSignal(tab.canvas.drawn, timeout=10000):
-        tab.plot_list.setCurrentItem(tab.item_for("ionization"))
+    finish_shown(qtbot, tab, run, document, folder, scan_of(document), [DONE])
     tab.pop_out.click()
     assert len(tab.pop_outs) == 1
     window = tab.pop_outs[0]
@@ -183,9 +183,8 @@ def test_pop_out_opens_the_plot_in_a_window_of_its_own(qtbot, tab, run, document
     assert tab.pop_outs == []
 
 
-def test_a_refresh_tick_redraws_only_the_visible_plot(
-    qtbot, tab, run, document, folder, monkeypatch
-):
+def live_run(run, document, folder, tab):
+    """A run going with two points, point 0 done: the tab is set up as a run's start does."""
     scan = scan_of(document, grid={"ion.energy_keV": [10.0, 20.0]})
     state = ScanState(scan)
     finished_scan(folder, scan, [DONE, DONE])
@@ -195,6 +194,31 @@ def test_a_refresh_tick_redraws_only_the_visible_plot(
     run.running = True
     for point in state.points.values():
         point.status = "done"
+    return state
+
+
+def test_a_hidden_results_tab_does_not_redraw_on_a_tick(
+    qtbot, tab, run, document, folder, monkeypatch
+):
+    live_run(run, document, folder, tab)
+    calls = []
+    original = PlotCanvas.show_plot
+
+    def counting(self, plot, results):
+        calls.append(plot.key)
+        return original(self, plot, results)
+
+    monkeypatch.setattr(PlotCanvas, "show_plot", counting)
+    run.started.emit()  # the tab is not shown: the started run draws nothing either
+    tab._on_tick()
+    assert calls == []
+
+
+def test_a_refresh_tick_redraws_only_the_visible_plot(
+    qtbot, tab, run, document, folder, monkeypatch
+):
+    tab.show()
+    live_run(run, document, folder, tab)
     with qtbot.waitSignal(tab.canvas.drawn, timeout=10000):
         run.started.emit()
     calls = []
@@ -231,9 +255,7 @@ def test_a_scan_where_every_point_failed_says_no_results_yet_with_the_error(
     assert not tab.canvas.isVisibleTo(tab)
 
 
-def test_during_a_run_the_points_done_so_far_are_listed(
-    qtbot, tab, run, document, folder
-):
+def test_during_a_run_the_points_done_so_far_are_listed(qtbot, tab, run, document, folder):
     scan = scan_of(document, grid={"ion.energy_keV": [10.0, 20.0]})
     finished_scan(folder, scan, [DONE, "later"])  # point 0 has its outputs, point 1 is not done
     state = ScanState(scan)
@@ -242,6 +264,7 @@ def test_during_a_run_the_points_done_so_far_are_listed(
     run.state = state
     run.folder = folder
     run.running = True
+    tab.show()
     with qtbot.waitSignal(tab.canvas.drawn, timeout=10000):
         run.started.emit()
     assert tab.point_combo.count() == 1
@@ -278,8 +301,7 @@ def test_the_samples_of_a_finished_exact_run_reach_the_beam_tab(
     window.run.result = result
     window.run.folder = folder
     window.run.snapshot = deepcopy(window.document.doc)
-    with qtbot.waitSignal(window.results.canvas.drawn, timeout=10000):
-        window.run.finished.emit(result)
-    assert len(beam.plots["energy_keV"].axes.containers) == 1
+    window.run.finished.emit(result)  # the tab is hidden: it draws when it is shown
+    qtbot.waitUntil(lambda: len(beam.plots["energy_keV"].axes.containers) == 1, timeout=10000)
     window.document.edit(lambda doc: doc.update(number_ions=300))
     assert len(beam.plots["energy_keV"].axes.containers) == 0

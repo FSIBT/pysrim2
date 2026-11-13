@@ -90,6 +90,8 @@ class PlotCanvas(QWidget):
         layout.addLayout(controls)
 
         self._generation = 0
+        self._busy = False
+        self._disposed = False
         self._plot: PlotDef | None = None
         self._frame = None
         self._set_data_actions(False)
@@ -99,23 +101,40 @@ class PlotCanvas(QWidget):
     def show_plot(self, plot: PlotDef, results) -> None:
         """Draw ``plot`` for ``results``: the data is read in a thread, then drawn here.
 
-        A request made before the last one has finished is dropped when it ends.
+        A plot other than the one drawn now says "Drawing…" and disables Copy and Save until its
+        data arrives. The same plot (a new point, say) keeps the figure and the buttons until the
+        new data arrives. A request made before the last one has finished is dropped when it ends.
         """
+        keep = self._frame is not None and self._plot is not None and self._plot.key == plot.key
         self._generation += 1
         generation = self._generation
         self._plot = plot
-        self._frame = None
-        self._set_data_actions(False)
-        self.message.setText(DRAWING_TEXT)
+        self._busy = True
+        if not keep:
+            self._frame = None
+            self._set_data_actions(False)
+            self.message.setText(DRAWING_TEXT)
         run_in_thread(
             lambda: plot_data(plot, results),
             lambda frame: self._drawn(generation, plot, frame),
             lambda error: self._failed(generation, error),
         )
 
-    def _drawn(self, generation: int, plot: PlotDef, frame) -> None:
-        if generation != self._generation:
+    def refresh(self, plot: PlotDef, results) -> None:
+        """Draw ``plot`` again, as a running run's data grows. Nothing starts while a request is
+        outstanding, so slow reads do not pile up in threads."""
+        if self._busy:
             return
+        self.show_plot(plot, results)
+
+    def dispose(self) -> None:
+        """The canvas's window has closed: a late result is ignored from now on."""
+        self._disposed = True
+
+    def _drawn(self, generation: int, plot: PlotDef, frame) -> None:
+        if self._disposed or generation != self._generation:
+            return
+        self._busy = False
         self._frame = frame
         self._draw(plot, frame)
         self.message.setText("")
@@ -123,8 +142,9 @@ class PlotCanvas(QWidget):
         self.drawn.emit()
 
     def _failed(self, generation: int, error: BaseException) -> None:
-        if generation != self._generation:
+        if self._disposed or generation != self._generation:
             return
+        self._busy = False
         text = str(error) or type(error).__name__
         self.figure.clear()
         self.canvas.draw_idle()
@@ -210,5 +230,6 @@ class PlotWindow(QWidget):
         layout.addWidget(self.canvas)
 
     def closeEvent(self, event):  # noqa: N802 (Qt's name)
+        self.canvas.dispose()
         super().closeEvent(event)
         self.closed.emit(self)

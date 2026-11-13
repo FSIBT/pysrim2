@@ -61,7 +61,7 @@ class PointEntry:
 
 
 def differs(doc: dict, snapshot: dict) -> bool:
-    """True when the setup ``doc`` is not the setup ``snapshot`` (the ``_scan`` section included)."""
+    """True when the setup ``doc`` is not the setup ``snapshot`` (``_scan`` included)."""
     return clean(doc) != clean(snapshot) or doc.get("_scan") != snapshot.get("_scan")
 
 
@@ -196,7 +196,9 @@ class ResultsTab(QWidget):
 
     def _show_availability(self) -> None:
         for plot in CATALOGUE:
-            reason = NO_RESULTS_TEXT if self._results is None else missing_reason(plot, self._results)
+            reason = (
+                NO_RESULTS_TEXT if self._results is None else missing_reason(plot, self._results)
+            )
             item = self._items[plot.key]
             item.setDisabled(reason is not None)
             item.setToolTip(0, reason or "")
@@ -276,10 +278,11 @@ class ResultsTab(QWidget):
             return f"{NO_RESULTS_TEXT}\n{self._errors[0]}"
         return NO_RESULTS_TEXT
 
-    def _refresh_view(self, draw: bool) -> None:
+    def _refresh_view(self, draw: bool, refresh: bool = False) -> None:
         """Open the chosen point, grey out the plots it cannot give, and show the plot.
 
-        ``draw`` asks for the shown plot to be drawn (once); a selection that only follows the
+        ``draw`` asks for the shown plot to be drawn (once); ``refresh`` makes it a refresh of
+        a running run (see :meth:`PlotCanvas.refresh`). A selection that only follows the
         availability is not drawn here.
         """
         self._results = self._open_selected()
@@ -300,10 +303,24 @@ class ResultsTab(QWidget):
             return
         self._select(key)
         if draw:
-            self.canvas.show_plot(_BY_KEY[key], self._results)
+            self._draw(self.canvas, _BY_KEY[key], self._results, refresh)
+
+    @staticmethod
+    def _draw(canvas: PlotCanvas, plot, results, refresh: bool) -> None:
+        if refresh:
+            canvas.refresh(plot, results)
+        else:
+            canvas.show_plot(plot, results)
 
     def _on_point_changed(self, _index: int) -> None:
-        self._refresh_view(draw=True)
+        self._refresh_view(draw=self.isVisible())
+
+    def showEvent(self, event):  # noqa: N802 (Qt's name)
+        # A hidden tab does not draw while a run goes; the plot is drawn when the tab shows.
+        super().showEvent(event)
+        if self.controller.running or self.controller.result is not None:
+            self._rebuild()
+            self._refresh_view(draw=True)
 
     # --- the run ----------------------------------------------------------------------
 
@@ -312,31 +329,34 @@ class ResultsTab(QWidget):
         self._timer.setInterval(self.settings.refresh_seconds * 1000)
         self._timer.start()
         self._rebuild()
-        self._refresh_view(draw=True)
+        self._refresh_view(draw=self.isVisible())
 
     def _on_finished(self, _result=None) -> None:
         self._timer.stop()
         self._rebuild()
-        self._refresh_view(draw=True)
+        self._refresh_view(draw=self.isVisible())
         self._update_banner()
 
     def _on_failed(self, _message: str) -> None:
         self._timer.stop()
         self._rebuild()
-        self._refresh_view(draw=True)
+        self._refresh_view(draw=self.isVisible())
 
     def _on_tick(self) -> None:
-        """While a run goes: take the points again, draw the shown plot and the visible pop-outs."""
+        """While a run goes, every refresh interval: the shown plot is drawn again only while this
+        tab is shown, and each visible pop-out is drawn again whatever tab is shown."""
         if not self.controller.running:
             self._timer.stop()
             return
+        visible = [window for window in self.pop_outs if window.isVisible()]
+        if not self.isVisible() and not visible:
+            return
         self._rebuild()
-        self._refresh_view(draw=True)
+        self._refresh_view(draw=self.isVisible(), refresh=True)
         if self._results is None:
             return
-        for window in list(self.pop_outs):
-            if window.isVisible():
-                window.canvas.show_plot(window.plot, self._results)
+        for window in visible:
+            window.canvas.refresh(window.plot, self._results)
 
     # --- the banner and the pop-outs -----------------------------------------------------
 
