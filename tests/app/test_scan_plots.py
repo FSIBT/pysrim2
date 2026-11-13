@@ -7,6 +7,7 @@ by :func:`srim.scan.run_scan` with the fake runner of ``runners.py`` (no SRIM).
 
 import math
 from copy import deepcopy
+from pathlib import Path
 
 import matplotlib
 import numpy as np
@@ -17,9 +18,10 @@ from matplotlib.container import ErrorbarContainer
 from matplotlib.figure import Figure
 from runners import fixture_runner
 
-from srim.app.plots import CATALOGUE
+from srim.app.plots import CATALOGUE, plot_data
 from srim.app.scan_plots import (
     CURVE_LIMIT,
+    OVERLAY_QUANTITIES,
     Style,
     draw_overlay,
     draw_summary,
@@ -31,6 +33,7 @@ from srim.app.scan_plots import (
     summary_data,
     value_columns,
 )
+from srim.output import Results
 from srim.scan import Scan, run_scan
 from srim.scan.events import PointFinished, PointStarted
 from srim.spec import RunSpec
@@ -209,8 +212,8 @@ def test_draw_overlay_draws_one_curve_per_point_with_its_style():
             {
                 "depth_nm": depth,
                 "depth_A": depth * 10.0,
-                "ions": depth + index,
-                "recoils": depth,
+                "ions_eV_per_A_per_ion": depth + index,
+                "recoils_eV_per_A_per_ion": depth,
             }
         )
     styles = {0: Style("#111111", "-", "o"), 1: Style("#222222", "--", "s")}
@@ -220,8 +223,66 @@ def test_draw_overlay_draws_one_curve_per_point_with_its_style():
     draw_overlay(plot, frames, styles, labels, ax)
     assert len(ax.lines) == 2
     assert ax.lines[1].get_linestyle() == "--"
+    # ionization is ions + recoils: point 1 is (depth + 1) + depth
+    expected = frames[1]["ions_eV_per_A_per_ion"] + frames[1]["recoils_eV_per_A_per_ion"]
+    np.testing.assert_allclose(ax.lines[1].get_ydata(), expected.to_numpy())
     assert [t.get_text() for t in ax.get_legend().get_texts()] == ["energy=10", "energy=20"]
     assert ax.get_title() == plot.title
+    assert ax.get_ylabel() == "ions + recoils (eV/Å/ion)"
+
+
+FIXTURE = Path(__file__).resolve().parents[2] / "test_files" / "2"
+
+
+def test_every_depth_profile_has_an_overlay_quantity():
+    profiles = [plot.key for plot in CATALOGUE if plot.group == "Depth profiles"]
+    assert profiles
+    missing = [key for key in profiles if key not in OVERLAY_QUANTITIES]
+    assert missing == []
+
+
+@pytest.mark.parametrize(
+    "key, column",
+    [
+        ("range_profile", "ions_atoms_per_cm3_per_atoms_per_cm2"),
+        ("recoil_energy", "ions_eV_per_A_per_ion"),
+    ],
+)
+def test_range_and_energy_to_recoils_overlays_draw_their_ions_column(key, column):
+    frame = plot_data(BY_KEY[key], Results(str(FIXTURE)))
+    fig = Figure()
+    ax = fig.add_subplot()
+    draw_overlay(BY_KEY[key], {0: frame}, {0: Style("#000000", "-", "o")}, {}, ax)
+    np.testing.assert_allclose(ax.lines[0].get_ydata(), frame[column].to_numpy(dtype=float))
+    assert ax.lines[0].get_xdata().tolist() == frame["depth_nm"].tolist()
+
+
+def test_ionization_overlay_is_ions_plus_recoils_on_the_fixture():
+    frame = plot_data(BY_KEY["ionization"], Results(str(FIXTURE)))
+    fig = Figure()
+    ax = fig.add_subplot()
+    draw_overlay(BY_KEY["ionization"], {0: frame}, {0: Style("#000000", "-", "o")}, {}, ax)
+    total = frame["ions_eV_per_A_per_ion"] + frame["recoils_eV_per_A_per_ion"]
+    np.testing.assert_allclose(ax.lines[0].get_ydata(), total.to_numpy(dtype=float))
+
+
+def test_an_overlay_says_how_many_points_had_no_data():
+    plot = BY_KEY["vacancies"]
+    frame = pd.DataFrame({"depth_nm": [1.0, 2.0], "vacancies_total_per_A_per_ion": [3.0, 4.0]})
+    fig = Figure()
+    ax = fig.add_subplot()
+    draw_overlay(plot, {0: frame}, {0: Style("#000000", "-", "o")}, {}, ax, missing=2, total=3)
+    assert ax.get_title() == f"{plot.title} (2 of 3 points had no data)"
+
+
+def test_a_one_point_text_group_has_a_legend_entry():
+    table = pd.DataFrame({"x": [1.0, 2.0], "y": [1.0, 2.0], "el": ["Au", "Si"]})
+    data = summary_data(table, "x", "y", "el")
+    fig = Figure()
+    ax = fig.add_subplot()
+    draw_summary(data, "x", "y", "el", point_styles(data, "el"), ax)
+    labels = [t.get_text() for t in ax.get_legend().get_texts()]
+    assert labels == ["el=Au", "el=Si"]
 
 
 def test_stacked_frames_split_back_to_the_same_points():

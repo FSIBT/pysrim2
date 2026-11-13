@@ -27,8 +27,6 @@ CURVE_LIMIT = 12
 LINESTYLES = ("-", "--", ":", "-.")
 #: markers, by point index
 MARKERS = ("o", "s", "^", "D", "v")
-#: the columns of a depth profile that are not values
-_DEPTH_COLUMNS = ("depth_nm", "depth_A", "lateral_nm")
 
 
 @dataclass(frozen=True)
@@ -204,8 +202,8 @@ def draw_summary(data: pd.DataFrame, x: str, y: str, hue: str | None, styles, ax
             label = f"{hue}={value}"
             labelled = True
         if len(group) > 1:
-            ax.plot(group[x], group[y], color=line_colour, linewidth=1, label=label)
-        for index, row in group.iterrows():
+            ax.plot(group[x], group[y], color=line_colour, linewidth=1)
+        for position, (index, row) in enumerate(group.iterrows()):
             style = styles.get(int(index))
             yerr = None
             if err is not None and math.isfinite(row[err]):
@@ -217,6 +215,8 @@ def draw_summary(data: pd.DataFrame, x: str, y: str, hue: str | None, styles, ax
                 fmt="o" if style is None else style.marker,
                 color="0.4" if style is None else style.color,
                 capsize=3,
+                # the label rides on the group's first marker, so a one-point group is listed too
+                label=label if position == 0 else None,
             )
     ax.set_xlabel(x)
     ax.set_ylabel(y)
@@ -236,10 +236,6 @@ def draw_summary(data: pd.DataFrame, x: str, y: str, hue: str | None, styles, ax
 
 
 # --- the overlays --------------------------------------------------------------------------
-
-
-def _value_names(frame: pd.DataFrame) -> list[str]:
-    return [c for c in frame.columns if c not in _DEPTH_COLUMNS]
 
 
 def stack_frames(frames: dict[int, pd.DataFrame]) -> pd.DataFrame:
@@ -262,24 +258,54 @@ def split_frames(stacked: pd.DataFrame) -> dict[int, pd.DataFrame]:
     }
 
 
-def draw_overlay(plot, frames: dict[int, pd.DataFrame], styles, labels, ax) -> None:
-    """One curve per point: the sum of the depth profile's value columns (``ions`` and
-    ``recoils``, say) against depth, in the point's style, labelled by ``labels``.
+#: the quantity each depth profile's overlay draws: the columns that are summed, and the y label.
+#: Keyed by the plot's key; a depth profile without an entry is an error (see :func:`draw_overlay`).
+OVERLAY_QUANTITIES: dict[str, tuple[tuple[str, ...], str]] = {
+    "ionization": (
+        ("ions_eV_per_A_per_ion", "recoils_eV_per_A_per_ion"),
+        "ions + recoils (eV/Å/ion)",
+    ),
+    "vacancies": (("vacancies_total_per_A_per_ion",), "vacancies (per Å/ion)"),
+    "phonons": (
+        ("ions_phonons_per_A_per_ion", "recoils_phonons_per_A_per_ion"),
+        "ions + recoils (phonons/Å/ion)",
+    ),
+    "recoil_energy": (("ions_eV_per_A_per_ion",), "ions (eV/Å/ion)"),
+    "range_profile": (
+        ("ions_atoms_per_cm3_per_atoms_per_cm2",),
+        "ions (atoms/cm³ per atoms/cm²)",
+    ),
+}
+
+
+def draw_overlay(
+    plot,
+    frames: dict[int, pd.DataFrame],
+    styles,
+    labels,
+    ax,
+    missing: int = 0,
+    total: int = 0,
+) -> None:
+    """One curve per point: the quantity of :data:`OVERLAY_QUANTITIES` for ``plot`` against depth,
+    in the point's style, labelled by ``labels``.
 
     ``frames`` maps point indices to their frames (``plot.data`` of each point, with
     ``depth_nm``); ``styles`` and ``labels`` map the same indices to a :class:`Style` and a
-    text. The title is the plot's title.
+    text. The title is the plot's title, with "N of M points had no data" when ``missing`` > 0
+    (``missing`` of ``total`` points could not be read). Raises :class:`KeyError` for a plot with
+    no quantity, and for a frame without one of its columns.
     """
+    if plot.key not in OVERLAY_QUANTITIES:
+        raise KeyError(f"no overlay quantity for the depth profile {plot.key!r}")
+    columns, label = OVERLAY_QUANTITIES[plot.key]
     if not frames:
         ax.text(0.5, 0.5, "no point to draw", transform=ax.transAxes, ha="center")
-    names: list[str] = []
     for index, frame in frames.items():
         if len(frame) == 0:
             continue
-        columns = _value_names(frame)
-        names = names or columns
         depth = frame["depth_nm"].to_numpy(dtype=float)
-        values = frame[columns].sum(axis=1).to_numpy(dtype=float)
+        values = frame[list(columns)].sum(axis=1).to_numpy(dtype=float)
         style = styles[index]
         ax.plot(
             depth,
@@ -291,8 +317,11 @@ def draw_overlay(plot, frames: dict[int, pd.DataFrame], styles, labels, ax) -> N
             label=labels.get(index),
         )
     ax.set_xlabel("depth (nm)")
-    ax.set_ylabel(", ".join(names))
-    ax.set_title(plot.title)
+    ax.set_ylabel(label)
+    title = plot.title
+    if missing > 0:
+        title = f"{title} ({missing} of {total} points had no data)"
+    ax.set_title(title)
     if any(labels.get(index) for index in frames):
         ax.legend()
 

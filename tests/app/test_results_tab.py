@@ -390,3 +390,15 @@ def test_the_filter_checks_the_matching_points_and_a_bad_one_says_why(
     tab.overlay_filter.returnPressed.emit()
     assert tab.overlay_status.isVisibleTo(tab)
     assert tab.overlay_status.text()
+
+
+def test_an_overlay_says_how_many_points_had_no_data(qtbot, tab, run, document, folder):
+    grid = {"ion.energy_keV": [10.0, 20.0, 30.0]}
+    scan = scan_of(document, grid=grid)
+    finish(run, document, folder, scan, [DONE] * 3)
+    (folder / f"points/{scan.points()[0].id[:16]}" / "IONIZ.txt").unlink()
+    tab.show()
+    with qtbot.waitSignal(tab.canvas.drawn, timeout=10000):
+        tab.plot_list.setCurrentItem(tab.item_for(OVERLAY_KEY))
+    title = tab.canvas.figure.axes[0].get_title()
+    assert title == f"{BY_KEY['ionization'].title} (1 of 3 points had no data)"

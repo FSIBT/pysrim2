@@ -681,10 +681,22 @@ class ResultsTab(QWidget):
                     continue  # this point has no outputs for the plot
             if not frames:
                 raise ValueError(NO_CHECKED_TEXT)
-            return stack_frames(frames)
+            stacked = stack_frames(frames)
+            # the points that could not be read are counted for the plot's note
+            stacked.attrs["missing"] = len(chosen) - len(frames)
+            stacked.attrs["total"] = len(chosen)
+            return stacked
 
         def draw(frame, ax):
-            draw_overlay(plot, split_frames(frame), styles, labels, ax)
+            draw_overlay(
+                plot,
+                split_frames(frame),
+                styles,
+                labels,
+                ax,
+                missing=frame.attrs.get("missing", 0),
+                total=frame.attrs.get("total", 0),
+            )
 
         self._send(key, load, draw, refresh)
 
