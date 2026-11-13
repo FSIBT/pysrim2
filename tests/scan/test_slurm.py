@@ -363,3 +363,21 @@ def test_collect_refuses_a_folder_whose_lock_is_held(tmp_path):
     finally:
         lock.release()
     assert collect_slurm(folder, cache=False).table["status"].tolist() == ["missing"]
+
+
+# -- keep_seed: the one point runs with the scan's own seed -------------------------------------
+
+
+def test_a_keep_seed_scan_runs_its_point_with_the_scan_seed(tmp_path):
+    scan = Scan(BASE, seed=4711, keep_seed=True)
+    folder = prepare_slurm(scan, tmp_path / "s")
+    recorded = Scan.from_yaml(folder / "scan.yaml")
+    assert recorded.keep_seed is True and recorded.seed == 4711
+    ((name, spec),) = read_job(sorted((folder / "jobs").iterdir())[0])
+    assert spec.seed == 4711
+    run_all_jobs(folder)
+    collected = collect_slurm(folder, cache=False)
+    assert collected.table["seeds"].tolist() == ["4711"]
+    assert collected.table["status"].tolist() == ["done"]
+    local = run_scan(scan, workers=1, runner=fixture_runner, scan_dir=tmp_path / "l", cache=False)
+    assert collected.table["seeds"].tolist() == local.table["seeds"].tolist()

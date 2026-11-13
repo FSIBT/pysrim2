@@ -567,6 +567,7 @@ def _read_scan(value, overrides):
         ions=ions,
         seed=scan.seed,
         batch_ions=scan.batch_ions,
+        keep_seed=scan.keep_seed,
     )
 
 

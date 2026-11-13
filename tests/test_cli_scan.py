@@ -836,3 +836,19 @@ def test_a_rerun_without_a_seed_reuses_the_seed_quietly(work, capsys):
     assert cli.main(["scan", "run", str(scan), "--ui", "plain", "-o", str(out)]) == 0
     err = capsys.readouterr().err
     assert "describes another scan" not in err
+
+
+def test_set_keeps_the_seed_of_a_keep_seed_scan(work, capsys):
+    """--set rebuilds the scan; a keep_seed scan must still run its point with its seed."""
+    scan = work / "scan.yaml"
+    Scan(BASE, seed=4711, keep_seed=True).to_yaml(scan)
+    out = work / "out"
+    code = cli.main(
+        ["scan", "run", "--set", "ion.energy_keV=15", str(scan), "--ui", "plain", "-o", str(out)]
+    )
+    assert code == 0
+    recorded = Scan.from_yaml(out / "scan.yaml")
+    assert recorded.keep_seed is True
+    assert recorded.base.ion.energy_keV == 15.0
+    assert recorded.seed == 4711
+    assert (out / "result" / "scan.csv").read_text(encoding="utf-8").count(",4711,") == 1

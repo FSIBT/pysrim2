@@ -102,7 +102,7 @@ def prepare_slurm(scan: Scan, scan_dir, *, jobs=None) -> Path:
     _recorded(scan, base_seed).to_yaml(
         folder / SCAN_FILE, provenance={"pysrim2_version": __version__}
     )
-    seeds = _seeds(points, base_seed)
+    seeds = _seeds(points, base_seed, scan.keep_seed)
     units = _units(scan, points, seeds)
     n_jobs = _job_count(jobs, len(units))
     for k in range(n_jobs):
@@ -182,7 +182,7 @@ def _collect_locked(folder: Path, cache) -> ScanResult:
     if scan.seed is None:
         raise SpecError(f"{folder / SCAN_FILE}: no base seed; the scan was not prepared")
     points = scan.points()
-    seeds = _seeds(points, scan.seed)
+    seeds = _seeds(points, scan.seed, scan.keep_seed)
     store = _open_cache(cache, folder)
     homes = _job_folders(folder)
     rows = []
@@ -234,8 +234,11 @@ def _units(scan: Scan, points, seeds):
     return units
 
 
-def _seeds(points, base_seed: int) -> list[int]:
-    """The seed of each point, as :func:`srim.scan.run_scan` derives it."""
+def _seeds(points, base_seed: int, keep_seed: bool = False) -> list[int]:
+    """The seed of each point, as :func:`srim.scan.run_scan` gives it: the base seed itself
+    for a ``keep_seed`` scan (one point), else derived from the base seed and the point id."""
+    if keep_seed:
+        return [base_seed]
     return [derive_seed(base_seed, int(p.id[:15], 16)) for p in points]
 
 
@@ -251,6 +254,7 @@ def _recorded(scan: Scan, base_seed: int) -> Scan:
         ions=scan.ions,
         seed=base_seed,
         batch_ions=scan.batch_ions,
+        keep_seed=scan.keep_seed,
     )
 
 
