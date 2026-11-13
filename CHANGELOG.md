@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-11-13
+
 ### Added
 
 - The desktop app's File > Open recent lists the last ten setups and run folders (kept in the app's data folder), and File > Open run folder… opens a run folder: its setup, results and progress come back as after the run, with the points that have results when the run did not finish. An entry whose file or folder was moved or deleted is greyed out with the reason.
@@ -293,7 +295,8 @@ Changes since pysrim 0.5.10. See
 
 Versions up to and including 0.5.10 were released as `pysrim` by Chris Ostrouchov.
 
-[Unreleased]: https://github.com/FSIBT/pysrim2/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/FSIBT/pysrim2/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/FSIBT/pysrim2/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/FSIBT/pysrim2/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/FSIBT/pysrim2/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/FSIBT/pysrim2/compare/v0.8.0...v0.9.0
