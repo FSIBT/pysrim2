@@ -1,10 +1,11 @@
 """The library's reading of run folders for notebooks (no SRIM: the points are test_files/2)."""
 
 import json
+import shutil
 from copy import deepcopy
 
 import pytest
-from run_folders import DONE, finished_scan
+from run_folders import DONE, FIXTURE, finished_scan
 
 from srim.beam import beam_scan
 from srim.notebook import (
@@ -118,3 +119,46 @@ def test_a_folder_without_scan_yaml_raises_a_readable_error(tmp_path):
     folder.mkdir()
     with pytest.raises(FileNotFoundError, match="empty"):
         load_run(folder)
+
+
+def test_a_stray_point_folder_is_counted_by_neither_count(tmp_path):
+    folder = tmp_path / "run"
+    finished_scan(folder, _grid(), [DONE, "SRIM failed"])
+    stray = folder / "points" / "xyz"
+    stray.mkdir(parents=True)
+    (stray / "run.yaml").write_text("stray\n", encoding="utf-8")
+    assert results_count(folder) == 1
+    run = load_run(folder)
+    assert run.count == 1
+    assert run.points() == [0]
+
+
+def test_a_failed_point_with_outputs_is_counted_by_both(tmp_path):
+    folder = tmp_path / "run"
+    scan = _grid()
+    finished_scan(folder, scan, [DONE, "SRIM failed"])
+    # the failed point's folder holds outputs (as after a crash that left them behind)
+    point = scan.points()[1]
+    rel = folder / "points" / point.id[:16]
+    shutil.copytree(FIXTURE, rel)
+    point.spec.to_yaml(rel / "run.yaml", provenance={"test": "count"})
+    run = load_run(folder)
+    assert results_count(folder) == run.count == 2
+    assert run.points() == [0, 1]
+    assert run.point(1).ioniz.df.columns[0] == "depth_A"
+
+
+def test_results_count_of_a_broken_scan_yaml_is_zero(tmp_path):
+    folder = tmp_path / "run"
+    folder.mkdir()
+    (folder / "scan.yaml").write_text("scan: [not a mapping\n", encoding="utf-8")
+    assert results_count(folder) == 0
+
+
+def test_the_loaded_file_is_readable_by_others(tmp_path):
+    folder = tmp_path / "run"
+    result = finished_scan(folder, beam_scan(_spec()), [DONE])
+    result.to_csv(folder / "result")
+    load_run(folder).mark_loaded()
+    mode = (folder / NOTEBOOK_DIR / LOADED_FILE).stat().st_mode & 0o777
+    assert mode == 0o644

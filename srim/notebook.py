@@ -12,7 +12,7 @@ points the notebook read, so a later reader can tell whether the folder has chan
 import json
 import os
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from srim.beam import open_results
@@ -63,31 +63,42 @@ def read_run_folder(folder) -> tuple[ScanResult, bool]:
     return ScanResult.from_rows(scan, rows, base_dir=folder), False
 
 
-def results_count(folder) -> int:
-    """The number of points of a run or scan folder whose folder has outputs.
-
-    Counts the point folders under ``points/`` (no ``scan.yaml`` is read). 0 for a folder that
-    is missing or cannot be listed; never raises :class:`OSError`.
-    """
+def _read_scan(folder: Path) -> Scan | None:
+    """The scan of a run folder (its ``scan.yaml``), or None when it cannot be read."""
     try:
-        with os.scandir(Path(folder) / "points") as entries:
-            return sum(1 for entry in entries if has_outputs(Path(entry.path)))
+        return Scan.from_yaml(folder / "scan.yaml")
+    except Exception:  # a missing, broken or unreadable scan.yaml counts no points
+        return None
+
+
+def _outputs_of(folder: Path, scan: Scan) -> dict[int, str]:
+    """The scan's own points whose folder ``points/<id[:16]>`` has outputs.
+
+    Maps each such point's index to its path relative to ``folder``. Folders under ``points/``
+    that the scan does not name are not counted.
+    """
+    found = {}
+    for point in scan.points():
+        rel = f"points/{point.id[:16]}"
+        if has_outputs(folder / rel):
+            found[point.index] = rel
+    return found
+
+
+def results_count(folder) -> int:
+    """The number of the scan's points whose folder has outputs (see :func:`load_run`).
+
+    Reads ``scan.yaml``. 0 for a folder that is missing, or whose ``scan.yaml`` cannot be read;
+    never raises :class:`OSError`.
+    """
+    folder = Path(folder)
+    try:
+        scan = _read_scan(folder)
+        if scan is None:
+            return 0
+        return len(_outputs_of(folder, scan))
     except OSError:
         return 0
-
-
-def _points_with_outputs(folder: Path, result: ScanResult) -> dict[int, str]:
-    """The index of each point of ``result`` whose folder has outputs, with its relative path."""
-    ids = {point.id: point.index for point in result.scan.points()}
-    found = {}
-    for _, row in result.table.iterrows():
-        index = ids.get(row.get("id"))
-        path = row.get("path")
-        if index is None or not isinstance(path, str):
-            continue
-        if has_outputs(folder / path):
-            found[index] = path
-    return found
 
 
 @dataclass
@@ -95,30 +106,31 @@ class LoadedRun:
     """A run or scan folder read for a notebook.
 
     ``folder`` is the folder, ``result`` its :class:`~srim.scan.ScanResult`, ``finished``
-    whether the run finished, and ``count`` the number of points with outputs.
+    whether the run finished, and ``count`` the number of the scan's points with outputs.
+    ``outputs`` maps the index of each of those points to its path relative to ``folder``.
     """
 
     folder: Path
     result: ScanResult
     finished: bool
     count: int
+    outputs: dict[int, str] = field(default_factory=dict, repr=False)
 
     def points(self) -> list[int]:
         """The indexes of the points that have outputs, in order."""
-        return sorted(_points_with_outputs(self.folder, self.result))
+        return sorted(self.outputs)
 
     def point(self, index: int) -> Results:
         """The results of point ``index``. Raises :class:`KeyError` for a point without outputs."""
-        found = _points_with_outputs(self.folder, self.result)
-        if index not in found:
+        if index not in self.outputs:
             raise KeyError(f"point {index} has no outputs in {self.folder}")
-        return open_point(self.folder, found[index])
+        return open_point(self.folder, self.outputs[index])
 
     def mark_loaded(self) -> None:
         """Write ``.pysrim2-notebook/loaded.json`` (the count and whether the run finished).
 
         The file is written to a temporary file in the same folder and then moved into place, so
-        a reader never sees a part-written file.
+        a reader never sees a part-written file. It is readable by others (mode 0644).
         """
         notebook = self.folder / NOTEBOOK_DIR
         notebook.mkdir(parents=True, exist_ok=True)
@@ -127,6 +139,7 @@ class LoadedRun:
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
                 handle.write(text)
+            os.chmod(tmp, 0o644)
             os.replace(tmp, notebook / LOADED_FILE)
         except BaseException:
             Path(tmp).unlink(missing_ok=True)
@@ -136,14 +149,23 @@ class LoadedRun:
 def load_run(folder) -> LoadedRun:
     """Read a run or scan folder for a notebook, finished or not.
 
-    Raises :class:`FileNotFoundError` naming the folder when it has no ``scan.yaml``.
+    ``count`` is the number of the scan's own points (from ``scan.yaml``) whose folder
+    ``points/<id[:16]>`` has outputs; :func:`results_count` gives the same number for an
+    unchanged folder. Raises :class:`FileNotFoundError` naming the folder when it has no
+    ``scan.yaml``.
     """
     folder = Path(folder)
     if not (folder / "scan.yaml").is_file():
         raise FileNotFoundError(f"{folder} is not a run folder: it has no scan.yaml")
     result, finished = read_run_folder(folder)
-    count = len(_points_with_outputs(folder, result))
-    return LoadedRun(folder=folder, result=result, finished=finished, count=count)
+    outputs = _outputs_of(folder, result.scan)
+    return LoadedRun(
+        folder=folder,
+        result=result,
+        finished=finished,
+        count=len(outputs),
+        outputs=outputs,
+    )
 
 
 def loaded_count(folder) -> int | None:
