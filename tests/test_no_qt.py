@@ -18,6 +18,7 @@ def test_the_library_and_cli_never_import_qt(tmp_path):
         "import srim.app.materials, srim.app.elements, srim.app.numbers, srim.app.drawing\n"
         "import srim.app.quantity, srim.app.scan_model, srim.app.runs, srim.app.plots\n"
         "import srim.app.scan_plots, srim.app.export_results, srim.app.recent\n"
+        "import srim.notebook\n"
         # pandas imports pyarrow itself when it is installed; the export extras are not ours to load
         "heavy = [m for m in sys.modules if m in ('tables', 'pyarrow.parquet')]\n"
         "assert not heavy, heavy  # the export extras are imported only when a format is written\n"

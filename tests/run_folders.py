@@ -10,7 +10,7 @@ from pathlib import Path
 
 from srim.scan.result import ScanResult
 
-FIXTURE = Path(__file__).resolve().parents[2] / "test_files" / "2"
+FIXTURE = Path(__file__).resolve().parents[1] / "test_files" / "2"
 #: a point's outcome in :func:`finished_scan`: this marks a point that finished with outputs
 DONE = "done"
 

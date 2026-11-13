@@ -243,11 +243,11 @@ def test_remember_rate_ignores_a_rate_that_is_not_usable(value):
 
 @pytest.fixture
 def readers(monkeypatch):
-    """Replace the two readers with recorders: each returns the folder it was given."""
-    import srim.app.runs as runs
+    """Replace the two readers (in srim.notebook) with recorders: each returns the folder given."""
+    import srim.notebook as notebook
 
-    monkeypatch.setattr(runs, "Results", lambda path: ("plain", path))
-    monkeypatch.setattr(runs, "open_results", lambda path: ("batched", path))
+    monkeypatch.setattr(notebook, "Results", lambda path: ("plain", path))
+    monkeypatch.setattr(notebook, "open_results", lambda path: ("batched", path))
 
 
 def test_a_folder_without_units_is_read_as_plain_results(tmp_path, readers):

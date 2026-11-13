@@ -6,6 +6,7 @@ One page per part of the library. Each object is documented on one page only.
 - {doc}`output`: the parsed SRIM outputs (`Results` and the output tables).
 - {doc}`spec`: `RunSpec` and the parts of a `run.yaml`.
 - {doc}`scan`: scans over many runs and their results.
+- {doc}`notebook`: `load_run`, which reads a run or scan folder for a notebook, finished or not.
 - {doc}`beam`: beam distributions and their runs.
 - {doc}`analysis`: `implant_summary`.
 - {doc}`core`: the natural isotopes and the common materials with their formulas.
@@ -20,6 +21,7 @@ srim
 output
 spec
 scan
+notebook
 beam
 analysis
 core

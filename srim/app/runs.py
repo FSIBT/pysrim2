@@ -23,9 +23,9 @@ from srim.app.model import to_spec
 from srim.app.plots import PLOT_ROW_CAP
 from srim.app.scan_model import to_scan
 from srim.app.settings import RATE_KEYS, AppSettings
-from srim.beam import beam_scan, open_results, sampled_ions
+from srim.beam import beam_scan, sampled_ions
 from srim.beam.binned import make_bins
-from srim.output import Results
+from srim.notebook import has_outputs, open_point, read_run_folder
 from srim.scan import Precision, Scan
 from srim.scan.events import (
     PointCached,
@@ -37,7 +37,7 @@ from srim.scan.events import (
     ScanFinished,
     ScanStarted,
 )
-from srim.scan.result import ScanResult, read_scan_result
+from srim.scan.result import ScanResult
 from srim.scan.spec import is_binned
 from srim.spec import SpecError
 from srim.ui.tui.state import ScanState, is_number
@@ -182,15 +182,6 @@ def remember_rate(settings: AppSettings, calculation: int, ions_per_s: float) ->
     settings.ions_per_s[key] = float(ions_per_s)
 
 
-def open_point(folder: Path, rel_path: str):
-    """The results of a point of a scan folder: merged when the point was batched (it has a
-    ``units.csv``), else the plain :class:`~srim.output.Results` of its folder."""
-    point = Path(folder) / rel_path
-    if (point / "units.csv").is_file():
-        return open_results(point)
-    return Results(point)
-
-
 #: the statuses of a point whose outputs are read (its folder is complete)
 SHOWN_STATUSES = ("done", "max_ions", "cached")
 
@@ -252,11 +243,6 @@ _TABLE_META = ("id", "n_ions", "seeds", "status", "error", "path")
 MISSING_OUTPUTS_TEXT = "The results of this run are missing from the run folder."
 
 
-def has_outputs(point_dir: Path) -> bool:
-    """A point's folder holds its run.yaml (or units.csv, when it was batched)."""
-    return (point_dir / "run.yaml").is_file() or (point_dir / "units.csv").is_file()
-
-
 def outputs_missing(result, folder) -> bool:
     """True when ``result`` (a finished run's scan result, read from ``folder``) has points that
     finished, and none of their output folders is in ``folder`` any more (deleted or moved).
@@ -273,25 +259,8 @@ def outputs_missing(result, folder) -> bool:
     return not any(isinstance(path, str) and has_outputs(folder / path) for path in paths)
 
 
-def read_run(folder) -> tuple[ScanResult, bool]:
-    """The scan result of a run folder, and whether the run finished.
-
-    A finished run (``result/scan.csv`` is there) is read as it was written. Otherwise the table
-    is built from the scan's points: ``done`` for a point whose folder has outputs, else
-    ``missing``. Raises :class:`FileNotFoundError` for a folder without ``scan.yaml``.
-    """
-    folder = Path(folder)
-    if (folder / "result" / "scan.csv").is_file():
-        return read_scan_result(folder), True
-    scan = Scan.from_yaml(folder / "scan.yaml")
-    rows = []
-    for point in scan.points():
-        rel = f"points/{point.id[:16]}"
-        if has_outputs(folder / rel):
-            rows.append({"index": point.index, "status": "done", "path": rel})
-        else:
-            rows.append({"index": point.index, "status": "missing"})
-    return ScanResult.from_rows(scan, rows, base_dir=folder), False
+#: the name the window uses for :func:`srim.notebook.read_run_folder`
+read_run = read_run_folder
 
 
 def _mtime(path: Path, default: float) -> float:
