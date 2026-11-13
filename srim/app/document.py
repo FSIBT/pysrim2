@@ -21,6 +21,8 @@ from srim.app.model import History, from_spec, new_document, prepare_for_save, p
 from srim.beam.shapes import Histogram
 from srim.spec import RunSpec, SpecError
 
+LOCKED_TEXT = "the setup is locked while a run is going"
+
 
 class DocumentModel(QObject):
     """The run setup being edited, with its path, problems and history."""
@@ -33,6 +35,7 @@ class DocumentModel(QObject):
         self._path: Path | None = None
         self._history = History()
         self._problems: list[Guidance] = []
+        self._locked = False
         self._refresh()
 
     # --- state -----------------------------------------------------------------
@@ -57,6 +60,15 @@ class DocumentModel(QObject):
         return list(self._problems)
 
     @property
+    def locked(self) -> bool:
+        """True while a run goes: the setup cannot be edited, undone, redone, New or Open."""
+        return self._locked
+
+    @locked.setter
+    def locked(self, value: bool) -> None:
+        self._locked = bool(value)
+
+    @property
     def can_undo(self) -> bool:
         return self._history.can_undo
 
@@ -76,8 +88,9 @@ class DocumentModel(QObject):
 
         ``fn`` changes the dict it is given. When ``fn`` raises, nothing changes (the error
         propagates). Otherwise the state before the edit goes on the undo stack, and ``changed``
-        is emitted once.
+        is emitted once. Raises :class:`RuntimeError` while the setup is :attr:`locked`.
         """
+        self._check_unlocked()
         new = deepcopy(self._doc)
         fn(new)
         self._history.push(self._doc)
@@ -85,12 +98,14 @@ class DocumentModel(QObject):
         self._refresh()
 
     def undo(self) -> None:
+        self._check_unlocked()
         previous = self._history.undo(self._doc)
         if previous is not None:
             self._doc = previous
             self._refresh()
 
     def redo(self) -> None:
+        self._check_unlocked()
         following = self._history.redo(self._doc)
         if following is not None:
             self._doc = following
@@ -98,6 +113,7 @@ class DocumentModel(QObject):
 
     def new(self) -> None:
         """An empty setup with no path; the history starts again."""
+        self._check_unlocked()
         self._doc = new_document()
         self._path = None
         self._history = History()
@@ -112,6 +128,7 @@ class DocumentModel(QObject):
         unchanged. On success the history starts again, so undo cannot return to the document
         that was open before.
         """
+        self._check_unlocked()
         path = Path(path).absolute()
         try:
             spec = RunSpec.from_yaml(path)
@@ -164,6 +181,10 @@ class DocumentModel(QObject):
         self._refresh()
 
     # --- internals ---------------------------------------------------------------
+
+    def _check_unlocked(self) -> None:
+        if self._locked:
+            raise RuntimeError(LOCKED_TEXT)
 
     def _refresh(self) -> None:
         self._problems = problems(self._doc, self.base_dir)

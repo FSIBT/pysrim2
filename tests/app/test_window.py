@@ -9,6 +9,7 @@ pytest.importorskip("pytestqt")
 from PySide6.QtCore import QUrl  # noqa: E402
 from PySide6.QtGui import QPalette  # noqa: E402
 from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
+from runners import slow_runner  # noqa: E402
 
 import srim  # noqa: E402
 from srim.app import (
@@ -17,10 +18,11 @@ from srim.app import (
 )
 from srim.app import window as window_module  # noqa: E402
 from srim.app.guidance import Guidance  # noqa: E402
+from srim.app.runs import ParallelChoice  # noqa: E402
 from srim.app.scan_model import new_scan  # noqa: E402
 from srim.app.settings import AppSettings, load_settings  # noqa: E402
 from srim.app.theme import apply_theme  # noqa: E402
-from srim.app.window import MainWindow  # noqa: E402
+from srim.app.window import STOP_AND_QUIT_TEXT, MainWindow  # noqa: E402
 
 
 def no_wizard(monkeypatch):
@@ -498,3 +500,49 @@ def test_closing_with_yes_closes_the_window(qtbot, monkeypatch):
     answer(monkeypatch, QMessageBox.StandardButton.Yes)
     assert win.close() is True
     assert not win.isVisible()
+
+
+# -- the Run menu and the toolbar --------------------------------------------------------------
+
+
+def test_the_run_menu_and_toolbar_have_start_pause_and_stop(qtbot):
+    win = MainWindow(AppSettings(route="wine"), checks_fn=lambda route: [], run_runner=None)
+    qtbot.addWidget(win)
+    run_menu = next(a.menu() for a in win.menuBar().actions() if a.text() == "&Run")
+    assert [a.text() for a in run_menu.actions()] == ["&Start", "&Pause", "&Stop"]
+    assert win.start_action.shortcut().toString() == "Ctrl+R"
+    assert win.pause_action.isCheckable()
+    assert win.run_toolbar.actions() == [
+        win.start_action,
+        win.pause_action,
+        win.stop_action,
+    ]
+
+
+def test_quit_during_a_run_asks_before_closing(
+    qtbot, monkeypatch, boron_data, write_setup, tmp_path
+):
+    path = write_setup(tmp_path / "w" / "run.yaml", boron_data)
+    win = MainWindow(
+        AppSettings(route="wine"),
+        checks_fn=lambda route: [],
+        run_runner=slow_runner,
+    )
+    qtbot.addWidget(win)
+    win.document.open(path)
+    win.run.start(ParallelChoice())
+    asked = []
+
+    def question(parent, title, text, *args, **kwargs):
+        asked.append(text)
+        return QMessageBox.StandardButton.No
+
+    monkeypatch.setattr(QMessageBox, "question", question)
+    assert win.close() is False
+    assert asked == [STOP_AND_QUIT_TEXT]
+    assert win.run.running
+    monkeypatch.setattr(
+        QMessageBox, "question", lambda *args, **kwargs: QMessageBox.StandardButton.Yes
+    )
+    with qtbot.waitSignal(win.run.finished, timeout=15_000):
+        win.close()

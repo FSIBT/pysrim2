@@ -1,5 +1,6 @@
 """The main window: the run tabs, the menus, the run setup and the guidance status bar."""
 
+import os
 from collections.abc import Callable
 from pathlib import Path
 
@@ -22,7 +23,10 @@ from srim.app.beam_tab import BeamTab
 from srim.app.document import DocumentModel
 from srim.app.geometry import GeometryTab
 from srim.app.guidance import Guidance, setup_guidance
+from srim.app.parallel_dialog import ParallelDialog
+from srim.app.run_control import RunController
 from srim.app.run_settings import RunSettingsTab
+from srim.app.runs import ParallelChoice, parallel_advice, plan_run
 from srim.app.scan_tab import ScanTab
 from srim.app.settings import AppSettings, save_settings
 from srim.app.setup import SetupWizard
@@ -30,6 +34,7 @@ from srim.app.statusbar import GuidanceBar
 from srim.app.theme import THEMES, apply_theme
 from srim.app.workers import run_in_thread
 from srim.cli import collect_checks
+from srim.installer.container import find_runtime
 from srim.spec import SpecError
 
 #: the editor tabs, by key (the first part of a guidance target) and tab name
@@ -41,6 +46,10 @@ EDITOR_TABS = (
 )
 #: the tabs that only say they arrive later in 0.12
 PLAIN_TABS = ("Progress", "Results")
+#: the question Quit asks while a run goes
+STOP_AND_QUIT_TEXT = "A run is going. Stop it and quit?"
+#: how long Quit waits for a stopped run to end before the window closes anyway
+QUIT_WAIT_MS = 30_000
 THEME_LABELS = {"system": "&System", "light": "&Light", "dark": "&Dark"}
 SETUP_TARGET = "setup"
 FILE_FILTER = "Run setup (*.yaml *.yml)"
@@ -57,6 +66,7 @@ class MainWindow(QMainWindow):
         checks_fn: Callable[[str | None], list[dict]] = collect_checks,
         parent=None,
         document: DocumentModel | None = None,
+        run_runner=None,
     ):
         super().__init__(parent)
         self.settings = settings
@@ -66,6 +76,8 @@ class MainWindow(QMainWindow):
         self._generation = 0
         self._setup_messages: list[Guidance] = []
         self.document = document if document is not None else DocumentModel(self)
+        #: the run of the setup (``run_runner`` replaces SRIM in tests; see srim.app.run_control)
+        self.run = RunController(self, runner=run_runner)
 
         # Editors are keyed "geometry", "beam", "settings" and "scan".
         self.editors: dict[str, QWidget] = {}
@@ -81,8 +93,11 @@ class MainWindow(QMainWindow):
                 editor = ScanTab(self.document, self)
             self.editors[key] = editor
             self.tabs.addTab(editor, name)
+        self.plain_tabs: dict[str, QLabel] = {}
         for name in PLAIN_TABS:
-            self.tabs.addTab(QLabel(f"{name}: arrives in a later release", self), name)
+            label = QLabel(f"{name}: arrives in a later release", self)
+            self.plain_tabs[name] = label
+            self.tabs.addTab(label, name)
         self.setCentralWidget(self.tabs)
 
         self.status = GuidanceBar(self)
@@ -91,6 +106,11 @@ class MainWindow(QMainWindow):
 
         self.theme_actions: dict[str, object] = {}
         self._build_menus()
+
+        self.run.started.connect(self._on_run_started)
+        self.run.finished.connect(self._on_run_ended)
+        self.run.failed.connect(self._on_run_failed)
+        self.run.notice.connect(lambda text: self._set_setup_messages([Guidance(text)]))
 
         self.document.changed.connect(self._on_document_changed)
         self._on_document_changed()
@@ -133,6 +153,19 @@ class MainWindow(QMainWindow):
         self.setup_action = setup_menu.addAction("Run setup…")
         self.setup_action.triggered.connect(self.open_setup)
 
+        run_menu = menus.addMenu("&Run")
+        self.start_action = run_menu.addAction("&Start")
+        self.start_action.setShortcut(QKeySequence("Ctrl+R"))
+        self.start_action.triggered.connect(self.start_run)
+        self.pause_action = run_menu.addAction("&Pause")
+        self.pause_action.setCheckable(True)
+        self.pause_action.toggled.connect(self.run.pause)
+        self.stop_action = run_menu.addAction("&Stop")
+        self.stop_action.triggered.connect(self.run.stop)
+        self.run_toolbar = self.addToolBar("Run")
+        for action in (self.start_action, self.pause_action, self.stop_action):
+            self.run_toolbar.addAction(action)
+
         view_menu = menus.addMenu("&View")
         theme_menu = view_menu.addMenu("&Theme")
         group = QActionGroup(self)
@@ -172,12 +205,83 @@ class MainWindow(QMainWindow):
 
     def _on_document_changed(self) -> None:
         document = self.document
-        self.undo_action.setEnabled(document.can_undo)
-        self.redo_action.setEnabled(document.can_redo)
         name = document.path.name if document.path is not None else "Untitled"
         self.setWindowTitle(f"pysrim2 — {name}[*]")
         self.setWindowModified(document.is_modified)
+        self._update_run_actions()
         self._show_status()
+
+    def _update_run_actions(self) -> None:
+        """The Run actions, and the File and Edit actions and editors a run locks."""
+        running = self.run.running
+        document = self.document
+        blocking = any(problem.blocking for problem in document.problems)
+        self.start_action.setEnabled(not running and not blocking)
+        self.pause_action.setEnabled(running)
+        self.stop_action.setEnabled(running)
+        if not running and self.pause_action.isChecked():
+            self.pause_action.setChecked(False)
+        self.new_action.setEnabled(not running)
+        self.open_action.setEnabled(not running)
+        self.undo_action.setEnabled(document.can_undo and not running)
+        self.redo_action.setEnabled(document.can_redo and not running)
+        for editor in self.editors.values():
+            editor.setEnabled(not running)
+
+    # --- runs --------------------------------------------------------------------------
+
+    def start_run(self) -> None:
+        """Start a run of the setup. An unsaved or changed setup is saved first (Save as when it
+        has no file yet); a long run is offered the parallel choice first."""
+        if self.run.running or self._closing:
+            return
+        self._commit_pending()
+        if self.document.path is None or self.document.is_modified:
+            self.save_setup()
+            if self.document.path is None or self.document.is_modified:
+                return  # cancelled, or the save failed (and said so)
+        choice = self._choose_parallel()
+        if choice is None:
+            return
+        try:
+            self.run.start(choice)
+        except SpecError as error:
+            QMessageBox.warning(self, "Run", str(error))
+
+    def _choose_parallel(self) -> ParallelChoice | None:
+        """The choice for the run: the dialog when the run is long enough to offer it, else one
+        worker. None when the user cancels or the setup cannot be planned (and says why)."""
+        document = self.document
+        cores = os.cpu_count() or 1
+        try:
+            scan = plan_run(document.doc, document.base_dir, ParallelChoice())
+            advice = parallel_advice(
+                scan, cores, self.settings.ions_per_s, find_runtime() is not None
+            )
+        except SpecError as error:
+            QMessageBox.warning(self, "Run", str(error))
+            return None
+        if advice is None:
+            return ParallelChoice()
+        ions = scan.ions if isinstance(scan.ions, int) else 0
+        dialog = ParallelDialog(advice, cores=cores, ions=ions, parent=self)
+        try:
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return None
+            return dialog.choice()
+        finally:
+            dialog.deleteLater()
+
+    def _on_run_started(self) -> None:
+        self._update_run_actions()
+        self.tabs.setCurrentWidget(self.plain_tabs["Progress"])
+
+    def _on_run_ended(self, _result=None) -> None:
+        self._update_run_actions()
+
+    def _on_run_failed(self, message: str) -> None:
+        self._update_run_actions()
+        self._set_setup_messages([Guidance(message)])
 
     def _commit_pending(self) -> None:
         """Commit the value typed in the focused field before a command uses the document.
@@ -335,6 +439,18 @@ class MainWindow(QMainWindow):
         )
 
     def closeEvent(self, event):  # noqa: N802 (Qt's name)
+        # A run goes on only if the user says so: Yes stops it and waits for its thread to end
+        # (the scan kills its running points), up to QUIT_WAIT_MS; then the window closes anyway.
+        if self.run.running:
+            buttons = QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            answer = QMessageBox.question(
+                self, "pysrim2", STOP_AND_QUIT_TEXT, buttons, QMessageBox.StandardButton.No
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                event.ignore()
+                return
+            self.run.stop()
+            self.run.wait(QUIT_WAIT_MS)
         # Unsaved edits are asked about first; "No" keeps the window open.
         if not self._may_discard():
             event.ignore()
