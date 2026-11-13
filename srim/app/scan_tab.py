@@ -594,8 +594,13 @@ class ScanTab(QWidget):
         text = self.precision_target.currentText().strip()
 
         def fn(scan: dict) -> None:
-            if scan.get("precision") is not None:
-                scan["precision"] = {**scan["precision"], "target": text}
+            precision = scan.get("precision")
+            if precision is None:
+                return
+            # A blank target that was never set is no change (and no undo step).
+            if precision.get("target", "") == text:
+                return
+            scan["precision"] = {**precision, "target": text}
 
         self._edit(fn)
 

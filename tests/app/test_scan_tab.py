@@ -248,3 +248,18 @@ def test_focus_target_seed_focuses_the_seed(qtbot, scanning, tab):
     qtbot.waitExposed(tab)
     tab.focus_target("seed")
     qtbot.waitUntil(lambda: QApplication.focusWidget() is tab.seed)
+
+
+def test_an_unchanged_blank_precision_target_is_not_an_edit(scanning, tab, monkeypatch):
+    pick(tab.mode, "precision")
+    edits = []
+    real_edit = scanning.edit
+    monkeypatch.setattr(scanning, "edit", lambda fn: (edits.append(fn), real_edit(fn)))
+    type_into(tab.precision_target.lineEdit(), "")
+    type_into(tab.precision_target.lineEdit(), "   ")
+    assert edits == []
+    assert scan_of(scanning)["precision"] == {}
+    type_into(tab.precision_target.lineEdit(), "mean_depth_nm")
+    assert len(edits) == 1
+    type_into(tab.precision_target.lineEdit(), "")
+    assert len(edits) == 2  # clearing a set target is an edit: it is stored as blank
