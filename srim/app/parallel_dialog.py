@@ -1,8 +1,9 @@
 """The dialog that offers a long run in parallel: the run's advice and the choice it makes.
 
 "Run in parallel" accepts with the boxes as they are, "Run as one" accepts with one worker and no
-split, and Cancel rejects. :meth:`ParallelDialog.choice` is the :class:`~srim.app.runs.ParallelChoice`
-the boxes say. The split and container boxes are shown only when the advice offers them.
+split, and Cancel rejects. :meth:`ParallelDialog.choice` is the
+:class:`~srim.app.runs.ParallelChoice` the boxes say. The split and container boxes are shown
+only when the advice offers them.
 """
 
 import math
@@ -20,9 +21,7 @@ from PySide6.QtWidgets import (
 from srim.app.runs import Advice, ParallelChoice
 from srim.ui.tui.state import format_hms
 
-SPLIT_NOTE = (
-    "Batches use different random numbers than one run; the results agree statistically."
-)
+SPLIT_NOTE = "Batches use different random numbers than one run; the results agree statistically."
 
 
 class ParallelDialog(QDialog):

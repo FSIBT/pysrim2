@@ -15,14 +15,6 @@ pytest.importorskip("PySide6")
 pytest.importorskip("pytestqt")
 
 from PySide6.QtWidgets import QFileDialog, QMessageBox  # noqa: E402
-
-from srim.app import run_control  # noqa: E402
-from srim.app.runs import ParallelChoice  # noqa: E402
-from srim.app.scan_model import new_scan  # noqa: E402
-from srim.app.settings import AppSettings, load_settings  # noqa: E402
-from srim.app.window import STOP_AND_QUIT_TEXT, MainWindow  # noqa: E402
-from srim.scan.executor import ScanBusy  # noqa: E402
-
 from runners import (  # noqa: E402
     GATE_VAR,
     failing_runner,
@@ -30,6 +22,13 @@ from runners import (  # noqa: E402
     gated_runner,
     slow_runner,
 )
+
+from srim.app import run_control  # noqa: E402
+from srim.app.runs import ParallelChoice  # noqa: E402
+from srim.app.scan_model import new_scan  # noqa: E402
+from srim.app.settings import AppSettings, load_settings  # noqa: E402
+from srim.app.window import STOP_AND_QUIT_TEXT, MainWindow  # noqa: E402
+from srim.scan.executor import ScanBusy  # noqa: E402
 
 #: the bound of a run that is expected to finish on its own
 RUN_TIMEOUT = 60_000
@@ -41,9 +40,7 @@ STAMP = re.compile(r"\d{8}T\d{6}Z(-\d+)?")
 @pytest.fixture
 def make_window(qtbot):
     def make(runner=fixture_runner, route="wine"):
-        win = MainWindow(
-            AppSettings(route=route), checks_fn=lambda _route: [], run_runner=runner
-        )
+        win = MainWindow(AppSettings(route=route), checks_fn=lambda _route: [], run_runner=runner)
         qtbot.addWidget(win)
         return win
 
@@ -135,7 +132,9 @@ def test_a_finished_run_remembers_the_rate_and_saves_it(win, qtbot):
 # -- stop, pause and the lock ----------------------------------------------------------------
 
 
-def test_stop_ends_a_slow_run_with_its_point_stopped_and_no_child_left(make_window, setup_file, qtbot):
+def test_stop_ends_a_slow_run_with_its_point_stopped_and_no_child_left(
+    make_window, setup_file, qtbot
+):
     win = make_window(slow_runner)
     win.document.open(setup_file)
     win.run.start(ParallelChoice())
@@ -240,9 +239,7 @@ def test_cancelling_the_save_starts_no_run(make_window, boron_data, monkeypatch)
     assert win.document.path is None
 
 
-def test_a_setup_that_cannot_be_planned_shows_the_error_and_starts_nothing(
-    win, monkeypatch
-):
+def test_a_setup_that_cannot_be_planned_shows_the_error_and_starts_nothing(win, monkeypatch):
     from srim.spec import SpecError
 
     def refuse(*args, **kwargs):
@@ -250,9 +247,7 @@ def test_a_setup_that_cannot_be_planned_shows_the_error_and_starts_nothing(
 
     shown = []
     monkeypatch.setattr(run_control, "plan_run", refuse)
-    monkeypatch.setattr(
-        "srim.app.window.plan_run", refuse
-    )  # the window plans the advice too
+    monkeypatch.setattr("srim.app.window.plan_run", refuse)  # the window plans the advice too
     monkeypatch.setattr(
         QMessageBox, "warning", lambda parent, title, text, *a, **k: shown.append(text)
     )

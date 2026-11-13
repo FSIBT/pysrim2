@@ -34,9 +34,7 @@ def make_dialog(qtbot):
 def test_the_text_gives_the_time_and_the_units(make_dialog):
     dialog = make_dialog()
     text = dialog.message.text()
-    assert text == (
-        "This run may take about 2:00:05 (3 units of work). Run it in parallel?"
-    )
+    assert text == ("This run may take about 2:00:05 (3 units of work). Run it in parallel?")
 
 
 def test_the_workers_start_at_the_default_and_stay_between_one_and_the_cores(make_dialog):
