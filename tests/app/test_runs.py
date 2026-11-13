@@ -2,7 +2,7 @@
 
 import math
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -49,7 +49,7 @@ BORON = {
     ],
 }
 
-NOW = datetime(2026, 11, 13, 9, 5, 7, tzinfo=timezone.utc)
+NOW = datetime(2026, 11, 13, 9, 5, 7, tzinfo=UTC)
 
 
 def spec(calculation=1, **changes):
@@ -176,9 +176,7 @@ def test_the_rate_is_per_calculation():
 def test_split_is_offered_only_for_one_unbatched_point():
     one = Scan(spec(calculation=2), ions=100_000, seed=1)
     assert parallel_advice(one, 8, {}, False).can_split is True
-    two = Scan(
-        spec(calculation=2), grid={"ion.energy_keV": [10.0, 20.0]}, ions=100_000, seed=1
-    )
+    two = Scan(spec(calculation=2), grid={"ion.energy_keV": [10.0, 20.0]}, ions=100_000, seed=1)
     advice = parallel_advice(two, 8, {}, False)
     assert advice.can_split is False
     assert advice.units == 2
