@@ -146,7 +146,9 @@ class DocumentModel(QObject):
         except UnicodeDecodeError as error:
             raise SpecError(f"{path} is not a text file: {error}") from error
         doc = from_spec(spec)
-        if section is not None and not scan_model.is_single_run_section(section, spec.seed):
+        if section is not None and not scan_model.is_single_run_section(
+            section, spec.seed, spec.number_ions
+        ):
             doc["_scan"] = scan_model.scan_from_section(section)
         self._doc = doc
         self._path = path

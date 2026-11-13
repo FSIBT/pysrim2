@@ -355,7 +355,7 @@ def test_a_scan_file_opens_and_saves_to_the_same_setup_and_scan(tmp_path, boron_
 def test_a_keep_seed_single_run_file_opens_as_a_plain_setup_and_round_trips_as_one(
     tmp_path, boron_data
 ):
-    wrapper = {"ions": 100, "seed": boron_data["seed"], "keep_seed": True}
+    wrapper = {"ions": 200, "extract": [], "seed": boron_data["seed"], "keep_seed": True}
     old = write_scan_file(tmp_path / "old" / "run.yaml", boron_data, wrapper)
     doc = DocumentModel()
     doc.open(old)
@@ -365,6 +365,24 @@ def test_a_keep_seed_single_run_file_opens_as_a_plain_setup_and_round_trips_as_o
     doc.save(new)
     assert RunSpec.from_yaml(new).to_dict() == RunSpec.from_yaml(old).to_dict()
     assert "scan" not in yaml.safe_load(new.read_text(encoding="utf-8"))
+
+
+@pytest.mark.parametrize(
+    "wrapper",
+    [
+        {"ions": 5000, "extract": [], "keep_seed": True},  # its own ion count
+        {"ions": 200, "keep_seed": True},  # no extract: the default extractor runs
+    ],
+)
+def test_a_one_point_scan_that_is_more_than_a_wrapper_stays_a_scan(tmp_path, boron_data, wrapper):
+    wrapper = {**wrapper, "seed": boron_data["seed"]}
+    old = write_scan_file(tmp_path / "old" / "run.yaml", boron_data, wrapper)
+    doc = DocumentModel()
+    doc.open(old)
+    assert "_scan" in doc.doc
+    new = fresh_folder(tmp_path) / "run.yaml"
+    doc.save(new)
+    assert Scan.from_yaml(new).to_dict() == Scan.from_yaml(old).to_dict()
 
 
 def test_a_scan_with_a_grid_opens_as_a_scan_and_round_trips_its_grid(tmp_path, boron_data):

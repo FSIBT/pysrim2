@@ -129,10 +129,11 @@ def scan_from_section(section: Mapping) -> dict:
     return scan
 
 
-def is_single_run_section(section: Mapping, seed) -> bool:
+def is_single_run_section(section: Mapping, seed, number_ions) -> bool:
     """True when ``section`` is only the wrapper of a single run (what :func:`srim.beam.beam_scan`
-    writes for a plain run): one point that keeps its seed, with nothing to vary, extract or batch,
-    and the setup's ``seed``. Such a section is not a scan: a file that has it opens as a plain
+    writes for a plain run): one point that keeps its seed, with nothing to vary or batch, an
+    explicitly empty ``extract`` (an absent one means the default extractor), and the setup's
+    ``seed`` and ion count. Such a section is not a scan: a file that has it opens as a plain
     setup, so its ions and the Scan tab follow the setup again (Start wraps the run as before).
     """
     return (
@@ -140,9 +141,10 @@ def is_single_run_section(section: Mapping, seed) -> bool:
         and not section.get("grid")
         and not section.get("points")
         and section.get("precision") is None
-        and not section.get("extract")
+        and section.get("extract") == []
         and not section.get("batch_ions")
         and section.get("seed") in (None, seed)
+        and section.get("ions") in (None, number_ions)
     )
 
 
