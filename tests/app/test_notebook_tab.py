@@ -329,6 +329,27 @@ def test_closing_the_window_stops_the_server(qtbot, tmp_path, notebooks):
     assert server.process.poll() is not None
 
 
+def test_quitting_the_app_stops_the_server_and_the_exports(qtbot, tmp_path, notebooks):
+    from PySide6.QtWidgets import QApplication
+
+    from srim.app import notebooks as notebooks_module
+    from srim.app.main import stop_on_quit
+
+    folder, _scan = run_folder(tmp_path, [DONE, DONE])
+    win = window_of(qtbot)
+    open_folder(qtbot, win, folder)
+    tab = start_and_wait(qtbot, win, win.start_marimo_action)
+    server = tab.server
+    app = QApplication.instance()
+    stop_on_quit(app, win)
+    app.aboutToQuit.emit()  # the quit runs with the window still open
+    assert not server.running
+    assert win.notebook_tab is None
+    assert notebooks_module._exports_stopped  # an export started now is refused
+    win.stop_background()  # idempotent: a second stop (the window's close) changes nothing
+    assert win.notebook_tab is None
+
+
 def test_stop_notebook_removes_the_tab(qtbot, tmp_path, notebooks):
     folder, _scan = run_folder(tmp_path, [DONE, DONE])
     win = window_of(qtbot)

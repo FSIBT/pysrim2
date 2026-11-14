@@ -48,6 +48,13 @@ def open_setup_when_needed(window: MainWindow) -> None:
     window.checked.connect(on_checked)
 
 
+def stop_on_quit(app: QApplication, window: MainWindow) -> None:
+    """Stop the window's child processes (the notebook server and the PDF exports) when the
+    application quits, also when it quits without this window being closed first. The window's
+    own close does the same, and both are idempotent. (A killed process runs no quit handler.)"""
+    app.aboutToQuit.connect(window.stop_background)
+
+
 def prepare_webengine() -> None:
     """Import the WebEngine module and share the OpenGL contexts, when PySide6 has WebEngine.
 
@@ -71,6 +78,7 @@ def main(argv: list[str] | None = None) -> int:
     settings = startup_settings()
     apply_theme(app, settings.theme)
     window = MainWindow(settings)
+    stop_on_quit(app, window)
     open_setup_when_needed(window)
     window.show()
     window.refresh_checks()

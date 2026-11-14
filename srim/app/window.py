@@ -795,8 +795,15 @@ class MainWindow(QMainWindow):
             window.close()
         # The notebook's server stops only once the window is going to close (not when Quit is
         # cancelled above); the server is a child process, so it must not outlive the window.
-        self._stop_notebook()
-        # a PDF export is a child process too: it is killed, and its late result is ignored
-        stop_exports()
+        self.stop_background()
         self._closing = True
         super().closeEvent(event)
+
+    def stop_background(self) -> None:
+        """Stop the notebook's server and the PDF exports, the window's child processes.
+
+        Called when the window closes and when the application quits (see
+        :func:`srim.app.main.stop_on_quit`). Safe to call more than once.
+        """
+        self._stop_notebook()
+        stop_exports()
