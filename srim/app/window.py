@@ -103,6 +103,9 @@ class MainWindow(QMainWindow):
         self._notebook_message: Guidance | None = None
         #: True while a PDF export runs (one at a time; its entries are greyed out meanwhile)
         self._pdf_busy = False
+        #: the export's problem (None when it can run), kept in a tuple once looked up; see
+        #: _pdf_export_problem
+        self._export_problem: tuple[str | None] | None = None
         self.document = document if document is not None else DocumentModel(self)
         #: the run of the setup (``run_runner`` replaces SRIM in tests; see srim.app.run_control)
         self.run = RunController(self, runner=run_runner)
@@ -325,7 +328,7 @@ class MainWindow(QMainWindow):
             action.setEnabled(problem is None)
             action.setToolTip(problem or "")
             action.setStatusTip(problem or "")
-        export_problem = pdf_problem()
+        export_problem = self._pdf_export_problem()
         if export_problem is None and self._pdf_busy:
             export_problem = EXPORTING_TEXT
         if export_problem is None and self.notebook_tab is None:
@@ -338,6 +341,19 @@ class MainWindow(QMainWindow):
             control.setToolTip(export_problem or "")
             control.setStatusTip(export_problem or "")
         self.stop_notebook_action.setEnabled(self.notebook_tab is not None)
+
+    def _pdf_export_problem(self) -> str | None:
+        """Why the PDF export cannot run, or None. It is looked up once and kept until the
+        installation checks finish (see :meth:`_forget_export_problem`), not on every change of
+        the document, because the lookup asks the filesystem."""
+        if self._export_problem is None:
+            self._export_problem = (pdf_problem(),)
+        return self._export_problem[0]
+
+    def _forget_export_problem(self) -> None:
+        """The installation may have changed (the checks have just run): the next look asks again."""
+        self._export_problem = None
+        self._update_notebook_actions()
 
     def start_notebook(self, kind: str) -> None:
         """Start a notebook of ``kind`` in the loaded or running run folder, in a Notebook tab.
@@ -381,7 +397,7 @@ class MainWindow(QMainWindow):
         tab = self.notebook_tab
         if self._closing or self._pdf_busy or tab is None or tab.folder is None:
             return
-        problem = pdf_problem()
+        problem = self._pdf_export_problem()
         if problem is not None:
             self._notebook_message = Guidance(problem)
             self._show_status()
@@ -761,12 +777,14 @@ class MainWindow(QMainWindow):
     def _checks_done(self, generation: int, checks: list[dict]) -> None:
         if not self._is_current(generation):
             return
+        self._forget_export_problem()
         self._set_setup_messages(setup_guidance(checks, self.settings.route))
         self.checked.emit(checks)
 
     def _checks_failed(self, generation: int, error: BaseException) -> None:
         if not self._is_current(generation):
             return
+        self._forget_export_problem()
         self._set_setup_messages(
             [Guidance(f"Could not check the installation: {error}", SETUP_TARGET)]
         )

@@ -354,6 +354,29 @@ def test_the_export_entries_say_reinstall_when_nbconvert_is_missing(qtbot, monke
 
 
 @needs_qt
+def test_the_export_problem_is_looked_up_on_checks_not_on_each_change(qtbot, monkeypatch):
+    from srim.app import window as window_module
+
+    looked = []
+
+    def counting():
+        looked.append(1)
+        return None
+
+    monkeypatch.setattr(window_module, "pdf_problem", counting)
+    win = _tab_helpers().window_of(qtbot)
+    assert len(looked) == 1  # the first need looks once
+    for _ in range(5):
+        win.document.edit(lambda data: data.update({"number_ions": 300}))
+        win._on_document_changed()
+    assert len(looked) == 1  # no lookup for the changes of the document
+    win._checks_done(win._generation, [])  # the installation checks ran: the next look asks again
+    assert len(looked) == 2
+    win._on_document_changed()
+    assert len(looked) == 2
+
+
+@needs_qt
 def test_the_export_entry_says_to_start_a_notebook_first(qtbot, monkeypatch):
     from srim.app import window as window_module
     from srim.app.notebook_tab import EXPORT_NO_NOTEBOOK_TEXT
