@@ -413,7 +413,10 @@ class NotebookServer:
 
 #: the PDF exports that run now (a window that closes stops them, see :func:`stop_exports`)
 _exports: set[subprocess.Popen] = set()
+#: guards the exports and the stopped flag: a spawn and a stop never miss each other
 _exports_lock = threading.Lock()
+#: True once :func:`stop_exports` ran: no export starts after it, for the rest of the process
+_exports_stopped = False
 
 
 def pdf_problem() -> str | None:
@@ -475,11 +478,35 @@ def _kill_export(process: subprocess.Popen) -> None:
 
 
 def stop_exports() -> None:
-    """Kill the PDF exports that run now (called when the window closes). Never raises."""
+    """Kill the PDF exports that run now and refuse any export started after this (the window
+    closes, or the app quits). Idempotent and never raises."""
+    global _exports_stopped
     with _exports_lock:
+        _exports_stopped = True
         processes = list(_exports)
     for process in processes:
         _kill_export(process)
+
+
+def _spawn_export(command: list[str], log, cwd: Path) -> subprocess.Popen:
+    """Start an export's process and register it, with the lock held: an export after
+    :func:`stop_exports` is refused and nothing is started. Raises :class:`NotebookServerError`."""
+    with _exports_lock:
+        if _exports_stopped:
+            raise NotebookServerError("the PDF export was stopped: the app is closing")
+        try:
+            process = subprocess.Popen(
+                command,
+                stdin=subprocess.DEVNULL,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                cwd=cwd,
+                **_group_options(),
+            )
+        except OSError as error:
+            raise NotebookServerError(f"could not start the PDF export: {error}") from error
+        _exports.add(process)
+    return process
 
 
 def _read_tail(handle, lines: int = LOG_LINES) -> str:
@@ -514,19 +541,7 @@ def export_pdf(kind: str, path, out, command_for=pdf_command) -> Path:
     try:
         command = command_for(kind, path, tmp)
         with tempfile.TemporaryFile() as log:
-            try:
-                process = subprocess.Popen(
-                    command,
-                    stdin=subprocess.DEVNULL,
-                    stdout=log,
-                    stderr=subprocess.STDOUT,
-                    cwd=path.parent,
-                    **_group_options(),
-                )
-            except OSError as error:
-                raise NotebookServerError(f"could not start the PDF export: {error}") from error
-            with _exports_lock:
-                _exports.add(process)
+            process = _spawn_export(command, log, path.parent)
             try:
                 try:
                     code = process.wait(timeout=PDF_SECONDS)

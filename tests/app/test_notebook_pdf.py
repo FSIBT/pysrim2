@@ -6,6 +6,7 @@ browser is started. The Qt tests use the notebook server and view fakes of test_
 """
 
 import importlib.util
+import subprocess
 import sys
 import threading
 import time
@@ -118,6 +119,64 @@ def test_an_export_that_takes_too_long_is_killed(tmp_path, monkeypatch):
     with pytest.raises(NotebookServerError, match="did not finish within 1 s"):
         export_pdf("marimo", tmp_path / "notebook.py", tmp_path / "n.pdf", command_for=fake("hang"))
     assert time.monotonic() - started < 30
+
+
+def test_stop_exports_kills_a_running_export(tmp_path):
+    out = tmp_path / "notebook.pdf"
+    errors = []
+
+    def run():
+        try:
+            export_pdf("marimo", tmp_path / "notebook.py", out, command_for=fake("hang"))
+        except NotebookServerError as error:
+            errors.append(error)
+
+    thread = threading.Thread(target=run)
+    thread.start()
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        with notebooks._exports_lock:
+            if notebooks._exports:
+                break
+        time.sleep(0.05)
+    started = time.monotonic()
+    notebooks.stop_exports()
+    thread.join(30)
+    assert not thread.is_alive()
+    assert time.monotonic() - started < 30
+    assert len(errors) == 1  # the killed export raises; the window ignores the late result
+    assert "failed with code" in str(errors[0])
+    assert not out.exists()
+    assert sorted(p.name for p in tmp_path.iterdir()) == []
+    with notebooks._exports_lock:
+        assert not notebooks._exports
+
+
+def test_an_export_started_after_stop_exports_spawns_nothing(tmp_path, monkeypatch):
+    spawned = []
+    real_popen = subprocess.Popen
+
+    def spy(*args, **kwargs):
+        spawned.append(args)
+        return real_popen(*args, **kwargs)
+
+    monkeypatch.setattr(notebooks.subprocess, "Popen", spy)
+    notebooks.stop_exports()
+    out = tmp_path / "notebook.pdf"
+    with pytest.raises(NotebookServerError, match="was stopped"):
+        export_pdf("marimo", tmp_path / "notebook.py", out, command_for=fake("write"))
+    assert spawned == []
+    assert not out.exists()
+    assert sorted(p.name for p in tmp_path.iterdir()) == []
+
+
+def test_an_export_that_exits_0_without_a_file_keeps_the_old_pdf(tmp_path):
+    out = tmp_path / "notebook.pdf"
+    out.write_bytes(b"old")
+    with pytest.raises(NotebookServerError, match="wrote no file"):
+        export_pdf("marimo", tmp_path / "notebook.py", out, command_for=fake("nothing"))
+    assert out.read_bytes() == b"old"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["notebook.pdf"]
 
 
 def test_export_is_greyed_with_the_reinstall_hint_when_nbconvert_is_missing(monkeypatch):

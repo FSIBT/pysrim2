@@ -42,6 +42,15 @@ def discard_without_asking(monkeypatch):
     )
 
 
+@pytest.fixture(autouse=True)
+def exports_allowed(monkeypatch):
+    """A window that closes stops the PDF exports for the rest of the process; each test starts
+    with exports allowed (monkeypatch restores the flag after the test)."""
+    from srim.app import notebooks
+
+    monkeypatch.setattr(notebooks, "_exports_stopped", False)
+
+
 @pytest.fixture
 def boron_data():
     """A complete setup in the shape of the boron reference case (one gold layer)."""
