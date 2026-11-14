@@ -22,6 +22,7 @@ from srim.app.beam_tab import BeamTab
 from srim.app.document import DocumentModel
 from srim.app.geometry import GeometryTab
 from srim.app.guidance import Guidance, setup_guidance
+from srim.app.notebook_tab import REPLACE_TEXT, NotebookTab, start_problem
 from srim.app.parallel_dialog import ParallelDialog
 from srim.app.progress_tab import ProgressTab
 from srim.app.recent import RUN, SETUP, add_recent, entry_problem, load_recent, new_entry
@@ -86,6 +87,8 @@ class MainWindow(QMainWindow):
         #: bumped by each change of the setup and each run's end: a late sampled read is ignored
         self._samples_token = 0
         self._setup_messages: list[Guidance] = []
+        #: the notebook tab while a notebook runs or is starting (None otherwise)
+        self.notebook_tab: NotebookTab | None = None
         self.document = document if document is not None else DocumentModel(self)
         #: the run of the setup (``run_runner`` replaces SRIM in tests; see srim.app.run_control)
         self.run = RunController(self, runner=run_runner)
@@ -190,6 +193,24 @@ class MainWindow(QMainWindow):
         for action in (self.start_action, self.pause_action, self.stop_action):
             self.run_toolbar.addAction(action)
 
+        notebook_menu = menus.addMenu("&Notebook")
+        self.notebook_menu = notebook_menu
+        self.start_marimo_action = notebook_menu.addAction("Start &marimo notebook")
+        self.start_marimo_action.triggered.connect(
+            lambda _checked=False: self.start_notebook("marimo")
+        )
+        self.start_jupyter_action = notebook_menu.addAction("Start &Jupyter notebook")
+        self.start_jupyter_action.triggered.connect(
+            lambda _checked=False: self.start_notebook("jupyter")
+        )
+        notebook_menu.addSeparator()
+        # Connected when the export is built; until then it is greyed out.
+        self.export_pdf_action = notebook_menu.addAction("Export &PDF…")
+        self.export_pdf_action.setEnabled(False)
+        notebook_menu.addSeparator()
+        self.stop_notebook_action = notebook_menu.addAction("S&top notebook")
+        self.stop_notebook_action.triggered.connect(self._stop_notebook)
+
         view_menu = menus.addMenu("&View")
         theme_menu = view_menu.addMenu("&Theme")
         group = QActionGroup(self)
@@ -274,6 +295,75 @@ class MainWindow(QMainWindow):
         self.redo_action.setEnabled(document.can_redo and not busy)
         for editor in self.editors.values():
             editor.setEnabled(not busy)
+        self._update_notebook_actions()
+
+    # --- notebooks -------------------------------------------------------------------
+
+    def _update_notebook_actions(self) -> None:
+        """The start entries say why they are greyed out (no run folder, a missing tool)."""
+        for action, kind in (
+            (self.start_marimo_action, "marimo"),
+            (self.start_jupyter_action, "jupyter"),
+        ):
+            problem = start_problem(kind, self.run.folder)
+            action.setEnabled(problem is None)
+            action.setToolTip(problem or "")
+            action.setStatusTip(problem or "")
+        self.stop_notebook_action.setEnabled(self.notebook_tab is not None)
+
+    def start_notebook(self, kind: str) -> None:
+        """Start a notebook of ``kind`` in the loaded or running run folder, in a Notebook tab.
+
+        A notebook that is already open is asked about first: Yes stops it, No keeps it.
+        """
+        if self._closing:
+            return
+        folder = self.run.folder
+        problem = start_problem(kind, folder)
+        if problem is not None:
+            self._set_setup_messages([Guidance(problem)])
+            return
+        if self.notebook_tab is not None:
+            buttons = QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            answer = QMessageBox.question(
+                self, "Notebook", REPLACE_TEXT, buttons, QMessageBox.StandardButton.No
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+            self._stop_notebook()
+        tab = NotebookTab(self)
+        tab.stopped.connect(lambda tab=tab: self._notebook_stopped(tab))
+        tab.failed.connect(self._notebook_failed)
+        self.notebook_tab = tab
+        self.tabs.addTab(tab, "Notebook")
+        self.tabs.setCurrentWidget(tab)
+        self._update_notebook_actions()
+        tab.start(kind, folder)
+
+    def _stop_notebook(self) -> None:
+        tab = self.notebook_tab
+        if tab is None:
+            return
+        tab.stop()
+        self._remove_notebook_tab()
+
+    def _notebook_stopped(self, tab: NotebookTab) -> None:
+        if tab is self.notebook_tab:
+            self._remove_notebook_tab()
+
+    def _notebook_failed(self, message: str) -> None:
+        self._set_setup_messages([Guidance(message)])
+
+    def _remove_notebook_tab(self) -> None:
+        tab = self.notebook_tab
+        if tab is None:
+            return
+        self.notebook_tab = None
+        index = self.tabs.indexOf(tab)
+        if index >= 0:
+            self.tabs.removeTab(index)
+        tab.deleteLater()
+        self._update_notebook_actions()
 
     # --- recent setups and runs ----------------------------------------------------------
 
@@ -615,5 +705,8 @@ class MainWindow(QMainWindow):
         # The pop-outs of the Results tab are windows of their own: they close with this window.
         for window in list(self.results.pop_outs):
             window.close()
+        # The notebook's server stops only once the window is going to close (not when Quit is
+        # cancelled above); the server is a child process, so it must not outlive the window.
+        self._stop_notebook()
         self._closing = True
         super().closeEvent(event)

@@ -1,6 +1,8 @@
 """``pysrim2 app``: start the desktop app. This module is the only one that imports Qt."""
 
-from PySide6.QtCore import QTimer
+import importlib.util
+
+from PySide6.QtCore import QCoreApplication, Qt, QTimer
 from PySide6.QtWidgets import QApplication
 
 from srim.app.guidance import setup_guidance
@@ -46,9 +48,25 @@ def open_setup_when_needed(window: MainWindow) -> None:
     window.checked.connect(on_checked)
 
 
+def prepare_webengine() -> None:
+    """Import the WebEngine module and share the OpenGL contexts, when PySide6 has WebEngine.
+
+    WebEngine must be imported and the attribute set before the QApplication is created, so this
+    runs first in :func:`main`. Without WebEngine nothing happens (the notebook entries then say
+    how to install it).
+    """
+    if importlib.util.find_spec("PySide6.QtWebEngineWidgets") is None:
+        return
+    QCoreApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
+    import PySide6.QtWebEngineWidgets  # noqa: F401 (imported for WebEngine's start-up)
+
+
 def main(argv: list[str] | None = None) -> int:
     """Show the main window and run the event loop until it closes; return the exit code."""
-    app = QApplication.instance() or QApplication(["pysrim2", *(argv or [])])
+    app = QApplication.instance()
+    if app is None:
+        prepare_webengine()
+        app = QApplication(["pysrim2", *(argv or [])])
     app.setApplicationName("pysrim2")
     settings = startup_settings()
     apply_theme(app, settings.theme)

@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `srim.notebook.load_run(folder)` reads a run or scan folder, finished or not, for notebooks.
 - The `app` extra now includes the notebook tools (marimo, JupyterLab) and the PDF export; `pysrim2 install app` also downloads the Chromium the export prints with.
+- The desktop app's Notebook menu starts a marimo or Jupyter notebook of the open run folder in a Notebook tab, with Reload, Open in browser and Stop. A banner says when the run has results the notebook has not loaded yet.
 
 ## [0.12.0] - 2026-11-13
 
