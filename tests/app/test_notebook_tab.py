@@ -101,9 +101,7 @@ def notebooks(monkeypatch):
 
 
 def window_of(qtbot, refresh=5):
-    win = MainWindow(
-        AppSettings(route="wine", refresh_seconds=refresh), checks_fn=lambda route: []
-    )
+    win = MainWindow(AppSettings(route="wine", refresh_seconds=refresh), checks_fn=lambda route: [])
     qtbot.addWidget(win)
     return win
 
@@ -285,7 +283,9 @@ def test_starting_a_second_notebook_asks_first_and_no_keeps_the_first(
     open_folder(qtbot, win, folder)
     first = start_and_wait(qtbot, win, win.start_marimo_action)
 
-    monkeypatch.setattr(window_module.QMessageBox, "question", answer(QMessageBox.StandardButton.No))
+    monkeypatch.setattr(
+        window_module.QMessageBox, "question", answer(QMessageBox.StandardButton.No)
+    )
     win.start_jupyter_action.trigger()
     assert asked == [REPLACE_TEXT]
     assert win.notebook_tab is first
@@ -347,4 +347,3 @@ def test_a_late_count_after_the_tab_stopped_is_ignored(qtbot, tmp_path, notebook
     tab.stop()
     tab._counted(generation, (5, 0))  # a count that arrives after the stop
     assert not tab.banner.isVisible()
-
