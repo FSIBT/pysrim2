@@ -439,12 +439,14 @@ when no notebook is open, and while an export runs it says *Exporting the notebo
 run folder. The starter is copied in only when that file is missing, so an edited notebook is kept
 when you start it again. The app's own files go in `.pysrim2-notebook/` in the run folder: `reload`
 (what Reload touches), `loaded.json` (how many points the notebook has loaded), and for each server
-a `token-<tag>` file and a `server-<tag>.log` file, both readable by you only. The token file is
-removed when the server stops, and the token is taken out of the log then too.
+a `token-<tag>` file and a `server-<tag>.log` file, both readable by you only (POSIX file modes, 0600;
+on Windows the folder's permissions apply). The token file is removed when the server stops, and the
+token is taken out of the log then too. The folder keeps the newest five server logs.
 
 **What the starter does.** Both starters read the run folder with `srim.notebook.load_run` and show
-the scan's table, and a plot. For a scan with more than one point the plot is the scan's extracted
-value; otherwise it is the ionisation of the first point. With no point that has results, they say
+the scan's table, and a plot. For a finished scan with more than one point the plot is the scan's extracted
+value; otherwise (one point, or a run that has not finished, whose table has no extracted values) it is
+the ionisation of the first point that has results. With no point that has results, they say
 so. The marimo starter has a **Follow the run** box (every 5 s, 10 s, 30 s or 1 min) that loads the
 run again at that interval; the Jupyter starter has no timer. Its loading cell reads the run and
 marks it as loaded; the cells after it show the table and the plot.
@@ -466,8 +468,10 @@ notebook's token, so treat it like a password. The server listens on 127.0.0.1 o
 not the network), and the token is random for each start. It is never on a command line.
 
 **Stop notebook** (the button, or **Notebook > Stop notebook**) stops the server and closes the tab. The
-notebook also stops when the window closes. On Windows the server is stopped together with the
-processes it started. Stopping does not change the notebook file or the results.
+notebook also stops when the window closes, and when the app quits. On Windows the server is stopped
+together with the processes it started. Stopping does not change the notebook file or the results.
+If the app is killed (not closed), the notebook server may keep running, and its token file stays in
+`.pysrim2-notebook` until the server is stopped.
 
 **Export PDF…** (the button in the tab, or **Notebook > Export PDF…**) asks for a file, by default
 `notebook.pdf` in the run folder. The export runs in the background, one at a time, and the status bar
