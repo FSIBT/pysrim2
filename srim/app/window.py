@@ -22,7 +22,16 @@ from srim.app.beam_tab import BeamTab
 from srim.app.document import DocumentModel
 from srim.app.geometry import GeometryTab
 from srim.app.guidance import Guidance, setup_guidance
-from srim.app.notebook_tab import REPLACE_TEXT, NotebookTab, start_problem
+from srim.app.notebook_tab import (
+    EXPORT_FAILED_TEXT,
+    EXPORT_NO_NOTEBOOK_TEXT,
+    EXPORTED_TEXT,
+    EXPORTING_TEXT,
+    REPLACE_TEXT,
+    NotebookTab,
+    start_problem,
+)
+from srim.app.notebooks import export_pdf, notebook_path, pdf_problem, stop_exports
 from srim.app.parallel_dialog import ParallelDialog
 from srim.app.progress_tab import ProgressTab
 from srim.app.recent import RUN, SETUP, add_recent, entry_problem, load_recent, new_entry
@@ -92,6 +101,8 @@ class MainWindow(QMainWindow):
         #: a notebook's start problem or failure; kept until the next start (a setup refresh
         #: replaces the setup messages, not this one)
         self._notebook_message: Guidance | None = None
+        #: True while a PDF export runs (one at a time; its entries are greyed out meanwhile)
+        self._pdf_busy = False
         self.document = document if document is not None else DocumentModel(self)
         #: the run of the setup (``run_runner`` replaces SRIM in tests; see srim.app.run_control)
         self.run = RunController(self, runner=run_runner)
@@ -210,6 +221,7 @@ class MainWindow(QMainWindow):
         # Connected when the export is built; until then it is greyed out.
         self.export_pdf_action = notebook_menu.addAction("Export &PDF…")
         self.export_pdf_action.setEnabled(False)
+        self.export_pdf_action.triggered.connect(lambda _checked=False: self.export_notebook_pdf())
         notebook_menu.addSeparator()
         self.stop_notebook_action = notebook_menu.addAction("S&top notebook")
         self.stop_notebook_action.triggered.connect(self._stop_notebook)
@@ -303,7 +315,8 @@ class MainWindow(QMainWindow):
     # --- notebooks -------------------------------------------------------------------
 
     def _update_notebook_actions(self) -> None:
-        """The start entries say why they are greyed out (no run folder, a missing tool)."""
+        """The start entries say why they are greyed out (no run folder, a missing tool); so do
+        the PDF export entries (no notebook, a missing package or browser, an export running)."""
         for action, kind in (
             (self.start_marimo_action, "marimo"),
             (self.start_jupyter_action, "jupyter"),
@@ -312,6 +325,18 @@ class MainWindow(QMainWindow):
             action.setEnabled(problem is None)
             action.setToolTip(problem or "")
             action.setStatusTip(problem or "")
+        export_problem = pdf_problem()
+        if export_problem is None and self._pdf_busy:
+            export_problem = EXPORTING_TEXT
+        if export_problem is None and self.notebook_tab is None:
+            export_problem = EXPORT_NO_NOTEBOOK_TEXT
+        controls = [self.export_pdf_action]
+        if self.notebook_tab is not None:
+            controls.append(self.notebook_tab.pdf_button)
+        for control in controls:
+            control.setEnabled(export_problem is None)
+            control.setToolTip(export_problem or "")
+            control.setStatusTip(export_problem or "")
         self.stop_notebook_action.setEnabled(self.notebook_tab is not None)
 
     def start_notebook(self, kind: str) -> None:
@@ -339,11 +364,66 @@ class MainWindow(QMainWindow):
         tab = NotebookTab(self)
         tab.stopped.connect(lambda tab=tab: self._notebook_stopped(tab))
         tab.failed.connect(self._notebook_failed)
+        tab.pdf_button.clicked.connect(lambda _checked=False: self.export_notebook_pdf())
         self.notebook_tab = tab
         self.tabs.addTab(tab, "Notebook")
         self.tabs.setCurrentWidget(tab)
         self._update_notebook_actions()
         tab.start(kind, folder)
+
+    def export_notebook_pdf(self) -> None:
+        """Export the open notebook to a PDF file that the user chooses, in a thread.
+
+        The file dialog asks before it replaces a file. The result (or the failure, with the
+        end of the export's output) goes to the status bar, and a result that comes after the
+        window closed is ignored.
+        """
+        tab = self.notebook_tab
+        if self._closing or self._pdf_busy or tab is None or tab.folder is None:
+            return
+        problem = pdf_problem()
+        if problem is not None:
+            self._notebook_message = Guidance(problem)
+            self._show_status()
+            return
+        kind = tab.kind
+        source = notebook_path(tab.folder, kind)
+        default = tab.folder / "notebook.pdf"
+        chosen, _filter = QFileDialog.getSaveFileName(
+            self, "Export the notebook to PDF", str(default), "PDF files (*.pdf)"
+        )
+        if not chosen:
+            return
+        out = Path(chosen)
+        if out.suffix.lower() != ".pdf":
+            out = out.with_name(out.name + ".pdf")
+        self._pdf_busy = True
+        self._notebook_message = Guidance(EXPORTING_TEXT)
+        self._update_notebook_actions()
+        self._show_status()
+        run_in_thread(
+            lambda: export_pdf(kind, source, out),
+            self._pdf_exported,
+            self._pdf_failed,
+        )
+
+    def _pdf_exported(self, written: Path) -> None:
+        self._pdf_busy = False
+        if self._closing:
+            return
+        self._update_notebook_actions()
+        self._notebook_message = Guidance(f"{EXPORTED_TEXT}{written}")
+        self._show_status()
+
+    def _pdf_failed(self, error: BaseException) -> None:
+        self._pdf_busy = False
+        if self._closing:
+            return
+        self._update_notebook_actions()
+        self._notebook_message = Guidance(
+            f"{EXPORT_FAILED_TEXT}{str(error).strip() or type(error).__name__}"
+        )
+        self._show_status()
 
     def _stop_notebook(self) -> None:
         tab = self.notebook_tab
@@ -716,5 +796,7 @@ class MainWindow(QMainWindow):
         # The notebook's server stops only once the window is going to close (not when Quit is
         # cancelled above); the server is a child process, so it must not outlive the window.
         self._stop_notebook()
+        # a PDF export is a child process too: it is killed, and its late result is ignored
+        stop_exports()
         self._closing = True
         super().closeEvent(event)

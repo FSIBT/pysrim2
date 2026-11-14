@@ -11,6 +11,7 @@ import importlib.util
 import os
 import secrets
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -24,6 +25,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 import srim
+from srim.installer.app import chromium_available
 from srim.notebook import NOTEBOOK_DIR, RELOAD_FILE
 
 KINDS = ("marimo", "jupyter")
@@ -51,6 +53,16 @@ JUPYTER_TOKEN_ENV = "JUPYTER_TOKEN"
 PROBE_SECONDS = 2.0
 #: a log larger than this is not rewritten to hide the token (it would be read whole)
 REDACT_MAX_BYTES = 50 * 1024 * 1024
+#: seconds that :func:`export_pdf` may take (a notebook with its outputs can take a while)
+PDF_SECONDS = 600
+#: the packages that the PDF export needs (their top-level names; the browser is checked too)
+PDF_PACKAGES = ("nbconvert", "nbformat", "playwright")
+#: the text that playwright prints when its Chromium is not downloaded
+MISSING_BROWSER_TEXT = "Executable doesn't exist"
+#: the end of an export's output that is searched for :data:`MISSING_BROWSER_TEXT`
+SEARCH_BYTES = 256 * 1024
+#: seconds that a killed PDF export is waited for
+KILL_WAIT_SECONDS = 5.0
 
 # a proxy setting in the environment must not take the readiness checks away from the server
 _OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -99,6 +111,11 @@ def tool_problem(kind: str) -> str | None:
 
 class NotebookServerError(RuntimeError):
     """A notebook server that did not start, exited, or did not answer in time."""
+
+
+def _installed(name: str) -> bool:
+    """True when the top-level package ``name`` can be found (it is not imported)."""
+    return importlib.util.find_spec(name) is not None
 
 
 def free_port() -> int:
@@ -390,3 +407,150 @@ class NotebookServer:
         if self.token:
             text = text.replace(self.token, "<token>")
         return text
+
+
+# --- PDF export -------------------------------------------------------------------------
+
+#: the PDF exports that run now (a window that closes stops them, see :func:`stop_exports`)
+_exports: set[subprocess.Popen] = set()
+_exports_lock = threading.Lock()
+
+
+def pdf_problem() -> str | None:
+    """Why the notebook PDF export cannot run now, or None: :data:`REINSTALL_TEXT` when nbconvert,
+    nbformat or playwright is missing, or the Chromium of playwright is not downloaded."""
+    if any(not _installed(name) for name in PDF_PACKAGES):
+        return REINSTALL_TEXT
+    if not chromium_available():
+        return REINSTALL_TEXT
+    return None
+
+
+def pdf_command(kind: str, path, out) -> list[str]:
+    """The command that writes the PDF of the notebook ``path`` of ``kind`` to ``out``.
+
+    marimo runs the notebook in a new process to export it; Jupyter's WebPDF exporter prints
+    the notebook with Chromium (playwright's).
+    """
+    _check_kind(kind)
+    path, out = Path(path), Path(out)
+    if kind == "marimo":
+        return [sys.executable, "-m", "marimo", "export", "pdf", str(path), "-o", str(out)]
+    return [
+        sys.executable,
+        "-m",
+        "nbconvert",
+        "--to",
+        "webpdf",
+        "--WebPDFExporter.allow_chromium_download=True",
+        "--output",
+        out.stem,
+        "--output-dir",
+        str(out.parent),
+        str(path),
+    ]
+
+
+def _group_options() -> dict:
+    """The Popen options that put a child in a group of its own, so that all its processes can
+    be killed together (a new session on POSIX, a new process group on Windows)."""
+    if _is_windows():
+        return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+    return {"start_new_session": True}
+
+
+def _kill_export(process: subprocess.Popen) -> None:
+    """Kill an export's process and the processes it started, then wait a little. Never raises."""
+    if _is_windows():
+        _taskkill_tree(process.pid)
+    else:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except OSError:
+            pass
+    try:
+        process.wait(timeout=KILL_WAIT_SECONDS)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
+def stop_exports() -> None:
+    """Kill the PDF exports that run now (called when the window closes). Never raises."""
+    with _exports_lock:
+        processes = list(_exports)
+    for process in processes:
+        _kill_export(process)
+
+
+def _read_tail(handle, lines: int = LOG_LINES) -> str:
+    """The last ``lines`` lines of a binary file object (from its start), decoded."""
+    handle.seek(0)
+    text = b"".join(deque(handle, maxlen=lines)).decode("utf-8", errors="replace")
+    return text.rstrip()
+
+
+def _read_end(handle) -> str:
+    """The last :data:`SEARCH_BYTES` bytes of a binary file object, decoded."""
+    handle.seek(0, os.SEEK_END)
+    handle.seek(max(0, handle.tell() - SEARCH_BYTES))
+    return handle.read().decode("utf-8", errors="replace")
+
+
+def export_pdf(kind: str, path, out, command_for=pdf_command) -> Path:
+    """Write the PDF of the notebook ``path`` of ``kind`` to ``out`` and return ``out``.
+
+    The command (``command_for(kind, path, tmp)``, :func:`pdf_command` by default) runs in the
+    notebook's folder with no input, and its output goes to a temporary file, not a pipe. It
+    writes a temporary file next to ``out``, which replaces ``out`` only when the command
+    succeeded, so a failed export leaves an existing PDF as it was. The command is killed after
+    :data:`PDF_SECONDS` seconds.
+
+    Raises :class:`NotebookServerError` with the end of the output when the command fails, times
+    out or writes no file. A failure with playwright's missing-browser message says to reinstall
+    the app first.
+    """
+    path, out = Path(path), Path(out)
+    tmp = out.with_name(f".{out.stem}.{secrets.token_hex(4)}.pdf")
+    try:
+        command = command_for(kind, path, tmp)
+        with tempfile.TemporaryFile() as log:
+            try:
+                process = subprocess.Popen(
+                    command,
+                    stdin=subprocess.DEVNULL,
+                    stdout=log,
+                    stderr=subprocess.STDOUT,
+                    cwd=path.parent,
+                    **_group_options(),
+                )
+            except OSError as error:
+                raise NotebookServerError(f"could not start the PDF export: {error}") from error
+            with _exports_lock:
+                _exports.add(process)
+            try:
+                try:
+                    code = process.wait(timeout=PDF_SECONDS)
+                except subprocess.TimeoutExpired as error:
+                    _kill_export(process)
+                    tail = _read_tail(log)
+                    raise NotebookServerError(
+                        f"the PDF export did not finish within {PDF_SECONDS} s:\n{tail}"
+                    ) from error
+            finally:
+                with _exports_lock:
+                    _exports.discard(process)
+                if process.poll() is None:
+                    _kill_export(process)
+            if code != 0:
+                if MISSING_BROWSER_TEXT in _read_end(log):
+                    raise NotebookServerError(f"{REINSTALL_TEXT}\n{_read_tail(log)}")
+                raise NotebookServerError(
+                    f"the PDF export failed with code {code}:\n{_read_tail(log)}"
+                )
+            if not tmp.is_file():
+                raise NotebookServerError(f"the PDF export wrote no file:\n{_read_tail(log)}")
+        os.replace(tmp, out)
+    except BaseException:
+        _remove_quietly(tmp)
+        raise
+    return out

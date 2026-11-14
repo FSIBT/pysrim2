@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `srim.notebook.load_run(folder)` reads a run or scan folder, finished or not, for notebooks.
 - The `app` extra now includes the notebook tools (marimo, JupyterLab), QtWebEngine (`PySide6-WebEngine`, PySide6 6.12 or newer) for the embedded notebook and the PDF export; `pysrim2 install app` also downloads the Chromium the export prints with.
 - The desktop app's Notebook menu starts a marimo or Jupyter notebook of the open run folder in a Notebook tab, with Reload, Open in browser and Stop. A banner says when the run has results the notebook has not loaded yet.
+- The desktop app's Notebook menu (and the notebook tab) has Export PDF…, which writes the open notebook to a PDF file that you choose: marimo runs the notebook to print it, Jupyter prints it with Chromium. The export runs in the background, one at a time, and a missing browser says to reinstall the app first.
 
 ## [0.12.0] - 2026-11-13
 

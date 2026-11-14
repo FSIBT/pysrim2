@@ -7,6 +7,9 @@ not loaded yet (the counts are read in a thread every ``settings.refresh_seconds
 tab is visible). Reload touches the reload file for marimo; Jupyter loads new results when its
 loading cell runs again, so Reload says so.
 
+Export PDF… (the button here and the Notebook menu) is connected by the window, which runs
+:func:`srim.app.notebooks.export_pdf` in a thread and reports the result in the status bar.
+
 This module is the Qt side of the notebook support. The server and the files are in
 :mod:`srim.app.notebooks` (Qt-free). :func:`webengine_available` lives here because it asks about
 a Qt module.
@@ -35,6 +38,10 @@ REPLACE_TEXT = "A notebook is open. Stop it and start this one?"
 STARTING_TEXT = "Starting the notebook…"
 RELOAD_FAILED_TEXT = "Could not reload the notebook: "
 START_FAILED_TEXT = "The notebook did not start: "
+EXPORT_NO_NOTEBOOK_TEXT = "Start a notebook first"
+EXPORTING_TEXT = "Exporting the notebook to PDF…"
+EXPORTED_TEXT = "Exported the notebook to "
+EXPORT_FAILED_TEXT = "The PDF export failed: "
 
 
 def webengine_available() -> bool:

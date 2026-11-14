@@ -92,6 +92,10 @@ def chromium_available() -> bool:
 
     A browser folder is ``<name>-<revision>`` (name with ``_`` for ``-``) under the browsers
     folder, and playwright writes ``INSTALLATION_COMPLETE`` in it when the download is done.
+
+    The layout (the manifest, the folder names, the marker file) is playwright's private layout,
+    not a documented interface: a playwright release that changes it makes this check say the
+    browser is missing, so the app asks for a reinstall rather than failing later.
     """
     manifest = _playwright_manifest()
     if manifest is None or not manifest.is_file():
