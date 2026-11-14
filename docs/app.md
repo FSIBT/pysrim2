@@ -13,7 +13,11 @@ they work without it.
 
 ## Install
 
-The app needs the `app` extra (PySide6, the Qt bindings, and matplotlib). PySide6 is a download of over 100 MB (about 340 MB installed), so it is an extra rather than part of the default install, and the container image stays small. Install it into the pysrim2 you already use:
+The app needs the `app` extra. It holds PySide6 (the Qt bindings: its Essentials, Addons and
+WebEngine parts, 6.12 or newer), matplotlib, the notebook tools marimo and JupyterLab, nbformat,
+and nbconvert with playwright for the PDF export. PySide6 alone is a download of over 100 MB (about
+340 MB installed), so the extra is not part of the default install, and the container image stays
+small. Install it into the pysrim2 you already use:
 
 ```shell
 pysrim2 install app
@@ -21,15 +25,20 @@ pysrim2 install app
 
 `pysrim2 install app` runs the install that matches how pysrim2 was installed. A
 `uv tool` install is reinstalled with the extras it has plus `app`; a pip install gets
-`pysrim2[app]` at the same version. You can also install the extra directly:
+`pysrim2[app]` at the same version. It then downloads the Chromium that the PDF export prints
+with (playwright's `chromium` step). You can also install the extra directly:
 
 ```shell
 uv tool install "pysrim2[app]"
 pip install "pysrim2[app]"
 ```
 
-In a source checkout (an editable install) the command does not run anything; it prints
-`uv sync --extra app` for you to run in the checkout.
+A direct install does not download the Chromium. Run `pysrim2 install app` as well, or the PDF
+export says to reinstall the app.
+
+In a source checkout (an editable install) the command does not run the install; it prints
+`uv sync --extra app` for you to run in the checkout. Then download the Chromium with
+`uv run python -m playwright install chromium`.
 
 The app needs Python 3.14 or older for now: PySide6 does not support Python 3.15 yet. On
 Python 3.15 the `app` extra installs nothing, and `pysrim2 install app` and `pysrim2 app`
@@ -414,6 +423,62 @@ Before it writes anything, the save checks every file it would write. If one exi
 before it is replaced, and only the files the save would write are removed. The save runs in a
 thread, and its status line says *Saving…*.
 
+## Notebooks
+
+**Notebook** starts a notebook of the open run folder, in a **Notebook** tab. **Start marimo
+notebook** and **Start Jupyter notebook** use the two tools; the tab shows the notebook as a web page
+inside the window. Only one notebook is open at a time. Starting another one asks **A notebook is
+open. Stop it and start this one?**: Yes stops the open notebook, No keeps it.
+
+A menu entry that cannot be used is greyed out, and its tooltip and status bar say why. Starting
+needs a run folder (*Run the setup or open a run folder first*). A missing tool or WebEngine says
+*Reinstall the app: pysrim2 install app*. **Export PDF…** is greyed out with *Start a notebook first*
+when no notebook is open, and while an export runs it says *Exporting the notebook to PDF…*.
+
+**Where it is saved.** The notebook is `notebook.py` (marimo) or `notebook.ipynb` (Jupyter) in the
+run folder. The starter is copied in only when that file is missing, so an edited notebook is kept
+when you start it again. The app's own files go in `.pysrim2-notebook/` in the run folder: `reload`
+(what Reload touches), `loaded.json` (how many points the notebook has loaded), and for each server
+a `token-<tag>` file and a `server-<tag>.log` file, both readable by you only. The token file is
+removed when the server stops, and the token is taken out of the log then too.
+
+**What the starter does.** Both starters read the run folder with `srim.notebook.load_run` and show
+the scan's table, and a plot. For a scan with more than one point the plot is the scan's extracted
+value; otherwise it is the ionisation of the first point. With no point that has results, they say
+so. The marimo starter has a **Follow the run** box (every 5 s, 10 s, 30 s or 1 min) that loads the
+run again at that interval; the Jupyter starter has no timer. Its loading cell reads the run and
+marks it as loaded; the cells after it show the table and the plot.
+
+**The banner.** When the run has results that the notebook has not loaded, the tab shows *New results
+since the notebook loaded them.* The banner appears only after the notebook has loaded the run once,
+and the app checks for new results every few seconds while the tab is shown.
+
+- **Reload** for marimo touches the reload file: the notebook loads the new results, and the banner
+  goes away.
+- **Reload** for Jupyter cannot reload the notebook for you. It says *Run the first cell again to load
+  them.* and the banner adds the same text, so run the first cell.
+
+A notebook stays on the run folder it was started with. A new run does not switch it: to see the new
+run, start the notebook again.
+
+**Open in browser** opens the notebook's address in your default browser. The address holds the
+notebook's token, so treat it like a password. The server listens on 127.0.0.1 only (this computer,
+not the network), and the token is random for each start. It is never on a command line.
+
+**Stop notebook** (the button, or **Notebook > Stop notebook**) stops the server and closes the tab. The
+notebook also stops when the window closes. On Windows the server is stopped together with the
+processes it started. Stopping does not change the notebook file or the results.
+
+**Export PDF…** (the button in the tab, or **Notebook > Export PDF…**) asks for a file, by default
+`notebook.pdf` in the run folder. The export runs in the background, one at a time, and the status bar
+says when it is done or why it failed. A marimo PDF includes the code cells. A Jupyter PDF is printed
+by nbconvert with Chromium, which is downloaded by `pysrim2 install app` (see Install). The file is
+written beside the one you chose and replaces it only when the export succeeds.
+
+If a Jupyter PDF export fails, check your own Jupyter configuration in `~/.jupyter`: nbconvert reads
+it for the export, and a broken file there makes the export fail. Fix or move that file and export
+again.
+
 ## Recent runs
 
 **File > Open recent** lists the last ten setups and run folders, newest first. A setup is recorded
@@ -445,11 +510,12 @@ proposes `run.yaml` in the same folder as `run-runs`.
 - **Setup > Run setup…**
 - **Run > Start** (Ctrl+R), **Pause** and **Stop** (also on the toolbar)
 - **View > Theme > System, Light, Dark**
+- **Notebook > Start marimo notebook**, **Start Jupyter notebook**, **Export PDF…** and **Stop notebook**
 - **Help > Documentation** (opens this documentation) and **About pysrim2**
 
-The window has these tabs: **Geometry**, **Beam**, **Run settings**, **Scan**, **Progress** and
-**Results**. The first four edit the run setup. **Progress** shows a run as it goes, and
-**Results** its results.
+The window has these tabs: **Geometry**, **Beam**, **Run settings**, **Scan**, **Progress**,
+**Results** and, while a notebook runs, **Notebook**. The first four edit the run setup. **Progress**
+shows a run as it goes, and **Results** its results.
 
 ## Settings file
 

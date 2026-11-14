@@ -172,6 +172,7 @@ echo $?  # 0 all points done or cached; 1 a point failed or is missing; 2 bad in
   the extracted values (`mean_depth_A`, ...), `<value>_err` (NaN for a fixed ion count), `n_ions`,
   `seeds`, `status` (`done`, `cached`, `failed`, `max_ions`, `stopped`, `missing`), `error`, `path`.
   Read it with `pandas.read_csv`.
+- `srim.notebook.load_run(folder)` reads a run or scan folder, finished or not (`run.points()`, `run.point(i)`, `run.result.table`).
 - Extractors name their columns: `implant_summary` (needs `ranges=1`: `mean_depth_A`,
   `straggle_depth_A`, `lateral_straggle_A`, ... in Angstrom), `sputter_yield` (needs
   `sputtered=1` and `calculation=2`), `backscattered_fraction` and `transmitted_fraction`

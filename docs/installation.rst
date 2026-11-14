@@ -98,10 +98,11 @@ Desktop app
 -----------
 
 The optional desktop app (``pysrim2 app``) guides the SRIM setup in a window. It
-needs the ``app`` extra (PySide6 and matplotlib; PySide6 alone is a download of over 100 MB,
-so the app is not part of the default install). Install it into the pysrim2 you already use with
-``pysrim2 install app``, which needs no administrator rights, then start it with
-``pysrim2 app``. See :doc:`app` for the setup, the status bar and the settings.
+needs the ``app`` extra (PySide6, matplotlib, the notebook tools marimo and JupyterLab, and nbconvert
+for the notebook PDF export; PySide6 alone is a download of over 100 MB, so the app is not part of
+the default install). Install it into the pysrim2 you already use with ``pysrim2 install app``, which
+needs no administrator rights and also downloads the Chromium that the PDF export prints with, then
+start the app with ``pysrim2 app``. See :doc:`app` for the setup, the status bar and the settings.
 
 Where things live
 -----------------
