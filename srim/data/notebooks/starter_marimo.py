@@ -64,7 +64,8 @@ def _(run):
 def _(mo, plt, run):
     if not run.points():
         mo.stop(True, mo.md("No point has results yet: run the simulation, then press Reload."))
-    if len(run.result.table) > 1 and run.result.scan.extract:
+    # an unfinished run has no extracted values (only result/scan.csv has them): plot a point
+    if len(run.result.table) > 1 and run.finished and run.result.scan.extract:
         run.result.plot()
     else:
         ioniz = run.point(run.points()[0]).ioniz.df
