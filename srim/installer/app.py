@@ -9,6 +9,7 @@ On Python 3.15 and newer the app is not offered (see ``app_supported``).
 import importlib.metadata
 import importlib.util
 import json
+import os
 import shlex
 import shutil
 import subprocess
@@ -19,7 +20,10 @@ from pathlib import Path
 import srim
 from srim.installer.steps import PACKAGE_TIMEOUT_SECONDS, ComponentUnavailable, Step, register
 
-APP_PACKAGES = ("PySide6", "matplotlib")
+#: the top-level packages of the ``app`` extra (checked without importing them)
+APP_PACKAGES = ("PySide6", "matplotlib", "marimo", "jupyterlab", "nbconvert", "playwright")
+#: the playwright browsers that nbconvert's WebPDF (the notebook PDF export) prints with
+CHROMIUM_BROWSERS = ("chromium", "chromium-headless-shell")
 RECEIPT = "uv-receipt.toml"
 EDITABLE_HINT = "# in your pysrim2 checkout run: uv sync --extra app"
 # PySide6 breaks Python 3.15's lazy imports (concurrent.futures, used by scans) once it is
@@ -50,8 +54,59 @@ def app_supported(version: tuple[int, ...] = tuple(sys.version_info)) -> bool:
 
 
 def app_available() -> bool:
-    """True when both the Qt binding and matplotlib can be found."""
+    """True when every package of the app extra can be found (see ``APP_PACKAGES``)."""
     return all(importlib.util.find_spec(name) is not None for name in APP_PACKAGES)
+
+
+def _playwright_manifest() -> Path | None:
+    """The ``browsers.json`` of the installed playwright (its browser revisions), or None.
+
+    Found from the package's location, so playwright itself is not imported (importing it, or
+    starting its driver, is slow). Returns None when playwright is not installed.
+    """
+    spec = importlib.util.find_spec("playwright")
+    if spec is None or not spec.origin:
+        return None
+    return Path(spec.origin).parent / "driver" / "package" / "browsers.json"
+
+
+def _browsers_root(manifest: Path) -> Path:
+    """Where playwright keeps its browsers: ``PLAYWRIGHT_BROWSERS_PATH`` (``0`` means inside
+    the package), else its default cache folder (``ms-playwright``)."""
+    env = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
+    if env == "0":
+        return manifest.parent / ".local-browsers"
+    if env:
+        return Path(env)
+    if sys.platform == "darwin":
+        base = Path.home() / "Library" / "Caches"
+    elif sys.platform == "win32":
+        base = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
+    else:
+        base = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache")
+    return base / "ms-playwright"
+
+
+def chromium_available() -> bool:
+    """True when the Chromium browsers of playwright are downloaded (False without playwright).
+
+    A browser folder is ``<name>-<revision>`` (name with ``_`` for ``-``) under the browsers
+    folder, and playwright writes ``INSTALLATION_COMPLETE`` in it when the download is done.
+    """
+    manifest = _playwright_manifest()
+    if manifest is None or not manifest.is_file():
+        return False
+    try:
+        browsers = json.loads(manifest.read_text(encoding="utf-8"))["browsers"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+    root = _browsers_root(manifest)
+    markers = []
+    for browser in browsers:
+        if isinstance(browser, dict) and browser.get("name") in CHROMIUM_BROWSERS:
+            folder = f"{browser['name'].replace('-', '_')}-{browser['revision']}"
+            markers.append(root / folder / "INSTALLATION_COMPLETE")
+    return len(markers) == len(CHROMIUM_BROWSERS) and all(m.is_file() for m in markers)
 
 
 def _direct_url() -> dict | None:
@@ -129,7 +184,12 @@ def _run(cmd: list[str]) -> None:
         raise AppInstallError(f"{exc}; run it yourself: {shlex.join(cmd)}") from exc
 
 
-def _app_step() -> Step:
+def chromium_command(python: str = sys.executable) -> list[str]:
+    """The command that downloads the Chromium of playwright (into the running Python's install)."""
+    return [python, "-m", "playwright", "install", "chromium"]
+
+
+def _app_steps() -> list[Step]:
     if not app_supported():
         raise ComponentUnavailable("app", APP_PYTHON_NOTE)
     kind = install_kind()
@@ -138,13 +198,28 @@ def _app_step() -> Step:
         extras = installed_extras(Path(sys.prefix) / RECEIPT)
     cmd = app_command(kind, srim.__version__, extras)
     commands = [shlex.join(cmd)] if cmd else [EDITABLE_HINT]
-    return Step(
+    app = Step(
         name="app",
-        summary="install the desktop app (PySide6, matplotlib) into this pysrim2 install",
+        summary=(
+            "install the desktop app (PySide6, matplotlib, the notebook tools marimo and "
+            "JupyterLab, nbconvert for the PDF export) into this pysrim2 install"
+        ),
         check=lambda: app_available(),
         commands=lambda: list(commands),
         run=lambda: _run(cmd),
     )
+    chromium = chromium_command()
+    # a checkout installs the packages with uv sync first; the download then uses their playwright
+    chromium_commands = [EDITABLE_HINT, shlex.join(chromium)] if not cmd else [shlex.join(chromium)]
+    download = Step(
+        name="chromium",
+        summary="download the Chromium that the notebook PDF export prints with (playwright)",
+        check=chromium_available,
+        commands=lambda: list(chromium_commands),
+        run=lambda: _run(chromium),
+        requires=("app",),
+    )
+    return [app, download]
 
 
-register("app", _app_step)
+register("app", _app_steps)

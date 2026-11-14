@@ -1,4 +1,8 @@
+import importlib.util
+import json
+import shlex
 import subprocess
+import sys
 
 import pytest
 
@@ -139,3 +143,108 @@ def test_pysrim2_app_on_python_3_15_says_why(monkeypatch, capsys):
     monkeypatch.setattr(app_install, "app_supported", lambda: False)
     assert cli.main(["app"]) == 1
     assert "needs Python 3.14 or older" in capsys.readouterr().err
+
+
+def test_the_app_plans_the_app_and_the_chromium_download(monkeypatch):
+    monkeypatch.setattr(app_install, "install_kind", lambda *a, **k: "pip")
+    monkeypatch.setattr(app_install, "app_available", lambda: False)
+    made = steps.plan(["app"])
+    assert [step.name for step in made] == ["app", "chromium"]
+    chromium = made[1]
+    assert chromium.requires == ("app",)
+    command = [sys.executable, "-m", "playwright", "install", "chromium"]
+    assert chromium.commands() == [shlex.join(command)]
+    ran = []
+    monkeypatch.setattr(app_install, "_run", lambda cmd: ran.append(cmd))
+    chromium.run()
+    assert ran == [command]
+
+
+@pytest.mark.parametrize("missing", app_install.APP_PACKAGES)
+def test_the_app_is_not_available_when_any_package_is_missing(monkeypatch, missing):
+    real_find_spec = importlib.util.find_spec
+
+    def find_spec(name, *args, **kwargs):
+        return None if name == missing else real_find_spec(name, *args, **kwargs)
+
+    monkeypatch.setattr(importlib.util, "find_spec", find_spec)
+    assert not app_install.app_available()
+
+
+def test_the_app_is_available_when_every_package_is_there(monkeypatch):
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name, *a, **k: object())
+    assert app_install.app_available()
+
+
+def test_chromium_is_not_available_without_playwright(monkeypatch):
+    monkeypatch.setattr(app_install, "_playwright_manifest", lambda: None)
+    assert not app_install.chromium_available()
+
+
+def _fake_playwright(tmp_path, monkeypatch, revision="1254"):
+    manifest = tmp_path / "package" / "browsers.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(
+        json.dumps(
+            {
+                "browsers": [
+                    {"name": "chromium", "revision": revision},
+                    {"name": "chromium-headless-shell", "revision": revision},
+                    {"name": "firefox", "revision": "1572"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    browsers = tmp_path / "browsers"
+    monkeypatch.setattr(app_install, "_playwright_manifest", lambda: manifest)
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(browsers))
+    return browsers
+
+
+def _mark(browsers, folder):
+    (browsers / folder).mkdir(parents=True, exist_ok=True)
+    (browsers / folder / "INSTALLATION_COMPLETE").write_text("", encoding="utf-8")
+
+
+def test_chromium_is_available_once_playwright_finished_its_download(tmp_path, monkeypatch):
+    browsers = _fake_playwright(tmp_path, monkeypatch)
+    assert not app_install.chromium_available()
+    _mark(browsers, "chromium-1254")
+    assert not app_install.chromium_available()  # the headless shell is needed too
+    _mark(browsers, "chromium_headless_shell-1254")
+    assert app_install.chromium_available()
+
+
+def test_chromium_follows_the_revision_of_the_installed_playwright(tmp_path, monkeypatch):
+    browsers = _fake_playwright(tmp_path, monkeypatch, revision="1300")
+    _mark(browsers, "chromium-1254")
+    _mark(browsers, "chromium_headless_shell-1254")
+    assert not app_install.chromium_available()
+
+
+def test_a_broken_browsers_manifest_is_not_available(tmp_path, monkeypatch):
+    manifest = tmp_path / "browsers.json"
+    manifest.write_text("{not json", encoding="utf-8")
+    monkeypatch.setattr(app_install, "_playwright_manifest", lambda: manifest)
+    assert not app_install.chromium_available()
+
+
+def test_dry_run_of_the_app_prints_both_commands_for_a_checkout(monkeypatch, capsys):
+    monkeypatch.setattr(app_install, "install_kind", lambda *a, **k: "editable")
+    monkeypatch.setattr(app_install, "app_available", lambda: False)
+    monkeypatch.setattr(app_install, "chromium_available", lambda: False)
+    assert cli.main(["install", "--dry-run", "app"]) == 0
+    out = capsys.readouterr().out
+    assert "uv sync --extra app" in out
+    assert shlex.join([sys.executable, "-m", "playwright", "install", "chromium"]) in out
+
+
+def test_dry_run_of_the_app_prints_both_commands_for_a_pip_install(monkeypatch, capsys):
+    monkeypatch.setattr(app_install, "install_kind", lambda *a, **k: "pip")
+    monkeypatch.setattr(app_install, "app_available", lambda: False)
+    monkeypatch.setattr(app_install, "chromium_available", lambda: False)
+    assert cli.main(["install", "--dry-run", "app"]) == 0
+    out = capsys.readouterr().out
+    assert "pysrim2[app]==" in out
+    assert "playwright install chromium" in out

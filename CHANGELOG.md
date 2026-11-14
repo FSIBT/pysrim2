@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `srim.notebook.load_run(folder)` reads a run or scan folder, finished or not, for notebooks.
+- The `app` extra now includes the notebook tools (marimo, JupyterLab) and the PDF export; `pysrim2 install app` also downloads the Chromium the export prints with.
 
 ## [0.12.0] - 2026-11-13
 

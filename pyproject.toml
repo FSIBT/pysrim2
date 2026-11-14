@@ -48,11 +48,18 @@ hdf5 = ["tables"]
 plot = ["matplotlib"]
 # live views of `pysrim2 scan run --ui plot|dashboard|web` (plot: textual-plotext; web: textual-serve)
 tui = ["textual>=0.86.2", "textual-plotext>=1.0.1", "textual-serve>=1.1.3"]
-# the desktop app (`pysrim2 app`); installed by `pysrim2 install app`. Not on Python 3.15 yet:
-# importing PySide6 breaks its lazy imports (e.g. concurrent.futures)
+# the desktop app (`pysrim2 app`), with its notebook tools (marimo, JupyterLab) and the PDF export
+# (nbconvert's WebPDF uses playwright's Chromium, which `pysrim2 install app` downloads). Installed
+# by `pysrim2 install app`. Not on Python 3.15 yet: importing PySide6 breaks its lazy imports
+# (e.g. concurrent.futures)
 app = [
     "PySide6-Essentials>=6.8; python_version < '3.15'",
+    "PySide6-Addons>=6.8; python_version < '3.15'",
     "matplotlib; python_version < '3.15'",
+    "marimo>=0.19.7; python_version < '3.15'",
+    "jupyterlab>=4; python_version < '3.15'",
+    "nbformat; python_version < '3.15'",
+    "nbconvert[webpdf]>=7; python_version < '3.15'",
 ]
 all = ["pysrim2[parquet,hdf5,plot,tui]"]
 
