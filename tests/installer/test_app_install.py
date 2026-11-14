@@ -250,6 +250,17 @@ def test_dry_run_of_the_app_prints_both_commands_for_a_checkout(monkeypatch, cap
     assert shlex.join([sys.executable, "-m", "playwright", "install", "chromium"]) in out
 
 
+def test_dry_run_of_an_installed_checkout_prints_only_the_chromium_command(monkeypatch, capsys):
+    monkeypatch.setattr(app_install, "install_kind", lambda *a, **k: "editable")
+    monkeypatch.setattr(app_install, "app_available", lambda: True)
+    monkeypatch.setattr(app_install, "chromium_available", lambda: False)
+    assert cli.main(["install", "--dry-run", "app"]) == 0
+    out = capsys.readouterr().out
+    assert "[ok] app: already installed" in out
+    assert "uv sync" not in out
+    assert shlex.join([sys.executable, "-m", "playwright", "install", "chromium"]) in out
+
+
 def test_dry_run_of_the_app_prints_both_commands_for_a_pip_install(monkeypatch, capsys):
     monkeypatch.setattr(app_install, "install_kind", lambda *a, **k: "pip")
     monkeypatch.setattr(app_install, "app_available", lambda: False)

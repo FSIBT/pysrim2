@@ -213,8 +213,10 @@ def _app_steps() -> list[Step]:
         run=lambda: _run(cmd),
     )
     chromium = chromium_command()
-    # a checkout installs the packages with uv sync first; the download then uses their playwright
-    chromium_commands = [EDITABLE_HINT, shlex.join(chromium)] if not cmd else [shlex.join(chromium)]
+    # a checkout installs the packages with uv sync first, so the download waits for that; once the
+    # packages are there the download is the only command left to show
+    needs_sync = not cmd and not app_available()
+    chromium_commands = [EDITABLE_HINT, shlex.join(chromium)] if needs_sync else [shlex.join(chromium)]
     download = Step(
         name="chromium",
         summary="download the Chromium that the notebook PDF export prints with (playwright)",
