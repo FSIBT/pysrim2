@@ -6,9 +6,18 @@ until it is stopped) or ``echo TOKEN_FILE`` (print a URL with the token in it, a
 and exit with status 1).
 """
 
+import socketserver
 import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+
+class _Server(ThreadingHTTPServer):
+    def server_bind(self):
+        # HTTPServer.server_bind looks up the host's name (socket.getfqdn), which can take
+        # longer than the tests wait on a CI runner (macOS); the name is not needed here
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
 
 
 class _Answer(BaseHTTPRequestHandler):
@@ -26,7 +35,7 @@ class _Answer(BaseHTTPRequestHandler):
 def main(argv: list[str]) -> int:
     mode = argv[0]
     if mode == "serve":
-        ThreadingHTTPServer(("127.0.0.1", int(argv[1])), _Answer).serve_forever()
+        _Server(("127.0.0.1", int(argv[1])), _Answer).serve_forever()
     elif mode == "exit":
         for number in range(1, 31):
             print(f"line {number}", flush=True)

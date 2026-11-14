@@ -1,6 +1,7 @@
 """The library's reading of run folders for notebooks (no SRIM: the points are test_files/2)."""
 
 import json
+import os
 import shutil
 from copy import deepcopy
 
@@ -155,6 +156,7 @@ def test_results_count_of_a_broken_scan_yaml_is_zero(tmp_path):
     assert results_count(folder) == 0
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX file modes")
 def test_the_loaded_file_is_readable_by_others(tmp_path):
     folder = tmp_path / "run"
     result = finished_scan(folder, beam_scan(_spec()), [DONE])
