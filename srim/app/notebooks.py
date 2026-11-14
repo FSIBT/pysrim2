@@ -47,6 +47,8 @@ LOG_LINES = 20
 TOKEN_FILE = "token"
 #: the start of the log file's name in :data:`srim.notebook.NOTEBOOK_DIR`; it ends with the tag
 LOG_FILE = "server"
+#: the number of server logs kept in the folder (the newest, the current one included)
+LOGS_KEPT = 5
 #: the environment variable that Jupyter reads its token from (set in the child only)
 JUPYTER_TOKEN_ENV = "JUPYTER_TOKEN"
 #: seconds that one HTTP readiness check may take at most
@@ -220,6 +222,26 @@ def _redact(path: Path, secret: str) -> None:
         return
 
 
+def _prune_logs(folder: Path, current: Path, keep: int = LOGS_KEPT) -> None:
+    """Delete the server logs in ``folder`` beyond the newest ``keep``; ``current`` (the log of the
+    server being started) always stays. Best effort: a log that cannot be read or removed is left,
+    and nothing here raises."""
+    try:
+        found = []
+        for log in Path(folder).glob(f"{LOG_FILE}-*.log"):
+            if log == current:
+                continue
+            try:
+                found.append((log.stat().st_mtime, log))
+            except OSError:
+                continue
+        found.sort(reverse=True)  # newest first
+        for _mtime, log in found[max(keep - 1, 0) :]:
+            _remove_quietly(log)
+    except OSError:
+        return
+
+
 def _taskkill_tree(pid: int) -> None:
     """Kill the process ``pid`` and every process it started (Windows), output discarded."""
     try:
@@ -343,6 +365,7 @@ class NotebookServer:
                     env=env,
                     **extra,
                 )
+            _prune_logs(self.folder, current=self.log_path)
         except OSError as error:
             _remove_quietly(self.token_file)
             raise NotebookServerError(f"could not start the notebook server: {error}") from error

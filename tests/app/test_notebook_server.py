@@ -331,3 +331,51 @@ def test_a_stopped_server_does_not_touch_the_files_of_a_server_started_after_it(
     finally:
         old.stop()
     assert not new.token_file.exists()
+
+
+def _log(folder: Path, name: str, mtime: float) -> Path:
+    """A server log named ``server-<name>.log`` with the given modification time."""
+    path = folder / f"server-{name}.log"
+    path.write_text("old\n", encoding="utf-8")
+    os.utime(path, (mtime, mtime))
+    return path
+
+
+def test_prune_keeps_the_newest_logs_and_the_current_one(tmp_path):
+    folder = tmp_path / NOTEBOOK_DIR
+    folder.mkdir()
+    logs = [_log(folder, f"old{i}", 1000 + i) for i in range(8)]
+    current = _log(folder, "current", 1)  # the oldest of all, but it is the server being started
+    other = folder / "other.log"  # not a server log: never touched
+    other.write_text("keep\n", encoding="utf-8")
+
+    notebooks._prune_logs(folder, current=current)
+
+    names = sorted(p.name for p in folder.glob("server-*.log"))
+    assert names == sorted([current.name] + [log.name for log in logs[4:]])
+    assert other.read_text(encoding="utf-8") == "keep\n"
+
+
+def test_starting_a_server_leaves_five_logs_in_its_folder(tmp_path):
+    run = tmp_path / "run"
+    folder = run / NOTEBOOK_DIR
+    folder.mkdir(parents=True)
+    for i in range(7):
+        _log(folder, f"old{i}", 1000 + i)
+    server = NotebookServer("marimo", run / "notebook.py", command_for=fake("serve"))
+    server.start()
+    try:
+        server.wait_ready(timeout=30)
+    finally:
+        server.stop()
+    names = sorted(p.name for p in folder.glob("server-*.log"))
+    assert len(names) == notebooks.LOGS_KEPT == 5
+    assert server.log_path.name in names
+
+
+def test_prune_never_raises(tmp_path, monkeypatch):
+    def unreadable(self, pattern):
+        raise PermissionError("no listing")
+
+    monkeypatch.setattr(Path, "glob", unreadable)
+    notebooks._prune_logs(tmp_path, current=tmp_path / "server-x.log")  # no exception
