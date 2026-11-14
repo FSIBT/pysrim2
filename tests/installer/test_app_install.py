@@ -123,6 +123,16 @@ def test_pysrim2_app_without_the_extra_says_how_to_install(monkeypatch, capsys):
     assert "run: pysrim2 install app" in capsys.readouterr().err
 
 
+def test_pysrim2_app_with_an_incomplete_install_says_so(monkeypatch, capsys):
+    monkeypatch.setattr(app_install, "app_supported", lambda: True)
+    monkeypatch.setattr(app_install, "app_available", lambda: False)
+    assert cli.main(["app"]) == 1
+    err = capsys.readouterr().err
+    assert err.strip() == (
+        "the desktop app is not installed (or incomplete); run: pysrim2 install app"
+    )
+
+
 def test_the_app_needs_python_3_14_or_older():
     assert app_supported((3, 11))
     assert app_supported((3, 14, 2))

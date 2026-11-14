@@ -59,7 +59,7 @@ and is skipped (with its commands printed) otherwise.
 Opens the desktop app (see {doc}`app`): a window with a guided setup for the three routes
 (native, wine or container), a status bar that says what to do next, and a dark or light
 theme. It needs the `app` extra; without it the command prints
-`the desktop app is not installed; run: pysrim2 install app` and exits with 1. Install the
+`the desktop app is not installed (or incomplete); run: pysrim2 install app` and exits with 1. Install the
 extra with `pysrim2 install app`.
 
 ## `pysrim2 doctor`

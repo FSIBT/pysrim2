@@ -341,7 +341,10 @@ def _app(args) -> int:
         print(app_install.APP_PYTHON_NOTE, file=sys.stderr)
         return EXIT_FAILED
     if not app_install.app_available():
-        print("the desktop app is not installed; run: pysrim2 install app", file=sys.stderr)
+        print(
+            "the desktop app is not installed (or incomplete); run: pysrim2 install app",
+            file=sys.stderr,
+        )
         return EXIT_FAILED
     from srim.app.main import main as app_main
 
