@@ -6,9 +6,20 @@ The app's own files for notebooks go in ``<run folder>/.pysrim2-notebook/`` (see
 :mod:`srim.notebook`), where :func:`create_notebook` also creates the ``reload`` file.
 """
 
+import http.client
 import importlib.util
+import os
+import secrets
 import shutil
+import socket
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+from collections import deque
 from pathlib import Path
+from urllib.parse import quote
 
 import srim
 from srim.notebook import NOTEBOOK_DIR, RELOAD_FILE
@@ -19,6 +30,22 @@ STARTERS = {"marimo": "starter_marimo.py", "jupyter": "starter_jupyter.ipynb"}
 #: the package that a notebook kind needs (its top-level name)
 TOOLS = {"marimo": "marimo", "jupyter": "jupyterlab"}
 REINSTALL_TEXT = "Reinstall the app: pysrim2 install app"
+
+#: seconds that :meth:`NotebookServer.wait_ready` waits by default
+READY_SECONDS = 60
+#: seconds between two readiness checks
+POLL_SECONDS = 0.25
+#: the number of log lines that :meth:`NotebookServer.log_tail` returns
+LOG_LINES = 20
+#: the file in :data:`srim.notebook.NOTEBOOK_DIR` that holds the server's token (mode 0600)
+TOKEN_FILE = "token"
+#: the file in :data:`srim.notebook.NOTEBOOK_DIR` that receives the server's output
+LOG_FILE = "server.log"
+#: the environment variable that Jupyter reads its token from (set in the child only)
+JUPYTER_TOKEN_ENV = "JUPYTER_TOKEN"
+
+# a proxy setting in the environment must not take the readiness checks away from the server
+_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
 def _check_kind(kind: str) -> None:
@@ -60,3 +87,209 @@ def tool_problem(kind: str) -> str | None:
     if importlib.util.find_spec(TOOLS[kind]) is None:
         return REINSTALL_TEXT
     return None
+
+
+class NotebookServerError(RuntimeError):
+    """A notebook server that did not start, exited, or did not answer in time."""
+
+
+def free_port() -> int:
+    """A port on 127.0.0.1 that was free when asked (the server binds it a moment later)."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+def server_command(kind: str, path, port: int, token_file) -> list[str]:
+    """The command that serves the notebook ``path`` of ``kind`` on 127.0.0.1 at ``port``.
+
+    The token is never on the command line: marimo reads it from ``token_file``, and Jupyter
+    reads the ``JUPYTER_TOKEN`` environment variable that :meth:`NotebookServer.start` sets.
+    Checked against ``marimo edit --help`` (marimo 0.25.2) and ``jupyterlab --help-all``
+    (jupyterlab 4.6.6).
+    """
+    _check_kind(kind)
+    path = Path(path)
+    if kind == "marimo":
+        return [
+            sys.executable,
+            "-m",
+            "marimo",
+            "edit",
+            str(path),
+            "--headless",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+            "--token-password-file",
+            str(token_file),
+            "--skip-update-check",
+        ]
+    return [
+        sys.executable,
+        "-m",
+        "jupyterlab",
+        "--no-browser",
+        "--ip=127.0.0.1",
+        f"--port={port}",
+        "--ServerApp.port_retries=0",
+        f"--ServerApp.root_dir={path.parent}",
+    ]
+
+
+def notebook_url(kind: str, path, port: int, token: str) -> str:
+    """The URL that opens the notebook ``path`` with ``token`` (the token is in the query)."""
+    _check_kind(kind)
+    path = Path(path)
+    if kind == "marimo":
+        return f"http://127.0.0.1:{port}/?access_token={quote(token)}"
+    return f"http://127.0.0.1:{port}/lab/tree/{quote(path.name)}?token={quote(token)}"
+
+
+def _open_private(path: Path, binary: bool):
+    """Open a new file that only the owner can read (mode 0600 on POSIX) for writing."""
+    path.unlink(missing_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    if binary:
+        return os.fdopen(fd, "wb")
+    return os.fdopen(fd, "w", encoding="utf-8")
+
+
+def _redact(path: Path, secret: str) -> None:
+    """Replace ``secret`` in the file at ``path`` with ``<token>`` (a missing file is kept)."""
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return
+    needle = secret.encode("utf-8")
+    if needle in data:
+        path.write_bytes(data.replace(needle, b"<token>"))
+
+
+def _answers(url: str) -> bool:
+    """True when ``url`` gets an HTTP answer with a status below 500 (no answer is False)."""
+    try:
+        with _OPENER.open(url, timeout=2) as response:
+            return response.status < 500
+    except urllib.error.HTTPError as error:
+        return error.code < 500
+    except (OSError, ValueError, http.client.HTTPException):
+        return False
+
+
+class NotebookServer:
+    """A notebook server process for one notebook file, started by the app.
+
+    ``command_for(kind, path, port, token_file)`` gives the command (:func:`server_command` by
+    default). :meth:`start` writes the token to ``NOTEBOOK_DIR/token`` (mode 0600), sends the
+    server's output to ``NOTEBOOK_DIR/server.log`` and starts the process. ``url`` is set by
+    :meth:`start` and opens the notebook with the token.
+    """
+
+    def __init__(self, kind: str, path, command_for=server_command):
+        _check_kind(kind)
+        self.kind = kind
+        self.path = Path(path)
+        self.command_for = command_for
+        self.folder = self.path.parent / NOTEBOOK_DIR
+        self.log_path = self.folder / LOG_FILE
+        self.token_file = self.folder / TOKEN_FILE
+        self.port: int | None = None
+        self.token: str | None = None
+        self.url: str | None = None
+        self.process: subprocess.Popen | None = None
+
+    @property
+    def running(self) -> bool:
+        """True while the server process is alive."""
+        return self.process is not None and self.process.poll() is None
+
+    def start(self) -> None:
+        """Start the server. Raises :class:`NotebookServerError` when it is already running or
+        the process cannot be started."""
+        if self.running:
+            raise NotebookServerError("the notebook server is already running")
+        self.folder.mkdir(parents=True, exist_ok=True)
+        self.port = free_port()
+        self.token = secrets.token_urlsafe(32)
+        self.url = notebook_url(self.kind, self.path, self.port, self.token)
+        with _open_private(self.token_file, binary=False) as handle:
+            handle.write(self.token)
+        command = self.command_for(self.kind, self.path, self.port, self.token_file)
+        env = None
+        if self.kind == "jupyter":
+            env = dict(os.environ)
+            env[JUPYTER_TOKEN_ENV] = self.token
+        # the log holds the token (marimo prints its URL), so it is private too; the child gets
+        # its own copy of the file, and closing ours here leaves no open handle
+        with _open_private(self.log_path, binary=True) as log:
+            try:
+                self.process = subprocess.Popen(
+                    command,
+                    stdin=subprocess.DEVNULL,
+                    stdout=log,
+                    stderr=subprocess.STDOUT,
+                    env=env,
+                )
+            except OSError as error:
+                raise NotebookServerError(
+                    f"could not start the notebook server: {error}"
+                ) from error
+
+    def wait_ready(self, timeout: float = READY_SECONDS) -> None:
+        """Wait until the server answers HTTP (any status below 500) at its address.
+
+        Raises :class:`NotebookServerError` with the end of the log when the process exits
+        first, or when ``timeout`` seconds pass. A server that timed out is stopped.
+        """
+        if self.process is None:
+            raise NotebookServerError("the notebook server has not been started")
+        base = f"http://127.0.0.1:{self.port}/"
+        deadline = time.monotonic() + timeout
+        while True:
+            code = self.process.poll()
+            if code is not None:
+                raise NotebookServerError(
+                    f"the notebook server exited with code {code}:\n{self.log_tail()}"
+                )
+            if _answers(base):
+                return
+            if time.monotonic() >= deadline:
+                self.stop()
+                raise NotebookServerError(
+                    f"the notebook server did not answer within {timeout} s:\n{self.log_tail()}"
+                )
+            time.sleep(POLL_SECONDS)
+
+    def stop(self, grace: float = 5.0) -> None:
+        """Terminate the server, then kill it when it has not gone within ``grace`` seconds.
+
+        Safe to call more than once, and on a server that never started.
+        """
+        process = self.process
+        if process is None:
+            return
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=grace)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+        # the server is gone, so the token is no use any more: take it out of the files
+        self.token_file.unlink(missing_ok=True)
+        if self.token:
+            _redact(self.log_path, self.token)
+
+    def log_tail(self, lines: int = LOG_LINES) -> str:
+        """The last ``lines`` lines of the server's log ('' when there is no log)."""
+        try:
+            with open(self.log_path, "rb") as handle:
+                tail = deque(handle, maxlen=lines)
+        except OSError:
+            return ""
+        text = b"".join(tail).decode("utf-8", errors="replace").rstrip()
+        if self.token:
+            text = text.replace(self.token, "<token>")
+        return text
