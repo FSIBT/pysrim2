@@ -3940,7 +3940,7 @@ docs = [
 [package.metadata]
 requires-dist = [
     { name = "jupyterlab", marker = "python_full_version < '3.15' and extra == 'app'", specifier = ">=4" },
-    { name = "marimo", marker = "python_full_version < '3.15' and extra == 'app'", specifier = ">=0.19.7" },
+    { name = "marimo", marker = "python_full_version < '3.15' and extra == 'app'", specifier = ">=0.25" },
     { name = "matplotlib", marker = "python_full_version < '3.15' and extra == 'app'" },
     { name = "matplotlib", marker = "extra == 'plot'" },
     { name = "nbconvert", extras = ["webpdf"], marker = "python_full_version < '3.15' and extra == 'app'", specifier = ">=7" },
