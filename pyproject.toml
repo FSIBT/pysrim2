@@ -133,6 +133,8 @@ select = ["E", "F", "W", "I", "UP", "B", "NPY", "PD"]
 # Pre-existing findings that are not fixed in the formatting commit. Each entry needs a
 # follow-up.
 [tool.ruff.lint.per-file-ignores]
+# marimo shows a cell's last expression, so a bare name is how a starter displays it
+"srim/data/notebooks/*.py" = ["B018"]
 "srim/__init__.py" = ["F401"]  # TODO(pysrim2): tighten (intentional re-exports; add __all__)
 "srim/core/__init__.py" = ["F401"]  # TODO(pysrim2): tighten (intentional re-exports; add __all__)
 "srim/core/utils.py" = ["E731"]  # TODO(pysrim2): tighten (lambdas -> def)

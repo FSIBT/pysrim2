@@ -88,9 +88,7 @@ def test_the_jupyter_starter_runs_against_a_run_folder(tmp_path):
     folder = _run_folder(tmp_path / "run")
     notebook = create_notebook(folder, "jupyter")
     nb = nbformat.read(notebook, as_version=4)
-    NotebookClient(
-        nb, timeout=120, resources={"metadata": {"path": str(folder)}}
-    ).execute()
+    NotebookClient(nb, timeout=120, resources={"metadata": {"path": str(folder)}}).execute()
     assert loaded_count(folder) == 1
 
 
