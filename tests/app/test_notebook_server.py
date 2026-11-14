@@ -171,3 +171,123 @@ def test_stop_twice_is_harmless(tmp_path):
     server.stop()
     server.stop()
     assert not server.running
+
+
+def echo(token_file_arg=True):
+    """A ``command_for`` for the fake server's echo mode: it prints the token, then exits 1."""
+
+    def command_for(kind, path, port, token_file):
+        return [sys.executable, str(FAKE), "echo", str(token_file)]
+
+    return command_for
+
+
+def test_an_exit_during_the_wait_removes_the_token_file_and_the_raw_token(tmp_path):
+    server = NotebookServer("marimo", tmp_path / "notebook.py", command_for=echo())
+    server.start()
+    with pytest.raises(NotebookServerError, match="exited with code 1") as info:
+        server.wait_ready(timeout=30)
+    assert server.token not in str(info.value)
+    assert not server.token_file.exists()
+    assert server.token not in server.log_path.read_text(encoding="utf-8")
+    assert "access_token=<token>" in server.log_path.read_text(encoding="utf-8")
+    assert not server.running
+
+
+def test_stop_never_raises_when_the_redaction_or_the_unlink_fails(tmp_path, monkeypatch):
+    server = NotebookServer("marimo", tmp_path / "notebook.py", command_for=echo())
+    server.start()
+    server.process.wait(timeout=30)
+    token = server.token
+
+    def refuse(*args, **kwargs):
+        raise PermissionError("refused by the test")
+
+    monkeypatch.setattr(notebooks.os, "replace", refuse)
+    monkeypatch.setattr(Path, "unlink", refuse)
+    server.stop()  # must not raise
+    monkeypatch.undo()
+    # the redaction did not happen, so the log still holds the token; the file was not lost
+    assert token in server.log_path.read_text(encoding="utf-8")
+
+
+def test_a_log_above_the_size_cap_is_left_as_it_is(tmp_path, monkeypatch):
+    monkeypatch.setattr(notebooks, "REDACT_MAX_BYTES", 10)
+    server = NotebookServer("marimo", tmp_path / "notebook.py", command_for=echo())
+    server.start()
+    server.process.wait(timeout=30)
+    server.stop()
+    assert server.token in server.log_path.read_text(encoding="utf-8")
+    if os.name == "posix":
+        assert server.log_path.stat().st_mode & 0o777 == 0o600
+
+
+def test_redaction_replaces_the_log_without_a_temporary_file_left(tmp_path):
+    server = NotebookServer("marimo", tmp_path / "notebook.py", command_for=echo())
+    server.start()
+    server.process.wait(timeout=30)
+    server.stop()
+    assert sorted(p.name for p in server.folder.iterdir()) == [notebooks.LOG_FILE]
+    assert not [p for p in server.folder.iterdir() if p.name.endswith(".tmp")]
+    if os.name == "posix":
+        assert server.log_path.stat().st_mode & 0o777 == 0o600
+
+
+def test_the_windows_branch_starts_a_process_group_and_kills_the_tree(tmp_path, monkeypatch):
+    seen = {}
+    commands = []
+    real_popen = subprocess.Popen
+
+    class Spy(real_popen):
+        def __init__(self, args, **kwargs):
+            seen["creationflags"] = kwargs.pop("creationflags", None)
+            super().__init__(args, **kwargs)
+
+    def record_run(args, **kwargs):
+        commands.append((list(args), kwargs))
+
+    monkeypatch.setattr(notebooks, "_is_windows", lambda: True)
+    # the constant exists only on Windows; the test runs anywhere
+    monkeypatch.setattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200, raising=False)
+    monkeypatch.setattr(notebooks.subprocess, "Popen", Spy)
+    monkeypatch.setattr(notebooks.subprocess, "run", record_run)
+    server = NotebookServer("marimo", tmp_path / "notebook.py", command_for=fake("silent"))
+    server.start()
+    assert seen["creationflags"] == 0x00000200
+    pid = server.process.pid
+    server.stop(grace=0.5)
+    assert commands, "taskkill was not run"
+    args, kwargs = commands[0]
+    assert args == ["taskkill", "/T", "/F", "/PID", str(pid)]
+    assert kwargs["stdout"] == subprocess.DEVNULL
+    assert kwargs["stderr"] == subprocess.DEVNULL
+    assert not server.running  # the kill after the grace period finished it
+
+
+def test_a_failed_start_removes_the_token_file(tmp_path):
+    def missing_program(kind, path, port, token_file):
+        return [str(tmp_path / "no-such-program")]
+
+    server = NotebookServer("marimo", tmp_path / "notebook.py", command_for=missing_program)
+    with pytest.raises(NotebookServerError, match="could not start"):
+        server.start()
+    assert not server.token_file.exists()
+    assert not server.running
+
+
+def test_the_probe_timeout_is_capped_by_the_time_left(tmp_path, monkeypatch):
+    calls = []
+
+    def slow_no_answer(url, timeout=notebooks.PROBE_SECONDS):
+        calls.append(timeout)
+        time.sleep(timeout)  # a server that accepts and then hangs
+        return False
+
+    monkeypatch.setattr(notebooks, "_answers", slow_no_answer)
+    server = NotebookServer("marimo", tmp_path / "notebook.py", command_for=fake("silent"))
+    server.start()
+    started = time.monotonic()
+    with pytest.raises(NotebookServerError, match="did not answer"):
+        server.wait_ready(timeout=0.5)
+    assert time.monotonic() - started < 1.5
+    assert calls and max(calls) <= 0.5 + 1e-9

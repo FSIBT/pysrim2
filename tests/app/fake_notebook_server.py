@@ -3,7 +3,7 @@
 Run as ``fake_notebook_server.py serve PORT`` (answer HTTP 200 on 127.0.0.1 at PORT),
 ``... exit`` (print 30 lines and exit with status 1), ``... silent`` (never listen; sleep
 until it is stopped) or ``echo TOKEN_FILE`` (print a URL with the token in it, as marimo does,
-and exit).
+and exit with status 1).
 """
 
 import sys
@@ -37,6 +37,7 @@ def main(argv: list[str]) -> int:
         with open(argv[1], encoding="utf-8") as handle:
             token = handle.read().strip()
         print(f"URL: http://127.0.0.1:1/?access_token={token}", flush=True)
+        return 1
     return 0
 
 

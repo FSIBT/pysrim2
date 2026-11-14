@@ -14,6 +14,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -43,6 +44,10 @@ TOKEN_FILE = "token"
 LOG_FILE = "server.log"
 #: the environment variable that Jupyter reads its token from (set in the child only)
 JUPYTER_TOKEN_ENV = "JUPYTER_TOKEN"
+#: seconds that one HTTP readiness check may take at most
+PROBE_SECONDS = 2.0
+#: a log larger than this is not rewritten to hide the token (it would be read whole)
+REDACT_MAX_BYTES = 50 * 1024 * 1024
 
 # a proxy setting in the environment must not take the readiness checks away from the server
 _OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -147,6 +152,11 @@ def notebook_url(kind: str, path, port: int, token: str) -> str:
     return f"http://127.0.0.1:{port}/lab/tree/{quote(path.name)}?token={quote(token)}"
 
 
+def _is_windows() -> bool:
+    """True on Windows (a function so that the tests can take the Windows branch anywhere)."""
+    return os.name == "nt"
+
+
 def _open_private(path: Path, binary: bool):
     """Open a new file that only the owner can read (mode 0600 on POSIX) for writing."""
     path.unlink(missing_ok=True)
@@ -156,21 +166,80 @@ def _open_private(path: Path, binary: bool):
     return os.fdopen(fd, "w", encoding="utf-8")
 
 
-def _redact(path: Path, secret: str) -> None:
-    """Replace ``secret`` in the file at ``path`` with ``<token>`` (a missing file is kept)."""
+def _remove_quietly(path: Path) -> None:
+    """Remove ``path`` if it is there; a failure is not an error (best effort)."""
     try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def _redact(path: Path, secret: str) -> None:
+    """Replace ``secret`` in the file at ``path`` with ``<token>``, best effort.
+
+    The new text goes to a temporary file in the same folder, which then replaces the log, so a
+    reader never sees a part-written file and the mode stays 0600. A file larger than
+    :data:`REDACT_MAX_BYTES` is left as it is, and so is a file that cannot be written.
+    """
+    try:
+        if path.stat().st_size > REDACT_MAX_BYTES:
+            return
         data = path.read_bytes()
+        needle = secret.encode("utf-8")
+        if needle not in data:
+            return
+        fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(data.replace(needle, b"<token>"))
+            os.replace(tmp, path)
+        except BaseException:
+            _remove_quietly(Path(tmp))
+            raise
     except OSError:
         return
-    needle = secret.encode("utf-8")
-    if needle in data:
-        path.write_bytes(data.replace(needle, b"<token>"))
 
 
-def _answers(url: str) -> bool:
+def _taskkill_tree(pid: int) -> None:
+    """Kill the process ``pid`` and every process it started (Windows), output discarded."""
+    try:
+        subprocess.run(
+            ["taskkill", "/T", "/F", "/PID", str(pid)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
+def _stop_process(process: subprocess.Popen, grace: float) -> None:
+    """End the server process: on POSIX terminate, then kill after ``grace`` seconds; on Windows
+    kill its whole tree with taskkill (terminate would stop only the python process), then kill
+    after ``grace`` seconds when it is still there. Never raises."""
+    if process.poll() is not None:
+        return
+    try:
+        if _is_windows():
+            _taskkill_tree(process.pid)
+        else:
+            process.terminate()
+        process.wait(timeout=grace)
+        return
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    try:
+        process.kill()
+        process.wait(timeout=grace)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
+def _answers(url: str, timeout: float = PROBE_SECONDS) -> bool:
     """True when ``url`` gets an HTTP answer with a status below 500 (no answer is False)."""
     try:
-        with _OPENER.open(url, timeout=2) as response:
+        with _OPENER.open(url, timeout=timeout) as response:
             return response.status < 500
     except urllib.error.HTTPError as error:
         return error.code < 500
@@ -207,7 +276,7 @@ class NotebookServer:
 
     def start(self) -> None:
         """Start the server. Raises :class:`NotebookServerError` when it is already running or
-        the process cannot be started."""
+        the process cannot be started (the token file is then removed)."""
         if self.running:
             raise NotebookServerError("the notebook server is already running")
         self.folder.mkdir(parents=True, exist_ok=True)
@@ -216,32 +285,40 @@ class NotebookServer:
         self.url = notebook_url(self.kind, self.path, self.port, self.token)
         with _open_private(self.token_file, binary=False) as handle:
             handle.write(self.token)
-        command = self.command_for(self.kind, self.path, self.port, self.token_file)
-        env = None
-        if self.kind == "jupyter":
-            env = dict(os.environ)
-            env[JUPYTER_TOKEN_ENV] = self.token
-        # the log holds the token (marimo prints its URL), so it is private too; the child gets
-        # its own copy of the file, and closing ours here leaves no open handle
-        with _open_private(self.log_path, binary=True) as log:
-            try:
+        try:
+            command = self.command_for(self.kind, self.path, self.port, self.token_file)
+            env = None
+            if self.kind == "jupyter":
+                env = dict(os.environ)
+                env[JUPYTER_TOKEN_ENV] = self.token
+            extra = {}
+            if _is_windows():
+                # a process group of its own, so that taskkill /T can reach its children
+                extra["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+            # the log holds the token (marimo prints its URL), so it is private too; the child
+            # gets its own copy of the file, and closing ours leaves no open handle
+            with _open_private(self.log_path, binary=True) as log:
                 self.process = subprocess.Popen(
                     command,
                     stdin=subprocess.DEVNULL,
                     stdout=log,
                     stderr=subprocess.STDOUT,
                     env=env,
+                    **extra,
                 )
-            except OSError as error:
-                raise NotebookServerError(
-                    f"could not start the notebook server: {error}"
-                ) from error
+        except OSError as error:
+            _remove_quietly(self.token_file)
+            raise NotebookServerError(f"could not start the notebook server: {error}") from error
+        except BaseException:
+            _remove_quietly(self.token_file)
+            raise
 
     def wait_ready(self, timeout: float = READY_SECONDS) -> None:
         """Wait until the server answers HTTP (any status below 500) at its address.
 
         Raises :class:`NotebookServerError` with the end of the log when the process exits
-        first, or when ``timeout`` seconds pass. A server that timed out is stopped.
+        first, or when ``timeout`` seconds pass. A server that exited or timed out is stopped
+        first, so its token file is removed and its log loses the token.
         """
         if self.process is None:
             raise NotebookServerError("the notebook server has not been started")
@@ -250,35 +327,32 @@ class NotebookServer:
         while True:
             code = self.process.poll()
             if code is not None:
-                raise NotebookServerError(
-                    f"the notebook server exited with code {code}:\n{self.log_tail()}"
-                )
-            if _answers(base):
+                tail = self.log_tail()
+                self.stop()
+                raise NotebookServerError(f"the notebook server exited with code {code}:\n{tail}")
+            remaining = deadline - time.monotonic()
+            if _answers(base, timeout=min(PROBE_SECONDS, max(remaining, 0.1))):
                 return
             if time.monotonic() >= deadline:
+                tail = self.log_tail()
                 self.stop()
                 raise NotebookServerError(
-                    f"the notebook server did not answer within {timeout} s:\n{self.log_tail()}"
+                    f"the notebook server did not answer within {timeout} s:\n{tail}"
                 )
             time.sleep(POLL_SECONDS)
 
     def stop(self, grace: float = 5.0) -> None:
-        """Terminate the server, then kill it when it has not gone within ``grace`` seconds.
+        """Stop the server (see :func:`_stop_process`), then remove its token from the folder.
 
-        Safe to call more than once, and on a server that never started.
+        Never raises: the cleanup is best effort. Safe to call more than once, and on a server
+        that never started.
         """
         process = self.process
         if process is None:
             return
-        if process.poll() is None:
-            process.terminate()
-            try:
-                process.wait(timeout=grace)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait()
+        _stop_process(process, grace)
         # the server is gone, so the token is no use any more: take it out of the files
-        self.token_file.unlink(missing_ok=True)
+        _remove_quietly(self.token_file)
         if self.token:
             _redact(self.log_path, self.token)
 
