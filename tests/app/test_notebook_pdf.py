@@ -172,7 +172,7 @@ def _export_window(qtbot, tmp_path, monkeypatch, mode="write"):
 
 
 class FakeDialog:
-    """Stands in for QFileDialog: it answers with ``chosen`` and records the default it was given."""
+    """Stands in for QFileDialog: it answers with ``chosen`` and records the default it got."""
 
     chosen = None
     defaults = []

@@ -1,4 +1,4 @@
-"""A stand-in for the PDF export command (test_notebook_pdf.py runs it in place of marimo or nbconvert).
+"""A stand-in for the PDF export command (test_notebook_pdf.py runs it for marimo or nbconvert).
 
 Usage: ``fake_pdf_export.py MODE OUT``. ``write`` writes OUT; ``fail`` prints playwright's
 missing-browser text and exits 1; ``boom`` prints one line and exits 1; ``hang`` sleeps (the
