@@ -3855,6 +3855,21 @@ wheels = [
 ]
 
 [[package]]
+name = "pyside6-webengine"
+version = "6.12.0.140"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pyside6-addons" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/08/37/3b50067bdcba5c22e20a8d7a029c919850c6d94f8398175b330c3b8765ad/pyside6_webengine-6.12.0.140-cp310-abi3-macosx_14_0_universal2.whl", hash = "sha256:9a1de2da360d1817c08e9400a2a2fc5234beb3022a22123e15355169e183074e", size = 249778242, upload-time = "2026-10-08T09:06:03.602Z" },
+    { url = "https://files.pythonhosted.org/packages/ce/e0/cb8b68b962afc253709ed61555d0a4f297fd6786c0e77921d2e951504210/pyside6_webengine-6.12.0.140-cp310-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:c041c9921d7c91c9e51a2c027f434d05c3c59baa2c8f17b71dc8194e77791f06", size = 116741921, upload-time = "2026-10-08T09:06:13.408Z" },
+    { url = "https://files.pythonhosted.org/packages/1b/34/75944ed126293868fcbcc589fa2254e3310016920e5d32d21c29be021524/pyside6_webengine-6.12.0.140-cp310-abi3-manylinux_2_39_aarch64.whl", hash = "sha256:66a842ccb7f06fa7e357f6d4d63bc2739e3cbc1f93583f314e38c43024fe5f74", size = 114053128, upload-time = "2026-10-08T09:06:21.275Z" },
+    { url = "https://files.pythonhosted.org/packages/21/0d/260c7c286f2d4e8a49c099152a385414a872f022117f937824ca0a3f38e5/pyside6_webengine-6.12.0.140-cp310-abi3-win_amd64.whl", hash = "sha256:f9b61b1d457a591ee590a6b80515f25a3e61e2576a2a0a70566380f9d9de4ab0", size = 131697708, upload-time = "2026-10-08T09:06:29.606Z" },
+    { url = "https://files.pythonhosted.org/packages/76/34/7a2d1d7b95c96adf173c77d1862c2587789f7afb8754430fcfc2c9e4e47a/pyside6_webengine-6.12.0.140-cp310-abi3-win_arm64.whl", hash = "sha256:44d1fac2a057a71b8f947fc5177a95fab8a0ea4e2fda068f223a00fd0193a8c7", size = 65723, upload-time = "2026-10-08T09:06:32.559Z" },
+]
+
+[[package]]
 name = "pysrim2"
 version = "0.12.0"
 source = { editable = "." }
@@ -3882,6 +3897,7 @@ app = [
     { name = "nbformat", marker = "python_full_version < '3.15'" },
     { name = "pyside6-addons", marker = "python_full_version < '3.15'" },
     { name = "pyside6-essentials", marker = "python_full_version < '3.15'" },
+    { name = "pyside6-webengine", marker = "python_full_version < '3.15'" },
 ]
 hdf5 = [
     { name = "tables" },
@@ -3932,8 +3948,9 @@ requires-dist = [
     { name = "numpy" },
     { name = "pandas" },
     { name = "pyarrow", marker = "extra == 'parquet'" },
-    { name = "pyside6-addons", marker = "python_full_version < '3.15' and extra == 'app'", specifier = ">=6.8" },
-    { name = "pyside6-essentials", marker = "python_full_version < '3.15' and extra == 'app'", specifier = ">=6.8" },
+    { name = "pyside6-addons", marker = "python_full_version < '3.15' and extra == 'app'", specifier = ">=6.12" },
+    { name = "pyside6-essentials", marker = "python_full_version < '3.15' and extra == 'app'", specifier = ">=6.12" },
+    { name = "pyside6-webengine", marker = "python_full_version < '3.15' and extra == 'app'", specifier = ">=6.12" },
     { name = "pysrim2", extras = ["parquet", "hdf5", "plot", "tui"], marker = "extra == 'all'" },
     { name = "pyyaml" },
     { name = "tables", marker = "extra == 'hdf5'" },
