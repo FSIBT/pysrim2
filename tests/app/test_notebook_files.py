@@ -139,9 +139,7 @@ def _partial_folder(folder):
 def _finished_folder(folder):
     """A finished run folder whose first point has extracted values and the second failed."""
     scan = _two_point_scan()
-    result = finished_scan(
-        folder, scan, [DONE, "boom"], values=[{"mean_depth_nm": 10.0}, {}]
-    )
+    result = finished_scan(folder, scan, [DONE, "boom"], values=[{"mean_depth_nm": 10.0}, {}])
     result.to_csv(folder / "result")
     return folder
 

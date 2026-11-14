@@ -351,7 +351,8 @@ class MainWindow(QMainWindow):
         return self._export_problem[0]
 
     def _forget_export_problem(self) -> None:
-        """The installation may have changed (the checks have just run): the next look asks again."""
+        """The installation may have changed (the checks have just run): the next look asks
+        again."""
         self._export_problem = None
         self._update_notebook_actions()
 
