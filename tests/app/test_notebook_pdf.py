@@ -354,6 +354,25 @@ def test_the_export_entries_say_reinstall_when_nbconvert_is_missing(qtbot, monke
 
 
 @needs_qt
+def test_the_tab_export_button_is_greyed_with_the_problem(qtbot, tmp_path, monkeypatch):
+    from srim.app import window as window_module
+
+    helpers = _tab_helpers()
+    _ready_notebook(monkeypatch)
+    monkeypatch.setattr(window_module, "pdf_problem", lambda: REINSTALL_TEXT)
+    win = helpers.window_of(qtbot)
+    folder, _scan = helpers.run_folder(tmp_path, [helpers.DONE, helpers.DONE])
+    helpers.open_folder(qtbot, win, folder)
+    tab = helpers.start_and_wait(qtbot, win, win.start_marimo_action)
+    assert not tab.pdf_button.isEnabled()
+    assert tab.pdf_button.toolTip() == REINSTALL_TEXT
+    assert not win.export_pdf_action.isEnabled()
+    tab.pdf_button.click()  # greyed out: the click does nothing
+    assert not win._pdf_busy
+    assert list(tmp_path.glob("*.pdf")) == []
+
+
+@needs_qt
 def test_the_export_problem_is_looked_up_on_checks_not_on_each_change(qtbot, monkeypatch):
     from srim.app import window as window_module
 
