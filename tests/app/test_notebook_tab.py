@@ -8,6 +8,7 @@ from test_files/2 by ``run_folders`` (no SRIM).
 import os
 import shutil
 import sys
+import threading
 from copy import deepcopy
 from pathlib import Path
 
@@ -78,15 +79,21 @@ class FakeView(QWidget):
         self.urls.append(url)
 
 
-def use_server(monkeypatch, mode="serve"):
-    """The tab starts the fake server in ``mode`` (serve, exit or silent) instead of a notebook."""
+def fake_command(mode):
+    """A ``command_for`` that runs the fake server in ``mode`` (serve, exit or silent)."""
 
     def command_for(kind, path, port, token_file):
         extra = [str(port)] if mode == "serve" else []
         return [sys.executable, str(FAKE), mode, *extra]
 
+    return command_for
+
+
+def use_server(monkeypatch, mode="serve"):
+    """The tab starts the fake server in ``mode`` instead of a notebook."""
+
     def make(kind, path):
-        return NotebookServer(kind, path, command_for=command_for)
+        return NotebookServer(kind, path, command_for=fake_command(mode))
 
     monkeypatch.setattr(notebook_tab, "NotebookServer", make)
 
@@ -208,6 +215,10 @@ def test_a_failed_start_shows_the_log_tail_and_removes_the_tab(qtbot, tmp_path, 
     assert "did not start" in shown
     assert "line 30" in shown
     assert "line 5" not in shown
+    # A setup refresh replaces the setup messages, not the notebook's message.
+    with qtbot.waitSignal(win.checked, timeout=5000):
+        win.refresh_checks()
+    assert "did not start" in win.status.shown_text()
 
 
 def test_the_banner_appears_when_more_points_have_outputs(qtbot, tmp_path, notebooks):
@@ -226,6 +237,9 @@ def test_the_banner_appears_when_more_points_have_outputs(qtbot, tmp_path, noteb
     point.spec.to_yaml(point_dir / "run.yaml", provenance={"test": "banner"})
     qtbot.waitUntil(lambda: not tab.banner.isHidden(), timeout=10_000)
     assert tab.banner.text() == NEW_RESULTS_TEXT
+    tab.reload_button.click()
+    assert tab.banner.isHidden()  # hidden at once; the notebook has not loaded the results yet
+    qtbot.waitUntil(lambda: not tab.banner.isHidden(), timeout=10_000)
 
 
 def test_the_reload_touches_the_reload_file_for_marimo(qtbot, tmp_path, notebooks):
@@ -341,9 +355,64 @@ def test_the_stop_button_of_the_tab_removes_the_tab(qtbot, tmp_path, notebooks):
 def test_a_late_count_after_the_tab_stopped_is_ignored(qtbot, tmp_path, notebooks):
     folder, _scan = run_folder(tmp_path, [DONE, DONE])
     win = window_of(qtbot)
+    win.show()
     open_folder(qtbot, win, folder)
     tab = start_and_wait(qtbot, win, win.start_marimo_action)
+    qtbot.waitUntil(lambda: tab._pending is False, timeout=START_TIMEOUT)
     generation = tab._generation
     tab.stop()
-    tab._counted(generation, (5, 0))  # a count that arrives after the stop
-    assert not tab.banner.isVisible()
+    # A count that would show the banner (5 results, none loaded) if it were accepted.
+    tab._counted(generation, (5, 0))
+    assert tab.banner.isHidden()
+    assert tab._pending is False
+
+
+@pytest.mark.parametrize("phase", ["start", "wait_ready"])
+def test_a_stop_during_the_start_leaves_no_server_running(
+    qtbot, tmp_path, notebooks, monkeypatch, phase
+):
+    """The stop lands while the start thread is blocked in the server's start or readiness
+    wait; whichever way the start goes on, no server process is left running."""
+    blocked = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+
+    class Blocking(NotebookServer):
+        def _block(self):
+            blocked.set()
+            release.wait(10)
+
+        def start(self):
+            try:
+                if phase == "start":
+                    self._block()
+                super().start()
+            finally:
+                finished.set()
+
+        def wait_ready(self, *args, **kwargs):
+            try:
+                if phase == "wait_ready":
+                    self._block()
+                super().wait_ready(*args, **kwargs)
+            finally:
+                finished.set()
+
+    monkeypatch.setattr(
+        notebook_tab,
+        "NotebookServer",
+        lambda kind, path: Blocking(kind, path, command_for=fake_command("serve")),
+    )
+    folder, _scan = run_folder(tmp_path, [DONE, DONE])
+    win = window_of(qtbot)
+    open_folder(qtbot, win, folder)
+    win.start_marimo_action.trigger()
+    tab = win.notebook_tab
+    server = tab.server
+    assert blocked.wait(10)
+    win.stop_notebook_action.trigger()
+    release.set()
+    assert finished.wait(10)
+    assert not server.running
+    assert server.process is None or server.process.poll() is not None
+    assert win.notebook_tab is None

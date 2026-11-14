@@ -183,6 +183,11 @@ class NotebookTab(QWidget):
             except OSError as error:
                 self.banner.setText(f"{RELOAD_FAILED_TEXT}{error}")
                 self.banner.show()
+                return
+            # The notebook loads the results now: the banner goes, and the next count shows it
+            # again only if the results are still not loaded.
+            self.banner.hide()
+            self._pending = None
             return
         self.banner.setText(JUPYTER_RELOAD_TEXT)
         self.banner.show()

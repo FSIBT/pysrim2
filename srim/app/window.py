@@ -89,6 +89,9 @@ class MainWindow(QMainWindow):
         self._setup_messages: list[Guidance] = []
         #: the notebook tab while a notebook runs or is starting (None otherwise)
         self.notebook_tab: NotebookTab | None = None
+        #: a notebook's start problem or failure; kept until the next start (a setup refresh
+        #: replaces the setup messages, not this one)
+        self._notebook_message: Guidance | None = None
         self.document = document if document is not None else DocumentModel(self)
         #: the run of the setup (``run_runner`` replaces SRIM in tests; see srim.app.run_control)
         self.run = RunController(self, runner=run_runner)
@@ -319,9 +322,11 @@ class MainWindow(QMainWindow):
         if self._closing:
             return
         folder = self.run.folder
+        self._notebook_message = None
         problem = start_problem(kind, folder)
         if problem is not None:
-            self._set_setup_messages([Guidance(problem)])
+            self._notebook_message = Guidance(problem)
+            self._show_status()
             return
         if self.notebook_tab is not None:
             buttons = QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
@@ -352,7 +357,8 @@ class MainWindow(QMainWindow):
             self._remove_notebook_tab()
 
     def _notebook_failed(self, message: str) -> None:
-        self._set_setup_messages([Guidance(message)])
+        self._notebook_message = Guidance(message)
+        self._show_status()
 
     def _remove_notebook_tab(self) -> None:
         tab = self.notebook_tab
@@ -648,11 +654,13 @@ class MainWindow(QMainWindow):
         self._show_status()
 
     def _show_status(self) -> None:
-        """The status bar: the setup's messages, then the blocking problems, then the notes."""
+        """The status bar: the notebook's message, the setup's messages, then the blocking problems,
+        then the notes."""
         problems = self.document.problems
         blocking = [problem for problem in problems if problem.blocking]
         notes = [problem for problem in problems if not problem.blocking]
-        self.status.set_messages([*self._setup_messages, *blocking, *notes])
+        notebook = [self._notebook_message] if self._notebook_message is not None else []
+        self.status.set_messages([*notebook, *self._setup_messages, *blocking, *notes])
 
     def refresh_checks(self) -> None:
         """Run the installation checks in a thread and show what is not ready."""

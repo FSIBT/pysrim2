@@ -15,6 +15,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -38,10 +39,12 @@ READY_SECONDS = 60
 POLL_SECONDS = 0.25
 #: the number of log lines that :meth:`NotebookServer.log_tail` returns
 LOG_LINES = 20
-#: the file in :data:`srim.notebook.NOTEBOOK_DIR` that holds the server's token (mode 0600)
+#: the start of the token file's name in :data:`srim.notebook.NOTEBOOK_DIR` (mode 0600); the
+#: name ends with the server's own tag, so a server that is still stopping never touches the
+#: files of a server started after it in the same folder
 TOKEN_FILE = "token"
-#: the file in :data:`srim.notebook.NOTEBOOK_DIR` that receives the server's output
-LOG_FILE = "server.log"
+#: the start of the log file's name in :data:`srim.notebook.NOTEBOOK_DIR`; it ends with the tag
+LOG_FILE = "server"
 #: the environment variable that Jupyter reads its token from (set in the child only)
 JUPYTER_TOKEN_ENV = "JUPYTER_TOKEN"
 #: seconds that one HTTP readiness check may take at most
@@ -251,9 +254,13 @@ class NotebookServer:
     """A notebook server process for one notebook file, started by the app.
 
     ``command_for(kind, path, port, token_file)`` gives the command (:func:`server_command` by
-    default). :meth:`start` writes the token to ``NOTEBOOK_DIR/token`` (mode 0600), sends the
-    server's output to ``NOTEBOOK_DIR/server.log`` and starts the process. ``url`` is set by
-    :meth:`start` and opens the notebook with the token.
+    default). :meth:`start` writes the token to ``NOTEBOOK_DIR/token-<tag>`` (mode 0600), sends
+    the server's output to ``NOTEBOOK_DIR/server-<tag>.log`` and starts the process, where
+    ``tag`` is random for each server. ``url`` is set by :meth:`start` and opens the notebook
+    with the token.
+
+    :meth:`stop` may be called at any time, from any thread: a server stopped before its process
+    starts is never started (see :meth:`start`).
     """
 
     def __init__(self, kind: str, path, command_for=server_command):
@@ -262,8 +269,12 @@ class NotebookServer:
         self.path = Path(path)
         self.command_for = command_for
         self.folder = self.path.parent / NOTEBOOK_DIR
-        self.log_path = self.folder / LOG_FILE
-        self.token_file = self.folder / TOKEN_FILE
+        self.tag = secrets.token_hex(4)
+        self.log_path = self.folder / f"{LOG_FILE}-{self.tag}.log"
+        self.token_file = self.folder / f"{TOKEN_FILE}-{self.tag}"
+        #: guards the process and the stopped flag: start spawns and stop sees the spawn
+        self._lock = threading.Lock()
+        self._stopped = False
         self.port: int | None = None
         self.token: str | None = None
         self.url: str | None = None
@@ -275,10 +286,19 @@ class NotebookServer:
         return self.process is not None and self.process.poll() is None
 
     def start(self) -> None:
-        """Start the server. Raises :class:`NotebookServerError` when it is already running or
-        the process cannot be started (the token file is then removed)."""
-        if self.running:
-            raise NotebookServerError("the notebook server is already running")
+        """Start the server. Raises :class:`NotebookServerError` when it is already running, was
+        stopped (then nothing is started), or the process cannot be started (the token file is
+        then removed). The process is spawned while the lock is held, so :meth:`stop` either
+        sees it or has already prevented it."""
+        with self._lock:
+            if self._stopped:
+                raise NotebookServerError("the notebook server was stopped")
+            if self.running:
+                raise NotebookServerError("the notebook server is already running")
+            self._spawn()
+
+    def _spawn(self) -> None:
+        """Write the token and spawn the process. Called with the lock held."""
         self.folder.mkdir(parents=True, exist_ok=True)
         self.port = free_port()
         self.token = secrets.token_urlsafe(32)
@@ -347,11 +367,14 @@ class NotebookServer:
         Never raises: the cleanup is best effort. Safe to call more than once, and on a server
         that never started.
         """
-        process = self.process
+        with self._lock:
+            self._stopped = True
+            process = self.process
         if process is None:
-            return
+            return  # never started: start() will refuse to spawn
         _stop_process(process, grace)
         # the server is gone, so the token is no use any more: take it out of the files
+        # (they are this server's own, see TOKEN_FILE)
         _remove_quietly(self.token_file)
         if self.token:
             _redact(self.log_path, self.token)

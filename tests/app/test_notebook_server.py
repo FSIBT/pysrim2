@@ -165,9 +165,9 @@ def test_the_log_is_private_and_loses_the_token_when_stopped(tmp_path):
 
 def test_stop_twice_is_harmless(tmp_path):
     server = NotebookServer("marimo", tmp_path / "notebook.py", command_for=fake("serve"))
-    server.stop()  # never started
     server.start()
     server.wait_ready(timeout=30)
+    server.stop()
     server.stop()
     server.stop()
     assert not server.running
@@ -227,7 +227,7 @@ def test_redaction_replaces_the_log_without_a_temporary_file_left(tmp_path):
     server.start()
     server.process.wait(timeout=30)
     server.stop()
-    assert sorted(p.name for p in server.folder.iterdir()) == [notebooks.LOG_FILE]
+    assert sorted(p.name for p in server.folder.iterdir()) == [server.log_path.name]
     assert not [p for p in server.folder.iterdir() if p.name.endswith(".tmp")]
     if os.name == "posix":
         assert server.log_path.stat().st_mode & 0o777 == 0o600
@@ -291,3 +291,43 @@ def test_the_probe_timeout_is_capped_by_the_time_left(tmp_path, monkeypatch):
         server.wait_ready(timeout=0.5)
     assert time.monotonic() - started < 1.5
     assert calls and max(calls) <= 0.5 + 1e-9
+
+
+def test_a_server_stopped_before_it_starts_is_never_spawned(tmp_path, monkeypatch):
+    calls = []
+
+    def command_for(kind, path, port, token_file):
+        calls.append(kind)
+        return [sys.executable, str(FAKE), "silent"]
+
+    server = NotebookServer("marimo", tmp_path / "notebook.py", command_for=command_for)
+    server.stop()
+    with pytest.raises(NotebookServerError, match="was stopped"):
+        server.start()
+    assert calls == []
+    assert server.process is None
+    assert not server.running
+    assert not server.token_file.exists()
+
+
+def test_a_stopped_server_does_not_touch_the_files_of_a_server_started_after_it(tmp_path):
+    notebook = tmp_path / "notebook.py"
+    old = NotebookServer("marimo", notebook, command_for=fake("serve"))
+    new = NotebookServer("marimo", notebook, command_for=fake("serve"))
+    assert old.token_file != new.token_file
+    assert old.log_path != new.log_path
+    old.start()
+    try:
+        old.wait_ready(timeout=30)
+        new.start()
+        try:
+            new.wait_ready(timeout=30)
+            old.stop()
+            assert new.running
+            assert new.token_file.read_text(encoding="utf-8") == new.token
+            assert new.log_path.exists()
+        finally:
+            new.stop()
+    finally:
+        old.stop()
+    assert not new.token_file.exists()
