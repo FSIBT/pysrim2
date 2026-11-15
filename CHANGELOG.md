@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-11-15
+
 ### Added
 
 - `srim.notebook.load_run(folder)` reads a run or scan folder, finished or not, for notebooks.
@@ -302,7 +304,8 @@ Changes since pysrim 0.5.10. See
 
 Versions up to and including 0.5.10 were released as `pysrim` by Chris Ostrouchov.
 
-[Unreleased]: https://github.com/FSIBT/pysrim2/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/FSIBT/pysrim2/compare/v0.12.1...HEAD
+[0.12.1]: https://github.com/FSIBT/pysrim2/compare/v0.12.0...v0.12.1
 [0.12.0]: https://github.com/FSIBT/pysrim2/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/FSIBT/pysrim2/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/FSIBT/pysrim2/compare/v0.9.0...v0.10.0
