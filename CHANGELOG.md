@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `pysrim2 mcp` runs an MCP server over stdio for an AI agent. It needs the new `mcp` extra (`pysrim2[mcp]`, also in `app` and `all`); without it, the command says how to install the extra.
+- The agent's ask-first limits are settings in `settings.json`: `agent_max_minutes` (a run estimated longer needs the user's OK, default 30), `agent_max_core_fraction` (more workers than this share of the cores need the OK, default 0.5) and `agent_socket` (default true).
 
 ## [0.12.1] - 2026-11-15
 

@@ -91,3 +91,32 @@ def test_a_rates_section_of_the_wrong_type_gives_no_rates(tmp_path, rates):
     path = tmp_path / "settings.json"
     path.write_text(json.dumps({"ions_per_s": rates}))
     assert load_settings(path).ions_per_s == {}
+
+
+def test_the_agent_limits_round_trip(tmp_path):
+    path = tmp_path / "app" / "settings.json"
+    settings = AppSettings(agent_max_minutes=90, agent_max_core_fraction=0.75, agent_socket=False)
+    save_settings(settings, path)
+    assert load_settings(path) == settings
+
+
+@pytest.mark.parametrize(
+    "field, value",
+    [
+        ("agent_max_minutes", 0),
+        ("agent_max_minutes", 10081),
+        ("agent_max_minutes", 30.0),
+        ("agent_max_minutes", True),
+        ("agent_max_core_fraction", 0),
+        ("agent_max_core_fraction", 2),
+        ("agent_max_core_fraction", -0.5),
+        ("agent_max_core_fraction", "half"),
+        ("agent_socket", "yes"),
+    ],
+)
+def test_a_bad_agent_limit_gives_its_default_and_keeps_the_others(tmp_path, field, value):
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps({field: value, "theme": "dark"}))
+    loaded = load_settings(path)
+    assert getattr(loaded, field) == getattr(AppSettings(), field)
+    assert loaded.theme == "dark"

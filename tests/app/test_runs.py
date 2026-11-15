@@ -11,6 +11,7 @@ from srim.app.runs import (
     CONTAINER_SECONDS,
     DEFAULT_IONS_PER_S,
     ParallelChoice,
+    estimate_seconds,
     open_point,
     outputs_missing,
     parallel_advice,
@@ -70,6 +71,10 @@ def document(scan=None, calculation=1):
 
 def scanned(calculation=1, **section):
     return document(scan_from_section(section), calculation)
+
+
+def spec_with(**changes):
+    return spec(**changes)
 
 
 def binned_spec(calculation=2):
@@ -218,6 +223,36 @@ def test_a_precision_target_is_costed_at_its_upper_bound():
     advice = parallel_advice(scan, 8, {}, False)
     assert advice.seconds == 100_000 / 100.0
     assert advice.can_split is False
+
+
+def test_estimate_uses_the_remembered_rate_and_the_workers():
+    scan = beam_scan(spec_with(number_ions=1000, calculation=2))
+    assert estimate_seconds(scan, {"2": 10.0}) == 100.0
+    assert estimate_seconds(scan, {}, workers=1) == 1000 / DEFAULT_IONS_PER_S[2]
+
+
+def test_workers_beyond_the_units_do_not_shorten_the_estimate():
+    scan = beam_scan(spec_with(number_ions=1000, calculation=2))  # one unit
+    assert estimate_seconds(scan, {"2": 10.0}, workers=8) == 100.0
+
+
+def test_workers_share_the_batches_of_a_fixed_count():
+    scan = Scan(spec(calculation=2), ions=1000, batch_ions=100, seed=1)  # ten batches
+    assert estimate_seconds(scan, {"2": 10.0}, workers=8) == 1000 / 10.0 / 8
+    assert estimate_seconds(scan, {"2": 10.0}, workers=20) == 1000 / 10.0 / 10
+
+
+def test_the_bins_of_a_binned_beam_are_units_too():
+    scan = Scan(binned_spec(), ions=100_000, seed=1)  # five bins
+    assert estimate_seconds(scan, {"2": 100.0}, workers=8) == 100_000 / 100.0 / 5
+
+
+def test_estimate_costs_a_precision_target_at_its_upper_bound():
+    from srim.scan import Precision
+
+    precision = Precision(target="sputter_yield", rel=0.05, max_ions=100_000)
+    scan = Scan(spec(calculation=2), ions=precision, seed=1)
+    assert estimate_seconds(scan, {"2": 100.0}) == 100_000 / 100.0
 
 
 # --- remembered rates -----------------------------------------------------------------

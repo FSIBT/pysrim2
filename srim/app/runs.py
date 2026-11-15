@@ -134,6 +134,24 @@ def plan_run(doc: dict, base_dir: Any, choice: ParallelChoice) -> Scan:
     return to_scan(doc, base_dir)
 
 
+def estimate_seconds(scan: Scan, ions_per_s: dict[str, float], workers: int = 1) -> float:
+    """The estimated run time of ``scan`` in seconds, run by ``workers`` worker processes.
+
+    The ions of all points (a precision target at its ``max_ions``) over the remembered or
+    default rate of the calculation, divided by the number of SRIM runs that can run at once:
+    at most ``workers``, and at most the scan's units (the points' bins, times the batches of
+    ``batch_ions``; a precision target is one unit per point, as its batches are planned as it
+    goes). Parallel advice uses it with one worker, so the two never disagree.
+    """
+    points = scan.points()
+    precision = isinstance(scan.ions, Precision)
+    per_point = scan.ions.max_ions if precision else scan.ions
+    batches = math.ceil(per_point / scan.batch_ions) if scan.batch_ions else 1
+    units = sum(_units(point.spec) * batches for point in points)
+    parallel = max(1, min(workers, units))
+    return per_point * len(points) / _rate(scan.base.calculation, ions_per_s) / parallel
+
+
 def parallel_advice(
     scan: Scan, cores: int, ions_per_s: dict[str, float], container_available: bool
 ) -> Advice | None:
@@ -147,7 +165,7 @@ def parallel_advice(
     points = scan.points()
     precision = isinstance(scan.ions, Precision)
     per_point = scan.ions.max_ions if precision else scan.ions
-    seconds = per_point * len(points) / _rate(scan.base.calculation, ions_per_s)
+    seconds = estimate_seconds(scan, ions_per_s)
     if seconds < LONG_RUN_SECONDS:
         return None
     units = sum(_units(point.spec) for point in points)

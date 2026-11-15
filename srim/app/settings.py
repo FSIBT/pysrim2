@@ -20,6 +20,8 @@ THEMES = ("system", "light", "dark")
 RATE_KEYS = tuple(str(n) for n in range(1, 8))
 #: the run view's refresh interval, in whole seconds
 REFRESH_RANGE = (1, 3600)
+#: the agent's ask-first limit on a run's estimated time, in whole minutes (one week at most)
+AGENT_MINUTES_RANGE = (1, 10080)
 
 
 @dataclass
@@ -29,6 +31,12 @@ class AppSettings:
     #: the last measured ions per second of each calculation, keyed "1".."7"
     ions_per_s: dict[str, float] = field(default_factory=dict)
     refresh_seconds: int = 5
+    #: a run the agent starts that is estimated longer than this (minutes) needs the user's OK
+    agent_max_minutes: int = 30
+    #: a run the agent starts that wants more than this share of the cores needs the OK
+    agent_max_core_fraction: float = 0.5
+    #: whether ``pysrim2 mcp`` lets the open app's window take the agent's requests
+    agent_socket: bool = True
 
 
 def settings_path() -> Path:
@@ -52,6 +60,16 @@ def _valid(data: dict) -> AppSettings:
     low, high = REFRESH_RANGE
     if isinstance(refresh, int) and not isinstance(refresh, bool) and low <= refresh <= high:
         settings.refresh_seconds = refresh
+    minutes = data.get("agent_max_minutes")
+    low, high = AGENT_MINUTES_RANGE
+    if isinstance(minutes, int) and not isinstance(minutes, bool) and low <= minutes <= high:
+        settings.agent_max_minutes = minutes
+    fraction = data.get("agent_max_core_fraction")
+    if _positive(fraction) and fraction <= 1:
+        settings.agent_max_core_fraction = float(fraction)
+    socket = data.get("agent_socket")
+    if isinstance(socket, bool):
+        settings.agent_socket = socket
     return settings
 
 
