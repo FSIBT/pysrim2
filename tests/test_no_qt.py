@@ -19,6 +19,7 @@ def test_the_library_and_cli_never_import_qt(tmp_path):
         "import srim.app.quantity, srim.app.scan_model, srim.app.runs, srim.app.plots\n"
         "import srim.app.scan_plots, srim.app.export_results, srim.app.recent\n"
         "import srim.notebook\n"
+        "import srim.mcp\n"
         "import srim.app.notebooks, srim.installer.app\n"
         # pandas imports pyarrow itself when it is installed; the export extras are not ours to load
         "heavy = [m for m in sys.modules if m in ('tables', 'pyarrow.parquet')]\n"
@@ -33,6 +34,7 @@ def test_the_library_and_cli_never_import_qt(tmp_path):
         "            cli.main(argv)\n"
         "        except SystemExit:\n"
         "            pass  # the exit code is not what this test checks\n"
+        "assert 'mcp' not in sys.modules, 'MCP SDK imported'\n"
         "assert not [m for m in sys.modules if m.startswith('PySide6')], 'Qt imported'\n"
     )
     subprocess.run([sys.executable, "-c", code], check=True, timeout=300, env=env)

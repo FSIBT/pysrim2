@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `pysrim2 mcp` runs an MCP server over stdio for an AI agent. It needs the new `mcp` extra (`pysrim2[mcp]`, also in `app` and `all`); without it, the command says how to install the extra.
+
 ## [0.12.1] - 2026-11-15
 
 ### Added
