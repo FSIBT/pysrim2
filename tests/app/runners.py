@@ -49,3 +49,9 @@ def gated_runner(spec):
     while not gate.exists() and time.monotonic() < deadline:
         time.sleep(0.05)
     return fixture_runner(spec)
+
+
+def one_second_runner(spec):
+    """Takes 1 s, then returns the fixture: a run that is still going for a while."""
+    time.sleep(1.0)
+    return fixture_runner(spec)
