@@ -222,3 +222,66 @@ def test_the_runner_log_is_kept(tmp_path, started):
     wait_until(lambda: run_state(folder)["status"] == "finished")
     assert (folder / LOG_FILE).is_file()
     assert Path(folder / PID_FILE).is_file()
+
+
+def test_a_runner_that_loses_the_scan_lock_keeps_the_events(tmp_path, monkeypatch):
+    # the runner of a second start finds the scan lock held: its error is recorded, and the
+    # events already in the file (of the run that holds the lock) are not wiped
+    from srim.mcp import detached
+    from srim.scan.executor import scan_lock
+
+    folder = scan_folder_with_one_point(tmp_path)
+    monkeypatch.setenv("PYSRIM2_SCAN_RUNNER", "tests.app.runners:fixture_runner")
+    (folder / EVENTS_FILE).write_text('{"kind": "scan_paused"}\n', encoding="utf-8")
+    lock = scan_lock(folder).acquire()
+    try:
+        assert detached.main([str(folder), "--workers", "1"]) == 1
+    finally:
+        lock.release()
+    assert (folder / EVENTS_FILE).read_text(encoding="utf-8") == '{"kind": "scan_paused"}\n'
+
+
+def test_an_early_error_of_the_runner_is_kept_after_start(tmp_path, monkeypatch):
+    from srim.mcp import detached
+
+    folder = scan_folder_with_one_point(tmp_path)
+
+    class EarlyError:
+        """A runner that records its error before start_detached gets its pid back."""
+
+        def __init__(self, command, **options):
+            detached._record_error(folder, "early failure")
+            self.pid = 424242  # no such process
+
+    monkeypatch.setattr(detached.subprocess, "Popen", EarlyError)
+    assert start_detached(folder, workers=1) == 424242
+    meta = json.loads((folder / PID_FILE).read_text(encoding="utf-8"))
+    assert meta["error"] == "early failure"
+    assert meta["pid"] == 424242
+    assert list(folder.glob("*.tmp")) == []
+
+
+def test_an_old_error_is_not_inherited_by_a_new_run(tmp_path, monkeypatch):
+    from srim.mcp import detached
+
+    folder = scan_folder_with_one_point(tmp_path)
+    (folder / PID_FILE).write_text(
+        json.dumps({"pid": 424243, "error": "old failure"}), encoding="utf-8"
+    )
+
+    class Silent:
+        def __init__(self, command, **options):
+            self.pid = 424244
+
+    monkeypatch.setattr(detached.subprocess, "Popen", Silent)
+    start_detached(folder, workers=1)
+    meta = json.loads((folder / PID_FILE).read_text(encoding="utf-8"))
+    assert "error" not in meta
+    assert meta["pid"] == 424244
+
+
+def test_an_unreadable_runner_json_refuses_to_start(tmp_path):
+    folder = scan_folder_with_one_point(tmp_path)
+    (folder / PID_FILE).write_text("not json", encoding="utf-8")
+    with pytest.raises(BackendError, match="runner.json"):
+        start_detached(folder, workers=1, env=fake_runner_env())

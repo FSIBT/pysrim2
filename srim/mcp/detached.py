@@ -72,8 +72,11 @@ def start_detached(folder, workers: int, backend: str = "local", env: dict | Non
         raise BackendError(
             f"{folder} is not a scan folder: call mark_scan_folder on it before writing scan.yaml"
         )
-    if _runner_meta(folder) is not None and run_state(folder)["status"] in ("running", "paused"):
+    previous = _runner_meta(folder)  # raises when runner.json is unreadable
+    if previous is not None and run_state(folder)["status"] in ("running", "paused"):
         raise BackendError(f"a run is already going in {folder}; wait for it or stop it")
+    # the old runner.json (and any error it kept) is not this run's
+    (folder / PID_FILE).unlink(missing_ok=True)
     # a new run starts with empty events and control files: an old stop or an old
     # scan_finished must not be read as this run's
     (folder / CONTROL_FILE).write_bytes(b"")
@@ -109,7 +112,8 @@ def start_detached(folder, workers: int, backend: str = "local", env: dict | Non
         "workers": workers,
         "backend": backend,
     }
-    _write_meta(folder, meta)
+    # the runner may have written its own early error into runner.json already: keep it
+    _write_meta(folder, {**(_runner_meta(folder) or {}), **meta})
     return process.pid
 
 
@@ -195,7 +199,9 @@ def main(argv: list[str] | None = None) -> int:
     stop, pause = threading.Event(), threading.Event()
     done = threading.Event()
     outcome = {"stopped": False}
-    with open(folder / EVENTS_FILE, "w", encoding="utf-8", newline="\n") as events_file:
+    # append: start_detached starts the file empty, and a runner that loses the scan lock
+    # (ScanBusy) must not wipe the events of the run that holds it
+    with open(folder / EVENTS_FILE, "a", encoding="utf-8", newline="\n") as events_file:
 
         def on_event(event):
             events_file.write(event.to_json() + "\n")
@@ -291,20 +297,41 @@ def _replay(folder: Path) -> ScanState:
 
 
 def _runner_meta(folder: Path) -> dict | None:
-    """The contents of ``runner.json``, or None when there is none (or it cannot be read)."""
+    """The contents of ``runner.json``: None when there is none. Raises
+    :class:`~srim.mcp.backend.BackendError` when it is there but cannot be read."""
     try:
-        return json.loads((folder / PID_FILE).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        text = (folder / PID_FILE).read_text(encoding="utf-8")
+    except FileNotFoundError:
         return None
+    except OSError:
+        raise BackendError(
+            f"cannot read {folder / PID_FILE}; remove it or choose another folder"
+        ) from None
+    try:
+        meta = json.loads(text)
+    except ValueError:
+        meta = None
+    if not isinstance(meta, dict):
+        raise BackendError(
+            f"{folder / PID_FILE} is not a run file; remove it or choose another folder"
+        )
+    return meta
 
 
 def _write_meta(folder: Path, meta: dict) -> None:
-    (folder / PID_FILE).write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+    """Write ``runner.json`` whole or not at all: a temporary file, then ``os.replace``."""
+    target = folder / PID_FILE
+    temporary = folder / f"{PID_FILE}.{os.getpid()}.tmp"
+    temporary.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+    os.replace(temporary, target)
 
 
 def _record_error(folder: Path, message: str) -> None:
     """Keep the error of a failed run in ``runner.json`` (see :func:`run_state`)."""
-    meta = _runner_meta(folder) or {}
+    try:
+        meta = _runner_meta(folder) or {}
+    except BackendError:
+        meta = {}  # unreadable: the error is what matters now
     meta["error"] = message
     _write_meta(folder, meta)
 
@@ -315,20 +342,21 @@ def _pid_alive(pid) -> bool:
     if not isinstance(pid, int):
         return False
     if os.name == "nt":
-        import ctypes
-        from ctypes import wintypes
-
-        kernel32 = ctypes.windll.kernel32
+        kernel32 = _windows_kernel32()
         handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
         if not handle:
             return False
         try:
+            import ctypes
+            from ctypes import wintypes
+
             code = wintypes.DWORD()
             if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
                 return False
             return code.value == _STILL_ACTIVE
         finally:
             kernel32.CloseHandle(handle)
+
     try:
         reaped, _ = os.waitpid(pid, os.WNOHANG)
         return reaped == 0
@@ -341,6 +369,23 @@ def _pid_alive(pid) -> bool:
     except PermissionError:
         return True
     return True
+
+
+def _windows_kernel32():
+    """kernel32 with the argument and return types of the calls used here (Windows only).
+
+    Without them ctypes passes and returns C ints, which truncates 64-bit handles."""
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+    kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    return kernel32
 
 
 if __name__ == "__main__":
