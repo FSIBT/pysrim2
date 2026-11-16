@@ -455,6 +455,7 @@ def write_setup(doc: dict, path: Path, base_dir: Path | None) -> dict:
     if blocking:
         raise SpecError(blocking[0].text)
     folder = path.parent
+    folder.mkdir(parents=True, exist_ok=True)
     base = base_dir or Path.cwd()
     resolved = _with_absolute_histograms(doc, base)
     prepared, copies = prepare_for_save(resolved, folder)
