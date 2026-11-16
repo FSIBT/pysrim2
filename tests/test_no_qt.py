@@ -20,7 +20,7 @@ def test_the_library_and_cli_never_import_qt(tmp_path):
         "import srim.app.scan_plots, srim.app.export_results, srim.app.recent\n"
         "import srim.notebook\n"
         "import srim.mcp, srim.mcp.limits, srim.mcp.approval, srim.mcp.activity\n"
-        "import srim.mcp.backend, srim.mcp.headless\n"
+        "import srim.mcp.backend, srim.mcp.headless, srim.mcp.lookup\n"
         "import srim.app.notebooks, srim.installer.app\n"
         # pandas imports pyarrow itself when it is installed; the export extras are not ours to load
         "heavy = [m for m in sys.modules if m in ('tables', 'pyarrow.parquet')]\n"
