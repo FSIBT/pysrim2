@@ -367,22 +367,34 @@ class RunSpec:
         (``target.0.thickness_nm=50``).
         """
         data = self.to_dict()
-        touched = {}  # id(mapping) -> (mapping, keys set in this call)
-        for item in assignments:
-            key, sep, raw = item.partition("=")
-            if not sep or not key.strip():
-                raise SpecError(f"override {item!r} must look like dotted.key=value")
-            node, name = _assign(data, key.strip(), raw)
-            touched.setdefault(id(node), (node, set()))[1].add(name)
-        # A new element symbol means the old mass no longer applies (unless set as well).
-        for node, names in touched.values():
-            if "symbol" in names and "mass_amu" not in names:
-                node.pop("mass_amu", None)
-        _prune_beam(data)
+        apply_overrides(data, assignments)
         return RunSpec.from_dict(data)
 
 
 # --- parsing and validation ----------------------------------------------------------
+
+
+def apply_overrides(data, assignments):
+    """Apply ``dotted.key=value`` assignments to the plain-data spec ``data``, in place.
+
+    The values are converted by the schema, a new element symbol drops the old mass, and a
+    distribution the overrides made meaningless is pruned (see :func:`_prune_beam`). The spec
+    as a whole is not validated: :meth:`RunSpec.with_overrides` does that. Raises
+    :class:`SpecError` for an assignment that is not ``key=value`` or names an unknown key.
+    """
+    touched = {}  # id(mapping) -> (mapping, keys set in this call)
+    for item in assignments:
+        key, sep, raw = item.partition("=")
+        if not sep or not key.strip():
+            raise SpecError(f"override {item!r} must look like dotted.key=value")
+        node, name = _assign(data, key.strip(), raw)
+        touched.setdefault(id(node), (node, set()))[1].add(name)
+    # A new element symbol means the old mass no longer applies (unless set as well).
+    for node, names in touched.values():
+        if "symbol" in names and "mass_amu" not in names:
+            node.pop("mass_amu", None)
+    _prune_beam(data)
+    return data
 
 
 def _prune_beam(data):
