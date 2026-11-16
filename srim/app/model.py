@@ -10,13 +10,16 @@ judge of values: the only rule of its own is "a value is missing".
 
 import filecmp
 import re
+import shutil
 import warnings
 from collections.abc import Mapping
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
+import srim
 from srim.app.guidance import Guidance
+from srim.beam.shapes import Histogram
 from srim.spec import RunSpec, SpecError
 
 #: nm per display unit (the layer's thickness is shown in the best one)
@@ -409,3 +412,99 @@ def prepare_for_save(doc: dict, folder: Path) -> tuple[dict, list[tuple[Path, Pa
             copies.append((source, dest))
         body["file"] = dest.relative_to(folder).as_posix()
     return saved, copies
+
+
+def read_setup(path: Path) -> dict:
+    """The document of the ``run.yaml`` at ``path``: its spec in the document layout, and its
+    ``scan:`` section as ``_scan`` when the file has a scan (not a single run's wrapper).
+
+    Raises :class:`~srim.spec.SpecError` for a file that cannot be read or is not a setup.
+    """
+    from srim.app import scan_model  # lazy: scan_model imports this module
+
+    path = Path(path).absolute()
+    try:
+        spec = RunSpec.from_yaml(path)
+        section = scan_model.section_from_file(path)
+    except OSError as error:
+        raise SpecError(f"cannot read {path}: {error.strerror or error}") from error
+    except UnicodeDecodeError as error:
+        raise SpecError(f"{path} is not a text file: {error}") from error
+    doc = from_spec(spec)
+    if section is not None and not scan_model.is_single_run_section(
+        section, spec.seed, spec.number_ions
+    ):
+        doc["_scan"] = scan_model.scan_from_section(section)
+    return doc
+
+
+def write_setup(doc: dict, path: Path, base_dir: Path | None) -> dict:
+    """Write ``doc`` to ``path`` as a ``run.yaml`` and return the document as saved.
+
+    ``base_dir`` is the folder relative histogram files are read from (the working directory
+    when None). Raises :class:`~srim.spec.SpecError` for the first blocking problem, or for a
+    histogram file that does not exist. Histogram files are copied to ``beam/`` next to
+    ``path``, and the file records them relative to that folder. A setup with a scan is written
+    as a scan's ``run.yaml`` (:meth:`srim.scan.Scan.to_yaml`), otherwise as a plain one. The
+    caller takes the returned document as its current state (it refers to the copies).
+    """
+    from srim.app import scan_model  # lazy: scan_model imports this module
+
+    path = Path(path).absolute()
+    blocking = [problem for problem in problems(doc, base_dir) if problem.blocking]
+    if blocking:
+        raise SpecError(blocking[0].text)
+    folder = path.parent
+    base = base_dir or Path.cwd()
+    resolved = _with_absolute_histograms(doc, base)
+    prepared, copies = prepare_for_save(resolved, folder)
+    for source, dest in copies:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, dest)
+    provenance = {"app": f"pysrim2 {srim.__version__}"}
+    if "_scan" in prepared:
+        scan = scan_model.to_scan(prepared, folder)
+        _relative_histograms(scan.base, folder)
+        scan.to_yaml(path, provenance=provenance)
+    else:
+        spec = to_spec(prepared, folder)
+        _relative_histograms(spec, folder)
+        spec.to_yaml(path, provenance=provenance)
+    return prepared
+
+
+def _with_absolute_histograms(doc: dict, base: Path) -> dict:
+    """A copy of ``doc`` whose relative histogram files are taken from ``base``."""
+    out = deepcopy(doc)
+    ion = out.get("ion") or {}
+    values = [ion.get("energy_keV"), ion.get("angle_deg"), ion.get("azimuth_deg")]
+    position = ion.get("position")
+    if isinstance(position, dict):
+        values += [position.get(name) for name in ("y_nm", "z_nm", "depth_nm")]
+    for value in values:
+        body = value.get("histogram") if isinstance(value, dict) else None
+        if isinstance(body, dict) and body.get("file") is not None:
+            file = Path(body["file"])
+            if not file.is_absolute():
+                body["file"] = str((base / file).absolute())
+    return out
+
+
+def _relative_histograms(spec: RunSpec, folder: Path) -> None:
+    """Write the histogram files inside ``folder`` relative to it, so a moved folder still works.
+
+    A histogram read from a file is stored with its absolute path; this changes the path of
+    the ones inside ``folder`` to ``beam/<name>`` for the run file that is written next.
+    """
+    values = [spec.ion.energy_keV, spec.ion.angle_deg, spec.ion.azimuth_deg]
+    if spec.ion.position is not None:
+        values += [spec.ion.position.y_nm, spec.ion.position.z_nm, spec.ion.position.depth_nm]
+    root = folder.resolve()
+    for value in values:
+        if not isinstance(value, Histogram) or value.file is None:
+            continue
+        file = Path(value.file).resolve()
+        try:
+            value.file = file.relative_to(root).as_posix()
+        except ValueError:
+            pass  # outside the folder: the absolute path stays
