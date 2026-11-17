@@ -7,7 +7,10 @@ fill in what is still missing (in a copy) so that a half-made setup can be check
 and redo need the app.
 """
 
+import os
+import shutil
 from copy import deepcopy
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -23,9 +26,22 @@ from srim.app.model import (
     to_spec,
     write_setup,
 )
+from srim.app.runs import (
+    RUNS_SUFFIX,
+    ParallelChoice,
+    estimate_seconds,
+    plan_run,
+    run_folder,
+    scan_units,
+)
 from srim.app.scan_model import new_scan, scan_from_section, to_scan
 from srim.app.settings import AppSettings
 from srim.mcp.backend import BackendError, NeedsApp
+from srim.mcp.detached import PID_FILE, run_state, send_control, start_detached
+from srim.mcp.limits import default_workers
+from srim.notebook import read_run_folder
+from srim.scan import Precision, Scan
+from srim.scan.executor import mark_scan_folder
 from srim.scan.spec import normalise_key
 from srim.spec import SpecError, apply_overrides
 
@@ -34,6 +50,10 @@ RUN_KEYS = ("number_ions", "calculation", "seed", "settings", "beam")
 #: the scan keys of ``scan.<key>=value``; ``grid.<key>`` takes a list of values
 SCAN_KEYS = ("grid", "ions", "batch_ions", "seed", "keep_seed", "extract")
 SECTIONS = ("ion", "target", "run", "scan")
+#: the status of a run folder whose run never started (it has no runner.json)
+NOT_STARTED = "not started"
+#: the statuses of a run that is going: its folder is not deleted
+LIVE_STATUSES = ("running", "paused")
 
 
 class HeadlessBackend:
@@ -41,13 +61,15 @@ class HeadlessBackend:
 
     mode = "headless"
 
-    def __init__(self, cwd: Path, settings: AppSettings | None = None):
+    def __init__(self, cwd: Path, settings: AppSettings | None = None, cores: int | None = None):
         self._cwd = Path(cwd).absolute()
         self.settings = settings if settings is not None else AppSettings()
+        self._cores = cores if cores is not None else (os.cpu_count() or 1)
         self._doc: dict = new_document()
         self._path: Path | None = None
         self._history = History()
         self._written: set[Path] = set()  # files this backend saved in this session
+        self._started: Path | None = None  # the run folder this backend started last
 
     # --- reading -------------------------------------------------------------------
 
@@ -139,6 +161,87 @@ class HeadlessBackend:
         self._history.mark_saved(saved)
         return self.get_setup()
 
+    # --- runs ------------------------------------------------------------------------
+
+    def estimate(self, workers: int | None = None, batch_ions: int | None = None) -> dict:
+        scan, workers = self._plan(workers, batch_ions)
+        return self._estimate(scan, workers)
+
+    def start_run(self, workers: int | None = None, batch_ions: int | None = None) -> dict:
+        if self._path is None:
+            raise BackendError("save the setup first: save_setup(path)")
+        self._plan(workers, batch_ions)  # an incomplete setup is refused before anything is written
+        if self.has_unsaved_changes():
+            self.save_setup(None)
+        scan, workers = self._plan(workers, batch_ions)
+        folder = run_folder(self._path, datetime.now(UTC))
+        folder.mkdir(parents=True)
+        mark_scan_folder(folder)  # the marker first: start_detached needs it
+        scan.to_yaml(folder / "scan.yaml")
+        start_detached(folder, workers=workers)
+        self._started = folder
+        return {"folder": str(folder), "estimate": self._estimate(scan, workers)}
+
+    def run_status(self, folder: str | None = None) -> dict:
+        return run_state(self._run_folder(folder))
+
+    def control_run(self, action: str, folder: str | None = None) -> dict:
+        target = self._run_folder(folder)
+        send_control(target, action)
+        return {"folder": str(target), "requested": action}
+
+    def list_runs(self, setup_path: str | None = None) -> list[dict]:
+        runs = self._runs_dir(setup_path)
+        if not runs.is_dir():
+            return []
+        folders = [p for p in runs.iterdir() if (p / "scan.yaml").is_file()]
+        folders.sort(key=_run_order, reverse=True)
+        return [{"folder": str(p), "status": _status_of(p)} for p in folders]
+
+    def open_run(self, folder: str) -> dict:
+        target = self._resolve(folder)
+        if not (target / "scan.yaml").is_file():
+            raise BackendError(f"{target} has no scan.yaml: not a run folder")
+        try:
+            result, finished = read_run_folder(target)
+        except Exception as error:  # an unreadable scan is refused with its message
+            raise BackendError(f"cannot read {target}: {error}") from error
+        all_points = result.scan.points()
+        index_of = {point.id: point.index for point in all_points}
+        points = []
+        for _, row in result.table.iterrows():
+            index = index_of[row["id"]]
+            path = row.get("path")
+            points.append(
+                {
+                    "index": index,
+                    "status": row["status"],
+                    "path": path if isinstance(path, str) else None,
+                    "params": dict(all_points[index].params),
+                }
+            )
+        points.sort(key=lambda point: point["index"])
+        return {"folder": str(target), "finished": finished, "points": points}
+
+    def delete_run(self, folder: str) -> dict:
+        target = self._resolve(folder)
+        runs = self._runs_dir(None)
+        if target.resolve().parent != runs.resolve() or not (target / "scan.yaml").is_file():
+            raise BackendError(
+                f"{target} is not a run folder of this setup (its runs are in {runs})"
+            )
+        if (target / PID_FILE).is_file():
+            try:
+                status = run_state(target)["status"]
+            except Exception as error:  # a run that cannot be read may still be going: refused
+                raise BackendError(f"cannot tell whether {target} is going: {error}") from error
+            if status in LIVE_STATUSES:
+                raise BackendError(f"the run in {target} is {status}: stop it first (control_run)")
+        shutil.rmtree(target)
+        if self._started == target:
+            self._started = None
+        return {"folder": str(target), "deleted": True}
+
     # --- undo and redo (the app's) ----------------------------------------------------
 
     def undo(self) -> dict:
@@ -157,6 +260,54 @@ class HeadlessBackend:
         """The folder relative histogram files are read from: the setup's, else the working dir."""
         return self._path.parent if self._path is not None else self._cwd
 
+    def _plan(self, workers: int | None, batch_ions: int | None) -> tuple[Scan, int]:
+        """The library's scan of the setup, and its workers (the default when None).
+
+        Raises :class:`BackendError` for an incomplete setup or one the library refuses.
+        """
+        workers = _whole(workers, "workers")
+        batch_ions = _whole(batch_ions, "batch_ions")
+        base = self._base_dir()
+        blocking = [p.text for p in problems(self._doc, base) if p.blocking]
+        if blocking:
+            raise BackendError("the setup is not complete: " + "; ".join(blocking))
+        try:
+            scan = plan_run(self._doc, base, ParallelChoice(batch_ions=batch_ions))
+        except SpecError as error:
+            raise BackendError(str(error)) from error
+        if workers is None:
+            workers = default_workers(scan_units(scan), self._cores)
+        return scan, workers
+
+    def _estimate(self, scan: Scan, workers: int) -> dict:
+        return {
+            "seconds": estimate_seconds(scan, self.settings.ions_per_s, workers),
+            "workers": workers,
+            "cores": self._cores,
+            "units": scan_units(scan),
+            "ions": _total_ions(scan),
+        }
+
+    def _runs_dir(self, setup_path: str | None) -> Path:
+        """The ``<stem>-runs`` folder of the setup at ``setup_path`` (the current one when None)."""
+        setup = self._resolve(setup_path) if setup_path is not None else self._path
+        if setup is None:
+            raise BackendError("the setup has no file yet: save it, or give its setup_path")
+        return setup.parent / f"{setup.stem}{RUNS_SUFFIX}"
+
+    def _run_folder(self, folder: str | None) -> Path:
+        """``folder`` as a path; None is the latest run this backend started, else the newest
+        run of the setup."""
+        if folder is not None:
+            return self._resolve(folder)
+        if self._started is not None:
+            return self._started
+        if self._path is not None:
+            for run in self.list_runs():
+                if run["status"] != NOT_STARTED:
+                    return Path(run["folder"])
+        raise BackendError("no run: start one with start_run()")
+
     def _with_spec_values(self, doc: dict, items: list[str]) -> dict:
         """``doc`` with the ``dotted.key=value`` items applied to its spec, app keys kept."""
         data = clean(doc)
@@ -173,6 +324,37 @@ class HeadlessBackend:
 
 
 # --- helpers ---------------------------------------------------------------------------
+
+
+def _whole(value: Any, name: str) -> int | None:
+    """``value`` as a whole number of at least 1 (None stays None). Raises :class:`BackendError`."""
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise BackendError(f"{name} must be a whole number of at least 1, got {value!r}")
+    return value
+
+
+def _total_ions(scan: Scan) -> int:
+    """The ions of all points (a precision target at its ``max_ions``)."""
+    per_point = scan.ions.max_ions if isinstance(scan.ions, Precision) else scan.ions
+    return per_point * len(scan.points())
+
+
+def _run_order(folder: Path) -> tuple[str, int]:
+    """The sort key of a run folder: its UTC stamp, then its ``-N`` number (none is 1)."""
+    stamp, _, number = folder.name.partition("-")
+    return stamp, int(number) if number.isdigit() else 1
+
+
+def _status_of(folder: Path) -> str:
+    """The status of a run folder for :meth:`HeadlessBackend.list_runs`."""
+    if not (folder / PID_FILE).is_file():
+        return NOT_STARTED
+    try:
+        return run_state(folder)["status"]
+    except Exception:  # a folder that cannot be read is listed as such, not left out
+        return "unreadable"
 
 
 def _mapping(value: Any, name: str) -> dict:

@@ -64,3 +64,32 @@ class Backend(Protocol):
 
     def redo(self) -> dict:
         """Redo the last undone change. Needs the app."""
+
+    def estimate(self, workers: int | None = None, batch_ions: int | None = None) -> dict:
+        """``{"seconds", "workers", "cores", "units", "ions"}`` of a run of the setup. The workers
+        default to :func:`srim.mcp.limits.default_workers`. Raises :class:`BackendError` for an
+        incomplete setup."""
+
+    def start_run(self, workers: int | None = None, batch_ions: int | None = None) -> dict:
+        """Start a run of the saved setup in a new run folder, detached. Saves an unsaved change
+        to the setup's own file first. ``{"folder", "estimate"}``. Raises :class:`BackendError`
+        (for one, when the setup has no file yet)."""
+
+    def run_status(self, folder: str | None = None) -> dict:
+        """The state of the run in ``folder``: the latest run this backend started, else the
+        newest run of the setup. Raises :class:`BackendError` when there is no run."""
+
+    def control_run(self, action: str, folder: str | None = None) -> dict:
+        """Ask the run in ``folder`` (the default as in :meth:`run_status`) to ``pause``,
+        ``resume`` or ``stop``. Raises :class:`BackendError` when the run is not going."""
+
+    def list_runs(self, setup_path: str | None = None) -> list[dict]:
+        """The run folders of a setup (its ``<stem>-runs`` folder, the current setup when None),
+        newest first: ``{"folder", "status"}`` each."""
+
+    def open_run(self, folder: str) -> dict:
+        """``{"folder", "finished", "points"}`` of a run folder, read back (finished or not)."""
+
+    def delete_run(self, folder: str) -> dict:
+        """Delete a run folder of the setup. Refuses a running one and any folder that is not one
+        of the setup's run folders. Raises :class:`BackendError`."""

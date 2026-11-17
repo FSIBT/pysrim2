@@ -146,10 +146,17 @@ def estimate_seconds(scan: Scan, ions_per_s: dict[str, float], workers: int = 1)
     points = scan.points()
     precision = isinstance(scan.ions, Precision)
     per_point = scan.ions.max_ions if precision else scan.ions
-    batches = math.ceil(per_point / scan.batch_ions) if scan.batch_ions else 1
-    units = sum(_units(point.spec) * batches for point in points)
-    parallel = max(1, min(workers, units))
+    parallel = max(1, min(workers, scan_units(scan)))
     return per_point * len(points) / _rate(scan.base.calculation, ions_per_s) / parallel
+
+
+def scan_units(scan: Scan) -> int:
+    """The SRIM runs of ``scan``: the bins of each point, times its batches of ``batch_ions``
+    (a precision target counts the batches of its ``max_ions``)."""
+    precision = isinstance(scan.ions, Precision)
+    per_point = scan.ions.max_ions if precision else scan.ions
+    batches = math.ceil(per_point / scan.batch_ions) if scan.batch_ions else 1
+    return sum(_units(point.spec) * batches for point in scan.points())
 
 
 def parallel_advice(
