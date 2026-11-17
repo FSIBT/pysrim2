@@ -250,3 +250,108 @@ def test_delete_refuses_anything_outside_the_setups_run_folders(tmp_path):
         with pytest.raises(BackendError, match="not a run folder"):
             b.delete_run(str(folder))
     assert outside.is_dir() and other_setup.is_dir()
+
+
+def test_a_run_of_another_setup_is_not_reported_after_opening_one(tmp_path, fast):
+    b = boron_setup(HeadlessBackend(tmp_path))
+    b.save_setup("boron.yaml")
+    b.start_run()
+    wait_until(finished(b))
+    other = boron_setup(HeadlessBackend(tmp_path), seed=3)
+    other.save_setup("other.yaml")
+    b.open_setup("other.yaml")
+    with pytest.raises(BackendError, match="no run"):
+        b.run_status()
+    with pytest.raises(BackendError, match="no run"):
+        b.control_run("stop")
+    b.save_setup("moved.yaml")  # the run of boron.yaml is not this setup's run either
+    with pytest.raises(BackendError, match="no run"):
+        b.run_status()
+
+
+def test_starting_an_opened_unedited_setup_does_not_rewrite_the_file(tmp_path, fast):
+    b = boron_setup(HeadlessBackend(tmp_path))
+    b.save_setup("boron.yaml")
+    path = tmp_path / "boron.yaml"
+    os.utime(path, (1_000_000, 1_000_000))
+    before, mtime = path.read_bytes(), path.stat().st_mtime_ns
+    opened = HeadlessBackend(tmp_path)
+    opened.open_setup("boron.yaml")
+    assert not opened.has_unsaved_changes()
+    opened.start_run()
+    assert path.read_bytes() == before
+    assert path.stat().st_mtime_ns == mtime
+    wait_until(finished(opened))
+
+
+def test_a_folder_that_exists_already_is_refused(tmp_path, fast, monkeypatch):
+    b = boron_setup(HeadlessBackend(tmp_path))
+    b.save_setup("boron.yaml")
+    taken = tmp_path / "taken"
+    taken.mkdir()
+    (taken / "keep.txt").write_text("x", encoding="utf-8")
+    monkeypatch.setattr("srim.mcp.headless.run_folder", lambda setup, now: taken)
+    with pytest.raises(BackendError, match="exists"):
+        b.start_run()
+    assert (taken / "keep.txt").read_text(encoding="utf-8") == "x"
+
+
+def test_a_run_that_cannot_start_leaves_no_folder(tmp_path, fast, monkeypatch):
+    b = boron_setup(HeadlessBackend(tmp_path))
+    b.save_setup("boron.yaml")
+
+    def refuse(folder, workers=None, **options):
+        raise RuntimeError("no interpreter")
+
+    monkeypatch.setattr("srim.mcp.headless.start_detached", refuse)
+    with pytest.raises(BackendError, match="could not start"):
+        b.start_run()
+    assert list((tmp_path / "boron-runs").iterdir()) == []
+    with pytest.raises(BackendError, match="no run"):
+        b.run_status()
+
+
+def test_delete_refuses_a_symlinked_run_folder(tmp_path):
+    b = boron_setup(HeadlessBackend(tmp_path))
+    b.save_setup("boron.yaml")
+    real = make_run_folder(tmp_path / "elsewhere", tmp_path / "boron.yaml")
+    runs = tmp_path / "boron-runs"
+    runs.mkdir()
+    link = runs / "20260101T000000Z"
+    try:
+        os.symlink(real, link, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("symbolic links cannot be made here")
+    with pytest.raises(BackendError, match="is a symbolic link"):
+        b.delete_run(str(link))
+    assert real.is_dir() and link.is_symlink()
+
+
+def test_a_run_folder_that_cannot_be_removed_is_a_backend_error(tmp_path, monkeypatch):
+    b = boron_setup(HeadlessBackend(tmp_path))
+    b.save_setup("boron.yaml")
+    folder = make_run_folder(tmp_path / "boron-runs" / "20260101T000000Z", tmp_path / "boron.yaml")
+
+    def busy(path, *args, **kwargs):
+        raise OSError("busy")
+
+    monkeypatch.setattr("srim.mcp.headless.shutil.rmtree", busy)
+    with pytest.raises(BackendError, match="cannot delete"):
+        b.delete_run(str(folder))
+    assert folder.is_dir()
+
+
+def test_delete_refuses_a_paused_run(tmp_path, slow):
+    b = boron_setup(HeadlessBackend(tmp_path))
+    b.save_setup("boron.yaml")
+    folder = b.start_run()["folder"]
+    wait_until(lambda: b.run_status()["status"] == "running")
+    b.control_run("pause")
+    wait_until(lambda: b.run_status()["status"] == "paused")
+    try:
+        with pytest.raises(BackendError, match="paused"):
+            b.delete_run(folder)
+        assert Path(folder).is_dir()
+    finally:
+        b.control_run("stop")
+        wait_until(lambda: b.run_status()["status"] == "stopped")

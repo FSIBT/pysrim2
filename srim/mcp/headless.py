@@ -170,15 +170,26 @@ class HeadlessBackend:
     def start_run(self, workers: int | None = None, batch_ions: int | None = None) -> dict:
         if self._path is None:
             raise BackendError("save the setup first: save_setup(path)")
-        self._plan(workers, batch_ions)  # an incomplete setup is refused before anything is written
+        scan, workers = self._plan(workers, batch_ions)  # refused before anything is written
         if self.has_unsaved_changes():
             self.save_setup(None)
-        scan, workers = self._plan(workers, batch_ions)
+            scan, workers = self._plan(workers, batch_ions)  # the scan of the file as saved
         folder = run_folder(self._path, datetime.now(UTC))
-        folder.mkdir(parents=True)
-        mark_scan_folder(folder)  # the marker first: start_detached needs it
-        scan.to_yaml(folder / "scan.yaml")
-        start_detached(folder, workers=workers)
+        try:
+            folder.mkdir(parents=True)
+        except FileExistsError as error:  # run_folder checked, but another run can be faster
+            raise BackendError(f"{folder} exists already: try again") from error
+        except OSError as error:
+            raise BackendError(f"cannot create {folder}: {error}") from error
+        try:
+            mark_scan_folder(folder)  # the marker first: start_detached needs it
+            scan.to_yaml(folder / "scan.yaml")
+            start_detached(folder, workers=workers)
+        except Exception as error:  # this run did not start: its folder goes with it
+            shutil.rmtree(folder, ignore_errors=True)
+            if isinstance(error, BackendError):
+                raise
+            raise BackendError(f"could not start the run in {folder}: {error}") from error
         self._started = folder
         return {"folder": str(folder), "estimate": self._estimate(scan, workers)}
 
@@ -226,10 +237,14 @@ class HeadlessBackend:
     def delete_run(self, folder: str) -> dict:
         target = self._resolve(folder)
         runs = self._runs_dir(None)
+        if target.is_symlink():  # checked before resolving: a link is never followed
+            raise BackendError(f"{target} is a symbolic link: only a run folder is deleted")
         if target.resolve().parent != runs.resolve() or not (target / "scan.yaml").is_file():
             raise BackendError(
                 f"{target} is not a run folder of this setup (its runs are in {runs})"
             )
+        # Known gap, no fix: between start_run writing scan.yaml and start_detached writing
+        # runner.json, a starting run reads as "not started" and could be deleted (a moment).
         if (target / PID_FILE).is_file():
             try:
                 status = run_state(target)["status"]
@@ -237,7 +252,10 @@ class HeadlessBackend:
                 raise BackendError(f"cannot tell whether {target} is going: {error}") from error
             if status in LIVE_STATUSES:
                 raise BackendError(f"the run in {target} is {status}: stop it first (control_run)")
-        shutil.rmtree(target)
+        try:
+            shutil.rmtree(target)
+        except OSError as error:
+            raise BackendError(f"cannot delete {target}: {error}") from error
         if self._started == target:
             self._started = None
         return {"folder": str(target), "deleted": True}
@@ -300,9 +318,11 @@ class HeadlessBackend:
         run of the setup."""
         if folder is not None:
             return self._resolve(folder)
-        if self._started is not None:
-            return self._started
         if self._path is not None:
+            started = self._started
+            # a run started for another setup (opened or saved since) is not this setup's run
+            if started is not None and started.parent == self._runs_dir(None):
+                return started
             for run in self.list_runs():
                 if run["status"] != NOT_STARTED:
                     return Path(run["folder"])
