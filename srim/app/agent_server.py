@@ -1,11 +1,11 @@
 """The app's agent socket: the server that ``pysrim2 mcp`` connects to (Qt).
 
-While the app runs with its agent socket on, it listens on a per-user local socket (``QLocalServer``:
-a Unix socket in the temporary folder on POSIX, a named pipe on Windows) and writes its discovery
-file (:mod:`srim.mcp.discovery`), only after listening has succeeded. A connection opens with a
-hello that carries the token. After that each request goes to the handler, on the GUI thread, one
-at a time across all connections; the answers on one connection come back in the order its requests
-were sent.
+While the app runs with its agent socket on, it listens on a per-user local socket
+(``QLocalServer``: a Unix socket in the temporary folder on POSIX, a named pipe on Windows) and
+writes its discovery file (:mod:`srim.mcp.discovery`), only after listening has succeeded. A
+connection opens with a hello that carries the token. After that each request goes to the handler,
+on the GUI thread, one at a time across all connections; the answers on one connection come back in
+the order its requests were sent.
 
 The handler has ``handle(method, params)``. It returns the answer (JSON data), or a
 :class:`Deferred` when the answer comes later (a dialog, a load in a thread). The server then waits
@@ -242,7 +242,8 @@ class AgentServer(QObject):
     """Listens for agent connections and hands their requests to ``handler``.
 
     ``client_seen(name)`` and the ``client_connected`` signal are called when a hello is accepted.
-    ``hello_timeout_ms``, ``stall_ms`` and ``max_pending`` are the limits above (tests shorten them).
+    ``hello_timeout_ms``, ``stall_ms``, ``max_pending`` and ``max_queued_bytes`` are the limits
+    above (tests shorten them).
     """
 
     client_connected = Signal(str)
