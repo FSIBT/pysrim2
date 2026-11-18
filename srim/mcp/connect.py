@@ -78,7 +78,8 @@ def snippet(client: str, command: list[str]) -> str:
     if client == "gemini":
         return _json_text({"mcpServers": {SERVER_NAME: _entry(command)}})
     if client == "cursor":
-        return _json_text({"mcpServers": {SERVER_NAME: _entry(command)}})
+        entry = {"type": "stdio", **_entry(command)}
+        return _json_text({"mcpServers": {SERVER_NAME: entry}})
     if client == "vscode":
         entry = {"type": "stdio", **_entry(command)}
         return _json_text({"servers": {SERVER_NAME: entry}})

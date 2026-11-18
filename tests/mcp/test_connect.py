@@ -31,6 +31,15 @@ def test_the_json_clients_hold_the_command(client):
     assert server["args"] == ["mcp"]
 
 
+def test_cursor_names_the_stdio_transport():
+    parsed = json.loads(connect.snippet("cursor", command_for(WINDOWS_EXE)))
+    assert parsed == {
+        "mcpServers": {
+            "pysrim2": {"type": "stdio", "command": WINDOWS_EXE, "args": ["mcp"]},
+        }
+    }
+
+
 def test_vscode_uses_servers_and_the_stdio_type():
     parsed = json.loads(connect.snippet("vscode", command_for(WINDOWS_EXE)))
     server = parsed["servers"]["pysrim2"]
