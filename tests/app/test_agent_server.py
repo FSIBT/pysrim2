@@ -47,6 +47,11 @@ class StandIn:
         self.calls: list[tuple[str, dict]] = []
         #: the Deferreds answered later by the test (method "later")
         self.pending: list[Deferred] = []
+        #: how many of those were cancelled because their peer went away
+        self.cancels = 0
+
+    def _cancelled(self) -> None:
+        self.cancels += 1
 
     def handle(self, method: str, params: dict):
         self.calls.append((method, params))
@@ -54,6 +59,7 @@ class StandIn:
             return params
         if method == "later":
             deferred = Deferred()
+            deferred.on_cancel(self._cancelled)
             self.pending.append(deferred)
             return deferred
         if method == "fail":
@@ -738,3 +744,52 @@ def test_the_server_works_after_a_stop_inside_a_handler(qtbot):
         assert finish(qtbot, in_thread(second)) == {"id": 2, "result": {"again": True}}
     finally:
         server.stop()
+
+
+def test_a_deferred_cancel_callback_runs_once_and_a_late_callback_runs_at_once():
+    deferred = Deferred()
+    calls = []
+    deferred.on_cancel(lambda: calls.append("first"))
+    deferred._cancel()
+    deferred._cancel()
+    deferred.on_cancel(lambda: calls.append("late"))
+    assert calls == ["first", "late"]
+    assert deferred.cancelled
+
+
+def test_a_cancelled_deferred_ignores_a_later_settling():
+    deferred = Deferred()
+    seen = []
+    deferred.done.connect(lambda ok, payload: seen.append(ok))
+    deferred._cancel()
+    deferred.resolve("too late")
+    assert seen == [] and deferred.outcome is None
+
+
+def test_a_pending_answer_is_cancelled_when_its_peer_goes(qtbot, make_server):
+    handler = StandIn()
+    make_server(handler)
+    endpoint = read_endpoint()
+
+    def talk_first():
+        channel, _hello = connect(endpoint)
+        channel.send(protocol.request(1, "later", {}))
+        return channel
+
+    first = finish(qtbot, in_thread(talk_first))
+    qtbot.waitUntil(lambda: len(handler.pending) > 0, timeout=5000)
+
+    def talk_second():
+        channel, _hello = connect(endpoint)
+        channel.send(protocol.request(1, "echo", {"from": "second"}))
+        reply = channel.receive()
+        channel.close()
+        return reply
+
+    second = in_thread(talk_second)
+    first.close()  # the owner of the pending answer is gone; nobody settles it
+    assert finish(qtbot, second) == {"id": 1, "result": {"from": "second"}}
+    assert handler.cancels == 1
+    assert handler.pending[0].cancelled
+    handler.pending[0].resolve("late")
+    assert handler.pending[0].outcome is None

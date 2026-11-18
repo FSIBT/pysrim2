@@ -69,9 +69,15 @@ class AgentSocketError(RuntimeError):
 class Deferred(QObject):
     """An answer that comes later. A handler returns one; the server waits for it.
 
-    :meth:`resolve` or :meth:`reject` settles it once (later calls are ignored), and ``done``
-    is emitted with ``(ok, value_or_error)``. Settle it in the GUI thread. ``outcome`` keeps the
-    result, so a Deferred settled before the server looks at it is still answered.
+    The handler owns settling: :meth:`resolve` or :meth:`reject` settles it once (later calls are
+    ignored), and ``done`` is emitted with ``(ok, value_or_error)``. Settle it in the GUI thread.
+    ``outcome`` keeps the result, so a Deferred settled before the server looks at it is still
+    answered.
+
+    A cancel is only the server saying the peer that asked is gone: nobody is left to answer. It
+    happens once; ``cancelled`` is then True, the callbacks given to :meth:`on_cancel` have run,
+    and a later settling is ignored. The handler can use it to stop its own work (a dialog closes,
+    a load is dropped). A cancel does not mean the request failed.
     """
 
     done = Signal(bool, object)
@@ -79,6 +85,19 @@ class Deferred(QObject):
     def __init__(self, parent: QObject | None = None):
         super().__init__(parent)
         self.outcome: tuple[bool, object] | None = None
+        #: True once the peer that asked has gone before the answer was given
+        self.cancelled = False
+        self._cancel_callbacks: list = []
+
+    def on_cancel(self, callback) -> None:
+        """Call ``callback()`` when the Deferred is cancelled; at once if it already is.
+
+        Nothing is called once the Deferred has been settled.
+        """
+        if self.cancelled:
+            callback()
+        elif self.outcome is None:
+            self._cancel_callbacks.append(callback)
 
     @property
     def settled(self) -> bool:
@@ -93,10 +112,22 @@ class Deferred(QObject):
         self._settle(False, error)
 
     def _settle(self, ok: bool, payload) -> None:
-        if self.outcome is not None:
+        if self.outcome is not None or self.cancelled:
             return
         self.outcome = (ok, payload)
         self.done.emit(ok, payload)
+
+    def _cancel(self) -> None:
+        """Called by the server when the peer that asked has gone (once)."""
+        if self.cancelled or self.outcome is not None:
+            return
+        self.cancelled = True
+        callbacks, self._cancel_callbacks = self._cancel_callbacks, []
+        for callback in callbacks:
+            try:
+                callback()
+            except Exception:  # a handler's callback must not stop the server
+                logger.exception("a cancel callback of an agent answer failed")
 
 
 class UnavailableBackend:
@@ -223,6 +254,8 @@ class AgentServer(QObject):
         self._peers: set[_Peer] = set()
         self._queue: list[_Job] = []
         self._waiting: Deferred | None = None
+        #: the connection that asked for the answer in ``_waiting``
+        self._waiting_peer: _Peer | None = None
         self._pumping = False
 
     @property
@@ -257,7 +290,7 @@ class AgentServer(QObject):
         self._token = token
         self._session += 1
         self._queue = []
-        self._waiting = None
+        self._release_waiting()
         server.newConnection.connect(self._accept_all)
 
     def stop(self) -> None:
@@ -272,7 +305,7 @@ class AgentServer(QObject):
         for peer in list(self._peers):
             self._drop(peer)
         self._queue.clear()
-        self._waiting = None
+        self._release_waiting(cancel=True)
         try:
             remove_endpoint(token)
         except OSError:
@@ -387,6 +420,17 @@ class AgentServer(QObject):
         socket, peer.socket = peer.socket, None
         if socket is not None:
             socket.deleteLater()
+        if self._waiting_peer is peer:
+            # nobody is left to take the answer: stop waiting for it, and go on with the queue
+            self._release_waiting(cancel=True)
+            self._pump()
+
+    def _release_waiting(self, cancel: bool = False) -> None:
+        """Stop waiting for the pending answer; ``cancel`` also cancels it."""
+        waiting, self._waiting = self._waiting, None
+        self._waiting_peer = None
+        if cancel and waiting is not None:
+            waiting._cancel()
 
     def _stalled(self, peer: _Peer) -> None:
         logger.warning("an agent stopped reading its answers; its connection was closed")
@@ -470,10 +514,13 @@ class AgentServer(QObject):
             ok, payload = deferred.outcome
             self._reply_outcome(peer, request_id, ok, payload)
             return
-        if self._server is None:
-            return  # stopped inside the handler: nothing is waiting for this answer any more
+        if peer.gone or self._server is None:
+            # the peer is gone, or the server stopped inside the handler: nobody will take it
+            deferred._cancel()
+            return
         session = self._session
         self._waiting = deferred
+        self._waiting_peer = peer
         deferred.done.connect(
             lambda ok, payload: self._answered(session, peer, request_id, ok, payload)
         )
@@ -481,7 +528,7 @@ class AgentServer(QObject):
     def _answered(self, session: int, peer: _Peer, request_id, ok: bool, payload) -> None:
         if session != self._session:
             return  # the server stopped (or started again) since
-        self._waiting = None
+        self._release_waiting()
         self._reply_outcome(peer, request_id, ok, payload)
         self._pump()
 
