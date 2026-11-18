@@ -292,8 +292,7 @@ def test_the_stdio_server_exits_with_0_when_stdin_closes(tmp_path):
     done = subprocess.run(
         [sys.executable, "-m", "srim.mcp.server"],
         stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         cwd=str(tmp_path),
         env={**os.environ, "PYSRIM2_HOME": str(tmp_path / "home")},
         timeout=STDIO_SECONDS,
