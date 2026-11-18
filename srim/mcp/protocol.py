@@ -51,7 +51,7 @@ def encode(message: dict, max_line: int = MAX_LINE) -> bytes:
     """``message`` as one JSON line, newline included. Raises :class:`ProtocolError`."""
     try:
         text = json.dumps(message, ensure_ascii=True, separators=(",", ":"), allow_nan=False)
-    except (TypeError, ValueError) as error:
+    except (TypeError, ValueError, RecursionError) as error:
         raise ProtocolError(f"the message cannot be sent as JSON: {error}") from None
     data = text.encode("ascii") + b"\n"
     if len(data) - 1 > max_line:
@@ -93,7 +93,7 @@ class LineReader:
     def _decode(self, line: bytes, messages: list[dict]) -> dict:
         try:
             value = json.loads(line.decode("utf-8"), parse_constant=_reject_constant)
-        except (UnicodeDecodeError, ValueError):
+        except (UnicodeDecodeError, ValueError, RecursionError):
             self._fail("a line is not JSON", messages)
         if not isinstance(value, dict):
             self._fail("a line is not a JSON object", messages)

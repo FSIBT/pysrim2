@@ -142,3 +142,10 @@ def test_the_token_stays_out_of_the_repr_and_of_errors(home):
     with pytest.raises(ValueError) as caught:
         write_endpoint(AppEndpoint("", token, 0, "0"))
     assert token not in str(caught.value)
+
+
+def test_deep_nesting_in_the_file_reads_as_none(home):
+    discovery_path().parent.mkdir(parents=True)
+    discovery_path().write_text("[" * 100000, encoding="utf-8")
+    assert read_endpoint() is None
+    remove_endpoint("a" * 64)  # a broken file is not a crash here either

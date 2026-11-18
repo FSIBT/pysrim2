@@ -94,7 +94,7 @@ def _read_data(path: Path):
         return None
     try:
         return json.loads(raw.decode("utf-8"))
-    except ValueError:
+    except (ValueError, RecursionError):
         return None
 
 

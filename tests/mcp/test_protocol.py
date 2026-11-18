@@ -276,3 +276,18 @@ def test_the_channel_sends_encoded_lines():
     sink = Sink()
     Channel(sink).send({"id": 1})
     assert sink.written == encode({"id": 1})
+
+
+def test_deep_nesting_on_the_wire_is_a_protocol_error():
+    with pytest.raises(ProtocolError):
+        LineReader().feed(b"[" * 100000 + b"\n")
+    with pytest.raises(ProtocolError):
+        LineReader().feed(b'{"id": 1, "params": ' + b"[" * 100000 + b"\n")
+
+
+def test_deep_nesting_cannot_be_encoded():
+    deep = []
+    for _ in range(100000):
+        deep = [deep]
+    with pytest.raises(ValueError):
+        encode({"value": deep})
