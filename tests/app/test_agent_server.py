@@ -236,7 +236,6 @@ def test_an_idle_connection_without_a_hello_is_closed(qtbot, make_server):
     assert finish(qtbot, in_thread(talk))
 
 
-
 def test_pipelined_requests_are_answered_in_order_around_a_later_answer(qtbot, make_server):
     handler = StandIn()
     make_server(handler)
@@ -530,8 +529,6 @@ def test_a_window_that_is_closing_does_not_start_the_socket(qtbot):
     window._closing = True
     window.start_agent_socket()
     assert not window.agent.listening
-
-
 
 
 def test_a_write_or_read_error_on_a_live_socket_does_not_stop_the_server(qtbot, make_server):
