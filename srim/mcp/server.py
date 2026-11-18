@@ -218,7 +218,7 @@ def build_server(cwd: Path | None = None, *, headless: HeadlessBackend | None = 
 
     @server.tool()
     async def summary(ctx: Context, folder: str | None = None, point: int | None = None) -> dict:
-        """The implant summary of a run: mean depth and straggle per layer. A scan needs a point."""
+        """The implant summary of a run, one row: mean depth and straggle. A scan needs a point."""
         return await state.run(ctx, lambda t: t.summary(folder, point))
 
     @server.tool()
