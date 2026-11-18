@@ -11,6 +11,7 @@ from test_headless_status import fake_checks, fake_steps, step
 from test_results import run_folder
 
 from srim.app.settings import AppSettings
+from srim.installer.steps import Step
 from srim.mcp.activity import ActivityLog
 from srim.mcp.approval import ApprovalCodes
 from srim.mcp.backend import BackendError, NeedsApp
@@ -511,3 +512,38 @@ def test_saving_through_a_dangling_link_asks_and_creates_nothing(tmp_path):
         tools.save_setup("dangling.yaml")
     assert not (tmp_path / "nowhere.yaml").exists()
     assert len(asker.asked) == 1
+
+
+def test_the_install_ask_lists_the_steps_and_commands_that_would_run(tmp_path):
+    table = {
+        "srim": [
+            step("fetch", commands=("download the zip",)),
+            step("wine-packages", admin=True, commands=("sudo apt install wine",)),
+        ]
+    }
+    asker = Asker("denied")
+    tools = make_tools(tmp_path, real_backend(tmp_path, table), ask=asker)
+    with pytest.raises(BackendError, match="did not allow"):
+        tools.install_step("srim")
+    text = asker.asked[0]
+    assert "fetch" in text and "download the zip" in text
+    assert "wine-packages" not in text and "sudo" not in text
+
+
+def test_a_changed_install_plan_invalidates_the_code(tmp_path):
+    commands = ["download the zip"]
+    plan = [
+        Step(
+            name="fetch",
+            summary="fetch",
+            check=lambda: False,
+            commands=lambda: list(commands),
+            run=lambda: None,
+        )
+    ]
+    tools = make_tools(tmp_path, real_backend(tmp_path, {"srim": plan}))
+    with pytest.raises(ApprovalNeeded) as info:
+        tools.install_step("srim")
+    commands[0] = "download another zip"
+    with pytest.raises(ApprovalNeeded):
+        tools.install_step("srim", confirm_code=info.value.code)

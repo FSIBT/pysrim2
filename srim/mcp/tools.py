@@ -302,14 +302,31 @@ class Tools:
         return self._call("delete_run", text, act)
 
     def install_step(self, component: str, confirm_code: str | None = None) -> dict:
-        text = (
-            f"run the install steps of {component} that need no admin rights "
-            "(admin steps are only shown as commands)"
-        )
-
         def act(record: _Record) -> dict:
+            # the steps that would run (no admin ones, none already installed), with their
+            # commands: the user is asked about these, and they are part of the approved action
+            would_run = [
+                {
+                    "step": row["step"],
+                    "description": row["description"],
+                    "commands": row["commands"],
+                }
+                for row in self.backend.install_plan([component])
+                if not row["admin"] and not row["done"]
+            ]
+            listing = "; ".join(
+                f"{row['step']} ({' ; '.join(row['commands'])})" for row in would_run
+            )
+            text = (
+                f"run these install steps of {component}: {listing or 'none'} "
+                "(admin steps are only shown as commands)"
+            )
             self._approve(
-                record, "install_step", {"component": component}, text, confirm_code=confirm_code
+                record,
+                "install_step",
+                {"component": component, "steps": would_run},
+                text,
+                confirm_code=confirm_code,
             )
             return self.backend.install_step(component)
 
