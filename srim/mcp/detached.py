@@ -192,7 +192,7 @@ def main(argv: list[str] | None = None) -> int:
         scan = Scan.from_yaml(folder / "scan.yaml")
         runner = _runner_from_env()
     except Exception as exc:  # a scan that does not load is bad input, whatever the cause
-        _record_error(folder, str(exc))
+        record_error(folder, str(exc))
         print(f"{folder}: {exc}", file=sys.stderr)
         return EXIT_BAD_INPUT
 
@@ -201,11 +201,10 @@ def main(argv: list[str] | None = None) -> int:
     outcome = {"stopped": False}
     # append: start_detached starts the file empty, and a runner that loses the scan lock
     # (ScanBusy) must not wipe the events of the run that holds it
-    with open(folder / EVENTS_FILE, "a", encoding="utf-8", newline="\n") as events_file:
+    with EventWriter(folder) as events_file:
 
         def on_event(event):
-            events_file.write(event.to_json() + "\n")
-            events_file.flush()
+            events_file.write(event)
             if event.kind == "scan_finished":
                 outcome["stopped"] = event.stopped
 
@@ -229,11 +228,11 @@ def main(argv: list[str] | None = None) -> int:
                 runner=runner,
             )
         except ScanBusy as exc:
-            _record_error(folder, str(exc))
+            record_error(folder, str(exc))
             print(exc, file=sys.stderr)
             return EXIT_FAILED
         except Exception as exc:  # the run is over; the error is kept for run_state
-            _record_error(folder, f"{type(exc).__name__}: {exc}")
+            record_error(folder, f"{type(exc).__name__}: {exc}")
             print(f"run failed: {exc}", file=sys.stderr)
             return EXIT_FAILED
         finally:
@@ -296,6 +295,27 @@ def _replay(folder: Path) -> ScanState:
     return state
 
 
+class EventWriter:
+    """The events of a run, one JSON line each, appended to its ``events.jsonl`` and flushed per
+    line (so a reader sees each event as it happens). Use it as a context manager."""
+
+    def __init__(self, folder):
+        self._file = open(Path(folder) / EVENTS_FILE, "a", encoding="utf-8", newline="\n")
+
+    def write(self, event) -> None:
+        self._file.write(event.to_json() + "\n")
+        self._file.flush()
+
+    def close(self) -> None:
+        self._file.close()
+
+    def __enter__(self) -> EventWriter:
+        return self
+
+    def __exit__(self, *exc_info) -> None:
+        self.close()
+
+
 def _runner_meta(folder: Path) -> dict | None:
     """The contents of ``runner.json``: None when there is none. Raises
     :class:`~srim.mcp.backend.BackendError` when it is there but cannot be read."""
@@ -326,7 +346,7 @@ def _write_meta(folder: Path, meta: dict) -> None:
     os.replace(temporary, target)
 
 
-def _record_error(folder: Path, message: str) -> None:
+def record_error(folder: Path, message: str) -> None:
     """Keep the error of a failed run in ``runner.json`` (see :func:`run_state`)."""
     try:
         meta = _runner_meta(folder) or {}

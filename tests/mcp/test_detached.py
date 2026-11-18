@@ -250,7 +250,7 @@ def test_an_early_error_of_the_runner_is_kept_after_start(tmp_path, monkeypatch)
         """A runner that records its error before start_detached gets its pid back."""
 
         def __init__(self, command, **options):
-            detached._record_error(folder, "early failure")
+            detached.record_error(folder, "early failure")
             self.pid = 424242  # no such process
 
     monkeypatch.setattr(detached.subprocess, "Popen", EarlyError)
