@@ -491,6 +491,7 @@ def test_ask_is_answered_by_the_window_dialog(qtbot, win, backend):
     answer = backend.handle("ask", {"text": "start a run"})
     assert not answer.settled
     qtbot.waitUntil(lambda: win.approvals.shown is not None, timeout=5000)
+    qtbot.waitUntil(lambda: win.approvals.shown.allow_button.isEnabled(), timeout=5000)
     win.approvals.shown.allow_button.click()
     assert answer.outcome == (True, "allowed")
 

@@ -19,9 +19,11 @@ The rules of the answers:
   any later answer.
 """
 
+import math
 import unicodedata
 from collections import deque
 from collections.abc import Callable
+from time import monotonic
 
 from PySide6.QtCore import QObject, Qt, QTimer
 from PySide6.QtWidgets import (
@@ -90,6 +92,7 @@ class ApprovalDialog(QDialog):
         timeout_s: int,
         on_done: Callable[[str], None] | None,
         parent: QWidget | None = None,
+        allow_delay_s: float = 0.0,
     ):
         super().__init__(parent)
         self._on_done = on_done
@@ -123,6 +126,15 @@ class ApprovalDialog(QDialog):
 
         self.allow_button.clicked.connect(self._allow)
         self.deny_button.clicked.connect(self.reject)
+        # Allow is off for a moment after the dialog appears, so a late or double click on the
+        # place where the previous dialog's Allow was does not allow this request by accident
+        self._allow_until = monotonic() + max(allow_delay_s, 0.0)
+        self._allow_clock = QTimer(self)
+        self._allow_clock.setInterval(100)
+        self._allow_clock.timeout.connect(self._update_allow)
+        self._update_allow()
+        if not self.allow_button.isEnabled():
+            self._allow_clock.start()
 
         buttons = QHBoxLayout()
         buttons.addStretch(1)
@@ -133,6 +145,17 @@ class ApprovalDialog(QDialog):
         layout.addWidget(self.text_area)
         layout.addWidget(self.countdown_label)
         layout.addLayout(buttons)
+
+    def _update_allow(self) -> None:
+        """Show the seconds left before Allow works, and enable it once they have passed."""
+        remaining = self._allow_until - monotonic()
+        if remaining > 0:
+            self.allow_button.setText(f"Allow ({math.ceil(remaining)})")
+            self.allow_button.setEnabled(False)
+        else:
+            self.allow_button.setText("Allow")
+            self.allow_button.setEnabled(True)
+            self._allow_clock.stop()
 
     def set_remaining(self, seconds: int) -> None:
         self.countdown_label.setText(f"Time left: {seconds} s")
@@ -170,10 +193,23 @@ class _Request:
 class ApprovalQueue(QObject):
     """The requests for the user's OK, one dialog at a time, in the order they came."""
 
-    def __init__(self, parent_window: QWidget, timeout_s: int = 120):
+    def __init__(
+        self,
+        parent_window: QWidget,
+        timeout_s: int = 120,
+        allow_delay_s: float = 1.0,
+        gap_s: float = 0.5,
+    ):
+        """``allow_delay_s``: how long Allow stays off after a dialog appears. ``gap_s``: how long
+        the screen stays empty between one dialog and the next queued one."""
         super().__init__(parent_window)
         self._window = parent_window
         self._timeout_s = timeout_s
+        self._allow_delay_s = allow_delay_s
+        self._gap_s = gap_s
+        self._gap = QTimer(self)
+        self._gap.setSingleShot(True)
+        self._gap.timeout.connect(self._show_next)
         self._waiting: deque[_Request] = deque()
         self._current: _Request | None = None
         self._dialog: ApprovalDialog | None = None
@@ -209,6 +245,7 @@ class ApprovalQueue(QObject):
     def close(self) -> None:
         """The window is closing: every open request is denied, and new ones are denied at once."""
         self._closed = True
+        self._gap.stop()
         if self._current is not None:
             self._finish(DENIED)
         while self._waiting:
@@ -217,7 +254,7 @@ class ApprovalQueue(QObject):
     # --- internals ----------------------------------------------------------------------------
 
     def _show_next(self) -> None:
-        if self._current is not None or not self._waiting or self._closed:
+        if self._current is not None or not self._waiting or self._closed or self._gap.isActive():
             return
         req = self._waiting.popleft()
         self._current = req
@@ -228,6 +265,7 @@ class ApprovalQueue(QObject):
             self._timeout_s,
             on_done=lambda choice: self._answered(req, choice),
             parent=self._window,
+            allow_delay_s=self._allow_delay_s,
         )
         self._dialog = dialog
         self._clock.start()
@@ -255,7 +293,16 @@ class ApprovalQueue(QObject):
             dialog.deleteLater()
         if req is not None and choice is not None:
             req.deferred.resolve(choice)
-        self._show_next()
+        self._after_dialog()
+
+    def _after_dialog(self) -> None:
+        """The next queued dialog comes after the gap (at once when the gap is zero)."""
+        if self._closed or not self._waiting:
+            return
+        if self._gap_s > 0:
+            self._gap.start(round(self._gap_s * 1000))
+        else:
+            self._show_next()
 
     def _tick(self) -> None:
         if self._dialog is None:

@@ -4,6 +4,8 @@ The dialog is shown with ``open()`` (the event loop keeps running), so the tests
 ``qtbot``. The socket test runs a client in a thread; every wait is bounded.
 """
 
+import time
+
 import pytest
 
 pytest.importorskip("PySide6")
@@ -36,8 +38,15 @@ def window(qtbot, tmp_path, monkeypatch):
 
 @pytest.fixture
 def queue(window):
-    """A queue with a short timeout, for the timeout test; the window's own queue is not used."""
-    return ApprovalQueue(window, timeout_s=60)
+    """A queue with no delays (Allow at once, the next dialog at once), so these tests click at
+    once. The delays are tested with the queues of the click-through tests below."""
+    return ApprovalQueue(window, timeout_s=60, allow_delay_s=0, gap_s=0)
+
+
+def allow_when_ready(qtbot, dialog):
+    """Wait until Allow is enabled (its delay has passed), then press it."""
+    qtbot.waitUntil(lambda: dialog.allow_button.isEnabled(), timeout=WAIT)
+    dialog.allow_button.click()
 
 
 def shown(qtbot, queue):
@@ -148,7 +157,7 @@ def test_the_gui_keeps_answering_while_the_dialog_is_up(qtbot, window):
     setup = backend.handle("get_setup", {})
     assert "setup" in setup
     assert not answer.settled
-    window.approvals.shown.allow_button.click()
+    allow_when_ready(qtbot, window.approvals.shown)
     assert answer.outcome == (True, "allowed")
 
 
@@ -220,7 +229,7 @@ def test_an_agent_request_over_the_socket_is_answered_by_the_dialog(qtbot, windo
     qtbot.waitUntil(lambda: window.approvals.shown is not None, timeout=WAIT)
     assert window.approvals.shown.text_label.text() == "claude 1.2 wants to:"
     assert window.approvals.shown.text_area.toPlainText() == "start a run"
-    window.approvals.shown.allow_button.click()
+    allow_when_ready(qtbot, window.approvals.shown)
     assert finish(qtbot, thread) == {"id": 1, "result": "allowed"}
 
 
@@ -296,3 +305,47 @@ def assert_buttons_inside(dialog):
     for button in (dialog.allow_button, dialog.deny_button):
         assert button.isVisible()
         assert rect.contains(button.geometry())
+
+
+# --- click-through: Allow waits, and the next dialog waits for a gap ---------------------------
+
+
+@pytest.fixture
+def slow_queue(window):
+    return ApprovalQueue(window, timeout_s=60, allow_delay_s=0.3, gap_s=0.3)
+
+
+def test_allow_is_disabled_until_its_delay_has_passed(qtbot, slow_queue):
+    answer = slow_queue.request("claude", "start a run")
+    dialog = shown(qtbot, slow_queue)
+    assert not dialog.allow_button.isEnabled()
+    assert dialog.allow_button.text() == "Allow (1)"
+    dialog.allow_button.click()  # disabled: a click does nothing
+    assert not answer.settled
+    qtbot.waitUntil(lambda: dialog.allow_button.isEnabled(), timeout=WAIT)
+    assert dialog.allow_button.text() == "Allow"
+    dialog.allow_button.click()
+    assert answer.outcome == (True, "allowed")
+
+
+def test_deny_is_never_delayed(qtbot, slow_queue):
+    answer = slow_queue.request("claude", "start a run")
+    dialog = shown(qtbot, slow_queue)
+    assert dialog.deny_button.isEnabled()
+    dialog.deny_button.click()
+    assert answer.outcome == (True, "denied")
+
+
+def test_the_next_dialog_waits_for_the_gap(qtbot, window):
+    quick = ApprovalQueue(window, timeout_s=60, allow_delay_s=0, gap_s=0.5)
+    quick.request("claude", "run one")
+    second = quick.request("claude", "run two")
+    first_dialog = shown(qtbot, quick)
+    started = time.monotonic()
+    first_dialog.deny_button.click()
+    assert quick.shown is None  # the gap: nothing is on screen yet
+    qtbot.waitUntil(lambda: quick.shown is not None, timeout=WAIT)
+    assert time.monotonic() - started >= 0.45
+    assert "run two" in quick.shown.text_area.toPlainText()
+    quick.shown.deny_button.click()
+    assert second.outcome == (True, "denied")
