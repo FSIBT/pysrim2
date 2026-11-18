@@ -14,7 +14,7 @@ import pytest
 pytest.importorskip("PySide6")
 pytest.importorskip("pytestqt")
 
-from PySide6.QtCore import QDir  # noqa: E402
+from PySide6.QtCore import QDir, QTimer  # noqa: E402
 
 import srim  # noqa: E402
 from srim.app import agent_server  # noqa: E402
@@ -827,3 +827,12 @@ def test_queued_request_bytes_are_capped_per_connection(qtbot, make_server):
     assert replies[2]["id"] is None and "too large" in replies[2]["error"]["message"]
     assert closed
     assert [method for method, _ in handler.calls] == ["later", "echo"]
+
+
+def test_a_closed_connection_leaves_no_timers_behind(qtbot, make_server):
+    server = make_server()
+    endpoint = read_endpoint()
+    for _ in range(3):
+        finish(qtbot, in_thread(lambda: connect(endpoint)[0].close()))
+    qtbot.waitUntil(lambda: server.connection_count == 0, timeout=5000)
+    qtbot.waitUntil(lambda: not server.findChildren(QTimer), timeout=5000)

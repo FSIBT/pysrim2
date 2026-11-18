@@ -438,6 +438,7 @@ class AgentServer(QObject):
         peer.closing = True
         for timer in (peer.hello_timer, peer.close_timer, peer.stall_timer):
             timer.stop()
+            timer.deleteLater()  # the timers belong to the server; a reconnect must not keep them
         self._peers.discard(peer)
         # a request that is still queued from a peer that has gone is never handled
         self._queue = [job for job in self._queue if job.peer is not peer]
