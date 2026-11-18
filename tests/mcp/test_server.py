@@ -12,6 +12,7 @@ import base64
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -35,6 +36,8 @@ READY = fake_checks({"name": "trim-exe", "ok": True, "detail": "ok", "fix": ""})
 #: a run of about two hours by the library's stand-in rate: over the 30 minute limit
 LONG = ["number_ions=100000000"]
 TIMEOUT = 60.0
+#: a stdio exchange that takes longer than this has hung
+STDIO_SECONDS = 60.0
 CODE = re.compile(r'confirm_code="([2346789ABCDEFGHJKMNPQRTUVWXYZ]{6})"')
 
 
@@ -278,7 +281,23 @@ def test_the_stdio_server_keeps_its_output_for_the_protocol(tmp_path):
             setup = await client.call_tool("get_setup", {})
             return client.instructions, {tool.name for tool in tools}, setup
 
-    instructions, names, setup = asyncio.run(exchange())
+    instructions, names, setup = asyncio.run(asyncio.wait_for(exchange(), STDIO_SECONDS))
     assert instructions and "start_run" in instructions
     assert {"get_setup", "start_run", "plot"} <= names
     assert not setup.is_error
+
+
+def test_the_stdio_server_exits_with_0_when_stdin_closes(tmp_path):
+    """With no client (stdin at end of file) the server returns 0 and writes nothing to stdout."""
+    done = subprocess.run(
+        [sys.executable, "-m", "srim.mcp.server"],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        cwd=str(tmp_path),
+        env={**os.environ, "PYSRIM2_HOME": str(tmp_path / "home")},
+        timeout=STDIO_SECONDS,
+        check=False,
+    )
+    assert done.returncode == 0, done.stderr
+    assert done.stdout == b""
