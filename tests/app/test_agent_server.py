@@ -296,7 +296,9 @@ def test_a_needs_app_answer_keeps_its_type(qtbot, make_server):
     assert reply == {"id": 2, "error": {"type": "NeedsApp", "message": "open the app first"}}
 
 
-def test_a_failing_handler_answers_an_error_and_the_server_keeps_running(qtbot, make_server):
+def test_a_failing_handler_answers_an_error_and_the_server_keeps_running(
+    qtbot, make_server, caplog
+):
     server = make_server()
     endpoint = read_endpoint()
 
@@ -310,7 +312,11 @@ def test_a_failing_handler_answers_an_error_and_the_server_keeps_running(qtbot, 
         return failed, answered
 
     failed, answered = finish(qtbot, in_thread(talk))
-    assert failed == {"id": 1, "error": {"type": "BackendError", "message": "the handler broke"}}
+    # the agent gets a fixed text; the exception's own text goes to the log, with its traceback
+    internal = "internal error in the app; see its log"
+    assert failed == {"id": 1, "error": {"type": "BackendError", "message": internal}}
+    assert "the handler broke" not in json.dumps(failed)
+    assert "the handler broke" in caplog.text and "Traceback" in caplog.text
     assert answered == {"id": 2, "result": {"x": 1}}
     assert server.listening
 

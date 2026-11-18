@@ -60,6 +60,8 @@ MAX_CONNECTIONS = 16
 MAX_WAITING = 32
 #: the bytes of requests of one connection that may wait for their turn (two longest lines)
 MAX_QUEUED_BYTES = 2 * MAX_LINE
+#: what an agent is told when a handler fails with something other than a BackendError
+INTERNAL_ERROR_TEXT = "internal error in the app; see its log"
 #: the reply to a hello that is refused (the token is never in it)
 TOKEN_REFUSED_TEXT = "the token is not this app's"
 
@@ -522,10 +524,10 @@ class AgentServer(QObject):
             self._send(peer, error_reply(request_id, "NeedsApp", str(error)))
         except BackendError as error:
             self._send(peer, error_reply(request_id, "BackendError", str(error)))
-        except Exception as error:
+        except Exception:
+            # the exception's text may show the app's internals: the log has it, the agent does not
             logger.exception("an agent request (%s) failed", method)
-            text = str(error) or "the request failed"
-            self._send(peer, error_reply(request_id, "BackendError", text))
+            self._send(peer, error_reply(request_id, "BackendError", INTERNAL_ERROR_TEXT))
         else:
             if isinstance(value, Deferred):
                 self._wait_for(peer, request_id, value)
