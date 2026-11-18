@@ -346,6 +346,17 @@ def _write_meta(folder: Path, meta: dict) -> None:
     os.replace(temporary, target)
 
 
+def start_runner_file(folder, *, workers: int, backend: str) -> None:
+    """Write ``runner.json`` for a run this process runs itself (the app's runs): its pid, start
+    time, workers and backend, as a detached runner writes them. A reader then finds the run's
+    state (see :func:`run_state`): running while this process lives, crashed when it is gone
+    without a ``scan_finished`` event. The folder must exist and be a scan folder already."""
+    _write_meta(
+        Path(folder),
+        {"pid": os.getpid(), "started": time.time(), "workers": workers, "backend": backend},
+    )
+
+
 def record_error(folder: Path, message: str) -> None:
     """Keep the error of a failed run in ``runner.json`` (see :func:`run_state`)."""
     try:

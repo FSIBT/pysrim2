@@ -39,9 +39,10 @@ from srim.app.runs import (
 )
 from srim.app.settings import save_settings
 from srim.app.workers import run_in_thread
+from srim.mcp.detached import EventWriter, record_error, start_runner_file
 from srim.scan import run_scan
 from srim.scan.events import WorkerStats
-from srim.scan.executor import ScanBusy
+from srim.scan.executor import ScanBusy, mark_scan_folder
 from srim.spec import SpecError
 from srim.ui.tui.state import ScanState
 
@@ -55,6 +56,20 @@ def backend_for(route: str | None, choice: ParallelChoice, runner) -> str:
     if runner is None and (route == "container" or choice.container):
         return "container"
     return "local"
+
+
+def _create_run_folder(folder: Path, scan, workers: int) -> None:
+    """Make the run's folder a scan folder with its scan and its runner file, before the run
+    starts: a reader finds the run even when it fails before the scan writes its own files. The
+    scan's checks refuse a folder with other files and no marker, so the marker comes first.
+    Raises :class:`~srim.spec.SpecError` when the folder cannot be made."""
+    try:
+        folder.mkdir(parents=True)
+        mark_scan_folder(folder)
+        scan.to_yaml(folder / "scan.yaml")
+        start_runner_file(folder, workers=workers, backend="app")
+    except OSError as error:
+        raise SpecError(f"the run folder {folder} cannot be made: {error}") from error
 
 
 def _text(error: BaseException) -> str:
@@ -126,6 +141,7 @@ class RunController(QObject):
         scan = plan_run(snapshot, document.base_dir, choice)
         folder = run_folder(document.path, datetime.now(UTC))
         backend = backend_for(self._window.settings.route, choice, self._runner)
+        _create_run_folder(folder, scan, choice.workers)
 
         self._load_generation += 1  # a folder still being read is no longer wanted
         self.loading = False
@@ -148,17 +164,31 @@ class RunController(QObject):
         runner, workers = self._runner, choice.workers
 
         def work():
+            # the run's events go to its events.jsonl, as a detached run's do, so a reader
+            # without this window sees the run; a failure is kept in runner.json
             try:
-                return run_scan(
-                    scan,
-                    workers=workers,
-                    backend=backend,
-                    scan_dir=folder,
-                    on_event=events.put,
-                    stop_event=stop,
-                    pause_event=pause,
-                    runner=runner,
-                )
+                with EventWriter(folder) as writer:
+
+                    def on_event(event):
+                        writer.write(event)
+                        events.put(event)
+
+                    return run_scan(
+                        scan,
+                        workers=workers,
+                        backend=backend,
+                        scan_dir=folder,
+                        on_event=on_event,
+                        stop_event=stop,
+                        pause_event=pause,
+                        runner=runner,
+                    )
+            except Exception as error:
+                try:
+                    record_error(folder, f"{type(error).__name__}: {error}")
+                except OSError:
+                    pass  # the run's own error is the one that matters
+                raise
             finally:
                 ended.set()
 
