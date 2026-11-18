@@ -20,6 +20,7 @@ import json
 import os
 import select
 import socket
+import stat
 import time
 from collections import deque
 from typing import Any
@@ -237,16 +238,39 @@ def _pipe_readable(handle, seconds: float | None) -> bool:
         time.sleep(0.01)
 
 
+def socket_is_ours(name: str) -> bool:
+    """True when ``name`` is a socket that the current user owns (POSIX).
+
+    A client checks this before it sends the token, so a socket that another user made in the
+    temporary folder is never told the token. A link is not a socket here (``lstat`` is used),
+    and a missing path is not ours. Windows has no owner check here: the pipe is created by
+    QLocalServer with its user-access option, which is what keeps other users out.
+
+    The server side must listen with ``QLocalServer`` and ``UserAccessOption``. Qt creates the
+    Unix socket in ``QDir.tempPath()`` (``$TMPDIR`` on macOS) under the name it was given.
+    """
+    if os.name != "posix":
+        return True
+    try:
+        status = os.lstat(name)
+    except OSError:
+        return False
+    return stat.S_ISSOCK(status.st_mode) and status.st_uid == os.getuid()
+
+
 def socket_connect(name: str, timeout: float = 2.0) -> Stream:
     """Connect to the app's socket ``name``. Raises ``OSError`` when it cannot be reached.
 
     On POSIX ``name`` is the socket's path (a Unix socket). On Windows it is the pipe's name, or
     the full ``\\\\.\\pipe\\`` path. ``timeout`` limits the connect only; a receive takes its
-    own deadline (see :class:`Channel`).
+    own deadline (see :class:`Channel`). On POSIX a socket that is not this user's is refused
+    with ``PermissionError`` before anything is sent (see :func:`socket_is_ours`).
     """
     if os.name == "nt":
         path = name if name.startswith("\\\\.\\pipe\\") else rf"\\.\pipe\{name}"
         return Stream(open(path, "r+b", buffering=0))
+    if not socket_is_ours(name):
+        raise PermissionError(f"{name} is not a socket of this user")
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
         sock.settimeout(timeout)

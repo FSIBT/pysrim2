@@ -8,6 +8,7 @@ import threading
 
 import pytest
 
+from srim.mcp import protocol
 from srim.mcp.backend import BackendError, NeedsApp
 from srim.mcp.protocol import (
     HELLO_MAX_LINE,
@@ -24,6 +25,7 @@ from srim.mcp.protocol import (
     parse_request,
     result_reply,
     socket_connect,
+    socket_is_ours,
 )
 
 TOKEN = "e" * 64
@@ -378,3 +380,41 @@ def test_a_token_over_128_characters_is_refused_in_the_hello():
     check_hello(hello_request("a" * 128, "client"))
     with pytest.raises(ProtocolError):
         check_hello(hello_request("a" * 129, "client"))
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the POSIX socket test")
+def test_a_socket_we_own_is_ours(short_dir):
+    path = os.path.join(short_dir, "own.sock")
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(path)
+    try:
+        assert socket_is_ours(path)
+        assert not socket_is_ours(os.path.join(short_dir, "missing.sock"))
+    finally:
+        server.close()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the POSIX socket test")
+def test_a_regular_file_at_the_socket_path_is_not_ours(short_dir):
+    path = os.path.join(short_dir, "file.sock")
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write("not a socket")
+    assert not socket_is_ours(path)
+    with pytest.raises(OSError):
+        socket_connect(path, timeout=1.0)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the POSIX socket test")
+def test_a_socket_of_another_user_is_refused_before_connecting(short_dir, monkeypatch):
+    path = os.path.join(short_dir, "other.sock")
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(path)
+    server.listen(1)
+    other = os.getuid() + 1  # the real uid is read before it is patched
+    monkeypatch.setattr(protocol.os, "getuid", lambda: other)
+    try:
+        assert not socket_is_ours(path)
+        with pytest.raises(PermissionError):
+            socket_connect(path, timeout=1.0)
+    finally:
+        server.close()
