@@ -380,6 +380,8 @@ class AgentServer(QObject):
         for timer in (peer.hello_timer, peer.close_timer, peer.stall_timer):
             timer.stop()
         self._peers.discard(peer)
+        # a request that is still queued from a peer that has gone is never handled
+        self._queue = [job for job in self._queue if job.peer is not peer]
         socket, peer.socket = peer.socket, None
         if socket is not None:
             socket.deleteLater()
@@ -426,6 +428,8 @@ class AgentServer(QObject):
         try:
             while self._queue and self._waiting is None:
                 job = self._queue.pop(0)
+                if job.peer.gone:
+                    continue
                 if job.refusal is not None:
                     self._send(job.peer, error_reply(None, "BackendError", job.refusal))
                     self._close(job.peer)

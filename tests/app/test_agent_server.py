@@ -652,3 +652,47 @@ def test_a_regular_file_at_the_socket_name_is_refused_and_kept(monkeypatch):
             assert handle.read() == "not a socket"
     finally:
         os.unlink(path)
+
+
+def test_a_closed_peers_queued_requests_never_reach_the_handler(qtbot, make_server):
+    handler = StandIn()
+    server = make_server(handler)
+    endpoint = read_endpoint()
+
+    def talk():
+        channel, _hello = connect(endpoint)
+        send_raw(
+            channel.stream,
+            encode(protocol.request(1, "later", {})) + encode(protocol.request(2, "echo", {})),
+        )
+        return channel
+
+    held = finish(qtbot, in_thread(talk))
+    qtbot.waitUntil(lambda: len(handler.pending) > 0, timeout=5000)
+    held.close()  # the peer goes away while its first answer is still pending
+    qtbot.waitUntil(lambda: server.connection_count == 0, timeout=5000)
+    handler.pending[0].resolve("late")
+    assert [method for method, _ in handler.calls] == ["later"]
+
+
+def test_a_dropped_peers_queued_requests_never_reach_the_handler(qtbot, make_server):
+    # the byte-limit drop: "big" overflows the pending limit, so the peer is dropped while "echo"
+    # is still queued behind it
+    handler = StandIn()
+    server = make_server(handler, max_pending=64 * 1024)
+    endpoint = read_endpoint()
+    held = []
+
+    def talk():
+        channel, _hello = connect(endpoint)
+        held.append(channel)
+        send_raw(
+            channel.stream,
+            encode(protocol.request(1, "big", {"size": 200_000}))
+            + encode(protocol.request(2, "echo", {})),
+        )
+        return None
+
+    finish(qtbot, in_thread(talk))
+    qtbot.waitUntil(lambda: server.connection_count == 0, timeout=5000)
+    assert [method for method, _ in handler.calls] == ["big"]
