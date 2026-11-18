@@ -75,6 +75,14 @@ FILE_FILTER = "Run setup (*.yaml *.yml)"
 DISCARD_TEXT = "Discard the changes to this setup?"
 
 
+def _history_text(base: str, label: str | None) -> str:
+    """The Undo or Redo menu text, with the step's label after it. A "&" in the label is doubled,
+    so the menu shows it and does not make the next letter a shortcut."""
+    if not label:
+        return base
+    return f"{base} {label.replace('&', '&&')}"
+
+
 class MainWindow(QMainWindow):
     checked = Signal(list)
     setup_requested = Signal()
@@ -311,6 +319,8 @@ class MainWindow(QMainWindow):
         self.save_results_action.setStatusTip(tip)
         self.undo_action.setEnabled(document.can_undo and not busy)
         self.redo_action.setEnabled(document.can_redo and not busy)
+        self.undo_action.setText(_history_text("&Undo", document.undo_label))
+        self.redo_action.setText(_history_text("&Redo", document.redo_label))
         for editor in self.editors.values():
             editor.setEnabled(not busy)
         self._update_notebook_actions()

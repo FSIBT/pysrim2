@@ -80,23 +80,34 @@ class DocumentModel(QObject):
         return self._history.can_redo
 
     @property
+    def undo_label(self) -> str | None:
+        """The label of the step :meth:`undo` reverts (an agent's edit), or None."""
+        return self._history.undo_label
+
+    @property
+    def redo_label(self) -> str | None:
+        """The label of the step :meth:`redo` re-applies, or None."""
+        return self._history.redo_label
+
+    @property
     def is_modified(self) -> bool:
         """True when the document differs from the last opened or saved state."""
         return self._history.is_modified(self._doc)
 
     # --- edits -----------------------------------------------------------------
 
-    def edit(self, fn: Callable[[dict], None]) -> None:
+    def edit(self, fn: Callable[[dict], None], label: str | None = None) -> None:
         """Apply ``fn`` to a copy of the document and make that the current one.
 
         ``fn`` changes the dict it is given. When ``fn`` raises, nothing changes (the error
-        propagates). Otherwise the state before the edit goes on the undo stack, and ``changed``
+        propagates). Otherwise the state before the edit goes on the undo stack with ``label``
+        (the agent's edits pass ``"agent: <summary>"``; a user edit has none), and ``changed``
         is emitted once. Raises :class:`RuntimeError` while the setup is :attr:`locked`.
         """
         self._check_unlocked()
         new = deepcopy(self._doc)
         fn(new)
-        self._history.push(self._doc)
+        self._history.push(self._doc, label)
         self._doc = new
         self._refresh()
 

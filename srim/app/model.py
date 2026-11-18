@@ -292,14 +292,17 @@ def problems(doc: dict, base_dir: Any = None) -> list[Guidance]:
 class History:
     """Undo and redo for the document, and whether it differs from the last saved state.
 
-    ``push`` is called with the state *before* an edit. A new edit clears redo. The baseline
-    for :meth:`is_modified` is the last :meth:`mark_saved` state, or an empty new document.
+    ``push`` is called with the state *before* an edit and the edit's label (None for a user
+    edit). A new edit clears redo. Each stack holds ``(state, label)``: an undone step keeps its
+    label on the redo stack, so :attr:`undo_label` and :attr:`redo_label` name the step that
+    undo or redo would act on. The baseline for :meth:`is_modified` is the last
+    :meth:`mark_saved` state, or an empty new document.
     """
 
     def __init__(self, limit: int = 200):
         self.limit = limit
-        self._undo: list[dict] = []
-        self._redo: list[dict] = []
+        self._undo: list[tuple[dict, str | None]] = []
+        self._redo: list[tuple[dict, str | None]] = []
         self._saved: dict | None = None
 
     @property
@@ -310,24 +313,36 @@ class History:
     def can_redo(self) -> bool:
         return bool(self._redo)
 
-    def push(self, doc: dict) -> None:
-        self._undo.append(deepcopy(doc))
+    @property
+    def undo_label(self) -> str | None:
+        """The label of the step :meth:`undo` would revert, or None (none, or a user edit)."""
+        return self._undo[-1][1] if self._undo else None
+
+    @property
+    def redo_label(self) -> str | None:
+        """The label of the step :meth:`redo` would re-apply, or None."""
+        return self._redo[-1][1] if self._redo else None
+
+    def push(self, doc: dict, label: str | None = None) -> None:
+        self._undo.append((deepcopy(doc), label))
         self._redo.clear()
         self._trim(self._undo)
 
     def undo(self, current: dict) -> dict | None:
         if not self._undo:
             return None
-        self._redo.append(deepcopy(current))
+        previous, label = self._undo.pop()
+        self._redo.append((deepcopy(current), label))
         self._trim(self._redo)
-        return self._undo.pop()
+        return previous
 
     def redo(self, current: dict) -> dict | None:
         if not self._redo:
             return None
-        self._undo.append(deepcopy(current))
+        following, label = self._redo.pop()
+        self._undo.append((deepcopy(current), label))
         self._trim(self._undo)
-        return self._redo.pop()
+        return following
 
     def clear(self) -> None:
         self._undo.clear()
@@ -340,7 +355,7 @@ class History:
         baseline = self._saved if self._saved is not None else _state(new_document())
         return _state(current) != baseline
 
-    def _trim(self, stack: list[dict]) -> None:
+    def _trim(self, stack: list) -> None:
         overflow = len(stack) - self.limit
         if overflow > 0:
             del stack[:overflow]

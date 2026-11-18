@@ -1058,3 +1058,22 @@ def test_start_after_editing_a_reopened_single_run_runs_the_edited_count(
         fresh.start_action.trigger()
     assert fresh.run.result.scan.points()[0].spec.number_ions == 7
     assert fresh.run.result.scan.points()[0].spec.seed == boron_data["seed"]
+
+
+def test_the_undo_and_redo_texts_name_an_agent_step(qtbot):
+    win = window_with(qtbot)
+    assert win.undo_action.text() == "&Undo" and win.redo_action.text() == "&Redo"
+    win.document.edit(lambda d: d["ion"].update(energy_keV=40), label="agent: energy 40 keV")
+    assert "agent: energy 40 keV" in win.undo_action.text()
+    win.undo_action.trigger()
+    assert win.undo_action.text() == "&Undo"
+    assert "agent: energy 40 keV" in win.redo_action.text()
+    win.redo_action.trigger()
+    assert "agent: energy 40 keV" in win.undo_action.text()
+    assert win.redo_action.text() == "&Redo"
+
+
+def test_an_ampersand_in_a_label_is_shown_as_one(qtbot):
+    win = window_with(qtbot)
+    win.document.edit(lambda d: d.__setitem__("seed", 3), label="agent: R&D seed")
+    assert win.undo_action.text() == "&Undo agent: R&&D seed"

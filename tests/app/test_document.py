@@ -470,3 +470,29 @@ def test_a_single_point_scan_with_its_own_seed_stays_a_scan(tmp_path, boron_data
     doc = DocumentModel()
     doc.open(old)
     assert doc.doc["_scan"]["keep_seed"] is True  # its seed differs from the setup's: a scan
+
+
+def test_undo_of_an_agent_step_keeps_a_later_user_edit_order():
+    doc = DocumentModel()
+    doc.edit(lambda d: d["ion"].update(energy_keV=40), label="agent: energy 40 keV")
+    doc.edit(lambda d: d["ion"].update(angle_deg=7))  # the user
+    assert doc.undo_label is None
+    doc.undo()
+    assert doc.doc["ion"]["angle_deg"] != 7 and doc.doc["ion"]["energy_keV"] == 40
+    assert doc.undo_label == "agent: energy 40 keV" and doc.redo_label is None
+    doc.undo()
+    assert doc.doc["ion"]["energy_keV"] != 40
+    assert doc.redo_label == "agent: energy 40 keV"
+    doc.redo()
+    assert doc.doc["ion"]["energy_keV"] == 40 and doc.redo_label is None
+
+
+def test_a_labelled_edit_that_raises_leaves_no_label_behind():
+    doc = DocumentModel()
+
+    def broken(d):
+        raise ValueError("no")
+
+    with pytest.raises(ValueError):
+        doc.edit(broken, label="agent: broken")
+    assert not doc.can_undo and doc.undo_label is None

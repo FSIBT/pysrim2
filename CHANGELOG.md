@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `pysrim2 mcp --print-config CLIENT` prints the config that connects Claude Code, Codex, Gemini CLI, Cursor, VS Code or any other stdio client to the server (the absolute path of the installed `pysrim2`), and says which file it goes in.
 - The agent's activity is kept in `activity.jsonl` under the data directory (`agent/`): each request and answer, the client's name and the mode, up to 1 MB per file.
 - The agent's ask-first limits are settings in `settings.json`: `agent_max_minutes` (a run estimated longer needs the user's OK, default 30) and `agent_max_core_fraction` (more workers than this share of the cores need the OK, default 0.5).
+- Edit > Undo and Redo name the step they act on when it has a label (`Undo agent: ...` for a step the agent made); a user's edit keeps the plain "Undo" and "Redo" text.
 - The documentation has a section on the MCP server (`docs/agents.md`) and on the command (`docs/cli.md`); the pysrim2 skill has a section on it (section 10), and the API reference lists `srim.mcp.connect`, `srim.mcp.limits` and `srim.mcp.activity`.
 
 ### Changed

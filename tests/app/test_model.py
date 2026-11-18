@@ -304,3 +304,24 @@ def test_a_library_message_about_a_field_with_a_digit_is_placed(boron_data):
     found = [p for p in problems(boron_data) if p.blocking]
     assert found and found[0].target == "geometry/0/density"
     assert target_for_key("target[0].density_g_cm3") == "geometry/0/density"
+
+
+def test_labels_follow_undo_and_redo():
+    history = History()
+    history.push({"a": 1}, "agent: set a")
+    assert history.undo_label == "agent: set a" and history.redo_label is None
+    assert history.undo({"a": 2}) == {"a": 1}
+    assert history.undo_label is None and history.redo_label == "agent: set a"
+    assert history.redo({"a": 1}) == {"a": 2}
+    assert history.undo_label == "agent: set a" and history.redo_label is None
+
+
+def test_an_unlabelled_step_has_no_label_and_a_new_edit_drops_the_redo_label():
+    history = History()
+    history.push({"a": 1})
+    assert history.undo_label is None and not history.can_redo
+    history.undo({"a": 2})
+    assert history.redo_label is None and history.can_redo
+    history.push({"a": 1}, "agent: set a")
+    assert history.redo_label is None
+    assert history.undo_label == "agent: set a"
