@@ -22,6 +22,7 @@ def test_the_library_and_cli_never_import_qt(tmp_path):
         "import srim.mcp, srim.mcp.limits, srim.mcp.approval, srim.mcp.activity\n"
         "import srim.mcp.backend, srim.mcp.headless, srim.mcp.lookup\n"
         "import srim.mcp.detached\n"
+        "import srim.mcp.discovery, srim.mcp.protocol\n"
         "import srim.mcp.connect\n"
         "import srim.mcp.results\n"
         "import srim.mcp.tools\n"
