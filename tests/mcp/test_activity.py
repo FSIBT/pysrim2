@@ -79,3 +79,102 @@ def test_the_default_path_is_under_the_data_directory(tmp_path, monkeypatch):
     monkeypatch.setenv("PYSRIM2_HOME", str(tmp_path))
     assert activity_path() == tmp_path / "agent" / "activity.jsonl"
     assert ActivityLog().path == tmp_path / "agent" / "activity.jsonl"
+
+
+# --- the entries the agent sends (untrusted) and the tail read ----------------------------------
+
+from srim.mcp.activity import FIELD_CAP, TAIL_BYTES, entry_from_untrusted  # noqa: E402
+
+
+def good(**changes):
+    data = {
+        "time": 1700000000.0,
+        "mode": "headless",
+        "client": "claude 1",
+        "tool": "set_values",
+        "summary": "set ion.energy_keV=40",
+        "ask": None,
+        "answer": None,
+        "error": None,
+    }
+    data.update(changes)
+    return data
+
+
+def test_a_valid_entry_is_kept_as_it_is():
+    entry = entry_from_untrusted(good(ask="uses 4 cores", answer="denied"))
+    assert entry == ActivityEntry(
+        1700000000.0,
+        "headless",
+        "claude 1",
+        "set_values",
+        "set ion.energy_keV=40",
+        ask="uses 4 cores",
+        answer="denied",
+    )
+
+
+def test_the_optional_fields_may_be_left_out():
+    data = good()
+    for name in ("ask", "answer", "error"):
+        del data[name]
+    assert entry_from_untrusted(data).error is None
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        "not an object",
+        None,
+        [],
+        good(time="12"),
+        good(time=True),
+        good(time=float("nan")),
+        good(time=float("inf")),
+        good(time=-1),
+        good(time=1e30),
+        good(mode="remote"),
+        good(client=3),
+        good(summary=None),
+        good(answer=["x"]),
+        good(unknown=1),
+    ],
+)
+def test_a_bad_shape_is_refused(data):
+    with pytest.raises(ValueError):
+        entry_from_untrusted(data)
+
+
+def test_a_missing_required_field_is_refused():
+    data = good()
+    del data["tool"]
+    with pytest.raises(ValueError):
+        entry_from_untrusted(data)
+
+
+def test_a_huge_field_is_cut_to_the_cap():
+    entry = entry_from_untrusted(good(summary="x" * 1_000_000))
+    assert len(entry.summary) == FIELD_CAP
+    assert entry.summary.endswith("…")
+
+
+def test_markup_is_kept_as_plain_text_in_the_entry():
+    text = "<b>bold</b> <a href='https://example.com'>link</a>"
+    assert entry_from_untrusted(good(summary=text)).summary == text
+
+
+def test_last_reads_only_the_tail_of_a_large_log(tmp_path):
+    path = tmp_path / "a.jsonl"
+    log = ActivityLog(path, max_bytes=10**9)
+    for i in range(3000):
+        log.append(ActivityEntry(float(i), "headless", "c", "t", f"step {i} " + "y" * 300))
+    assert path.stat().st_size > 2 * TAIL_BYTES
+    assert [e.summary[:9] for e in log.last(3)] == ["step 2997", "step 2998", "step 2999"]
+
+
+def test_last_reads_a_log_with_bad_bytes(tmp_path):
+    path = tmp_path / "a.jsonl"
+    path.write_bytes(b"\xff\xfe not text\n")
+    log = ActivityLog(path)
+    log.append(ActivityEntry(0.0, "app", "c", "t", "after the bad bytes"))
+    assert [e.summary for e in log.last(5)] == ["after the bad bytes"]

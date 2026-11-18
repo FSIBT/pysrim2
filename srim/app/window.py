@@ -4,7 +4,7 @@ import os
 from collections.abc import Callable
 from pathlib import Path
 
-from PySide6.QtCore import QUrl, Signal
+from PySide6.QtCore import Qt, QUrl, Signal
 from PySide6.QtGui import QActionGroup, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
@@ -19,7 +19,9 @@ from PySide6.QtWidgets import (
 import srim
 from srim.app import DOCS_URL
 from srim.app.agent_backend import AgentBackend
+from srim.app.agent_panel import AgentPanel
 from srim.app.agent_server import AgentServer, AgentSocketError
+from srim.app.agent_settings_dialog import AgentSettingsDialog
 from srim.app.approval_dialog import ApprovalQueue
 from srim.app.beam_tab import BeamTab
 from srim.app.document import DocumentModel
@@ -59,6 +61,7 @@ from srim.app.theme import THEMES, apply_theme
 from srim.app.workers import run_in_thread
 from srim.cli import collect_checks
 from srim.installer.container import find_runtime
+from srim.mcp.activity import ActivityLog
 from srim.spec import SpecError
 
 #: the editor tabs, by key (the first part of a guidance target) and tab name
@@ -129,6 +132,14 @@ class MainWindow(QMainWindow):
         self.agent = AgentServer(handler, parent=self)
         #: why the agent socket did not start (None when it runs or was never asked to)
         self._agent_message: Guidance | None = None
+        #: the Agent activity panel: hidden until the first agent connects (see
+        #: _on_agent_connected); it shows the log's newest entries from before this start
+        self.agent_panel = AgentPanel(self)
+        self.agent_panel.hide()
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.agent_panel)
+        self.agent_panel.load_recent(ActivityLog())
+        self._agent_panel_shown = False
+        self.agent.client_connected.connect(self._on_agent_connected)
 
         # Editors are keyed "geometry", "beam", "settings" and "scan".
         self.editors: dict[str, QWidget] = {}
@@ -249,6 +260,19 @@ class MainWindow(QMainWindow):
         self.stop_notebook_action = notebook_menu.addAction("S&top notebook")
         self.stop_notebook_action.triggered.connect(self._stop_notebook)
 
+        agent_menu = menus.addMenu("&Agent")
+        self.agent_activity_action = self.agent_panel.toggleViewAction()
+        agent_menu.addAction(self.agent_activity_action)
+        self.agent_settings_action = agent_menu.addAction("Agent &settings…")
+        self.agent_settings_action.triggered.connect(
+            lambda _checked=False: self.open_agent_settings()
+        )
+        agent_menu.addSeparator()
+        self.agent_socket_action = agent_menu.addAction("&Allow agents to connect")
+        self.agent_socket_action.setCheckable(True)
+        self.agent_socket_action.setChecked(self.settings.agent_socket)
+        self.agent_socket_action.toggled.connect(self._set_agent_socket)
+
         view_menu = menus.addMenu("&View")
         theme_menu = view_menu.addMenu("&Theme")
         group = QActionGroup(self)
@@ -283,6 +307,34 @@ class MainWindow(QMainWindow):
 
     def _about(self) -> None:
         QMessageBox.about(self, "About pysrim2", f"pysrim2 {srim.__version__}")
+
+    # --- the agent: the activity panel, the settings and the socket -------------------------
+
+    def _on_agent_connected(self, _client: str) -> None:
+        """The first agent to connect shows the activity panel; after that the user decides."""
+        if self._closing or self._agent_panel_shown:
+            return
+        self._agent_panel_shown = True
+        self.agent_panel.show()
+
+    def open_agent_settings(self) -> None:
+        if self._closing:
+            return
+        AgentSettingsDialog(self.settings, self).exec()
+
+    def _set_agent_socket(self, allowed: bool) -> None:
+        """The "Allow agents to connect" switch: save the choice, then start or stop listening."""
+        if self._closing:
+            return
+        self.settings.agent_socket = allowed
+        try:
+            save_settings(self.settings)
+        except OSError as error:
+            self._set_setup_messages([Guidance(f"Could not save the setting: {error}")])
+        if allowed:
+            self.start_agent_socket()
+        else:
+            self.stop_agent_socket()
 
     # --- the run setup -------------------------------------------------------------
 
@@ -809,6 +861,15 @@ class MainWindow(QMainWindow):
             self._agent_message = Guidance(f"Agents cannot connect: {error}")
         else:
             self._agent_message = None
+        self._show_status()
+
+    def stop_agent_socket(self) -> None:
+        """Stop listening for agents and remove the discovery file.
+
+        An ask still open is cancelled.
+        """
+        self.agent.stop()
+        self._agent_message = None
         self._show_status()
 
     def refresh_checks(self) -> None:

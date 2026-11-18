@@ -7,6 +7,7 @@ says which mode wrote it. The file is private to the user and rotates at a size 
 
 import dataclasses
 import json
+import math
 import os
 import warnings
 from dataclasses import dataclass
@@ -15,6 +16,16 @@ from pathlib import Path
 from srim.paths import data_dir
 
 LOG_NAME = "activity.jsonl"
+#: the most characters one text field of an entry keeps; a longer text is cut, with an ellipsis
+FIELD_CAP = 2000
+#: the most bytes of a log's end that :meth:`ActivityLog.last` reads (the newest entries are last)
+TAIL_BYTES = 256 * 1024
+#: the modes an entry can have
+MODES = ("app", "headless")
+#: the latest time an entry can have: 9999-12-31 in seconds since 1970
+_TIME_MAX = 253402300799.0
+_FIELDS = ("time", "mode", "client", "tool", "summary", "ask", "answer", "error")
+_REQUIRED = ("time", "mode", "client", "tool", "summary")
 
 
 def activity_path() -> Path:
@@ -50,6 +61,54 @@ class ActivityEntry:
         return cls(**{key: value for key, value in data.items() if key in known})
 
 
+def entry_from_untrusted(data: object) -> ActivityEntry:
+    """The entry ``data`` says: a dict the agent sent (or a line of the log), every field checked.
+
+    Raises ``ValueError``, with a sentence for the user, when the shape is wrong: not an object, a
+    field the log does not have, a required field missing, a wrong type, a time that is not a
+    moment, or a mode that is not one of :data:`MODES`. A text longer than :data:`FIELD_CAP` is cut.
+    """
+    if not isinstance(data, dict):
+        raise ValueError("an entry is an object")
+    if any(key not in _FIELDS for key in data):
+        raise ValueError("an entry has a field the activity log does not have")
+    for name in _REQUIRED:
+        if name not in data:
+            raise ValueError(f"an entry needs the field {name!r}")
+    stamp = data["time"]
+    if (
+        isinstance(stamp, bool)
+        or not isinstance(stamp, (int, float))
+        or not math.isfinite(stamp)
+        or not 0 <= stamp <= _TIME_MAX
+    ):
+        raise ValueError("time is a number of seconds since 1970")
+    if not isinstance(data["mode"], str) or data["mode"] not in MODES:
+        raise ValueError(f"mode is one of {', '.join(MODES)}")
+    return ActivityEntry(
+        time=float(stamp),
+        mode=data["mode"],
+        client=_text(data["client"], "client"),
+        tool=_text(data["tool"], "tool"),
+        summary=_text(data["summary"], "summary"),
+        ask=_optional_text(data.get("ask"), "ask"),
+        answer=_optional_text(data.get("answer"), "answer"),
+        error=_optional_text(data.get("error"), "error"),
+    )
+
+
+def _text(value: object, name: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{name} is text")
+    if len(value) > FIELD_CAP:
+        return value[: FIELD_CAP - 1] + "…"
+    return value
+
+
+def _optional_text(value: object, name: str) -> str | None:
+    return None if value is None else _text(value, name)
+
+
 class ActivityLog:
     """Appends entries to the log file and reads the last ones back."""
 
@@ -74,24 +133,37 @@ class ActivityLog:
                 warnings.warn(f"the agent activity log could not be written: {error}", stacklevel=2)
 
     def last(self, n: int) -> list[ActivityEntry]:
-        """The last ``n`` entries, oldest first, from the rotated file too when it is needed."""
+        """The last ``n`` entries, oldest first, from the rotated file too when it is needed.
+
+        Only the end of each file is read (:data:`TAIL_BYTES`), so a large log costs the same.
+        """
+        if n <= 0:
+            return []
         entries = self._read(self.path)
         if len(entries) < n:
             older = self._read(self.path.with_name(self.path.name + ".1"))
             entries = older + entries
-        return entries[-n:] if n > 0 else []
+        return entries[-n:]
 
     @staticmethod
     def _read(path: Path) -> list[ActivityEntry]:
-        """Every readable entry of ``path``; broken lines are skipped, a missing file is empty."""
+        """The readable entries at the end of ``path``; broken lines are skipped, a missing file is
+        empty, and bytes that are not text are replaced rather than refused."""
         try:
-            lines = path.read_text(encoding="utf-8").splitlines()
+            with open(path, "rb") as handle:
+                handle.seek(0, os.SEEK_END)
+                start = max(0, handle.tell() - TAIL_BYTES)
+                handle.seek(start)
+                data = handle.read()
         except OSError:
             return []
+        lines = data.decode("utf-8", errors="replace").split("\n")
+        if start > 0:
+            lines = lines[1:]  # the first line may begin before the tail: it is cut
         entries = []
         for line in lines:
             try:
                 entries.append(ActivityEntry.from_dict(json.loads(line)))
-            except (ValueError, TypeError, KeyError, AttributeError):
+            except (ValueError, TypeError, KeyError, AttributeError, RecursionError):
                 continue
         return entries

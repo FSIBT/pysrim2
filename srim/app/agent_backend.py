@@ -37,6 +37,7 @@ from srim.app.model import clean, problems
 from srim.app.runs import RUNS_SUFFIX, ParallelChoice
 from srim.app.workers import run_in_thread
 from srim.mcp import headless as rules
+from srim.mcp.activity import entry_from_untrusted
 from srim.mcp.backend import BackendError
 from srim.mcp.detached import ACTIONS, run_state, send_control
 from srim.spec import SpecError
@@ -351,7 +352,7 @@ class AgentBackend:
             failed_text="could not check the installation",
         )
 
-    # --- the confirm dialog (Task 5) and the activity panel (Task 6, a stub until then) -------
+    # --- the confirm dialog (Task 5) and the activity panel (Task 6) ------------------------
 
     def ask(self, text: str) -> Deferred:
         """The user's answer to an ask-first request: "allowed", "denied" or "timed out".
@@ -362,7 +363,16 @@ class AgentBackend:
         return self.window.approvals.request(current_client() or UNKNOWN_CLIENT, text)
 
     def log(self, entry: dict) -> None:
-        """STUB (Task 6): the Agent activity panel records the entry here. Until then, nothing."""
+        """Show an entry of the agent's activity in the Agent activity panel.
+
+        The entry is untrusted: a bad shape is refused (BackendError), and the panel shows every
+        text plain and cut (see :mod:`srim.app.agent_panel`).
+        """
+        try:
+            checked = entry_from_untrusted(entry)
+        except ValueError as error:
+            raise BackendError(f"log: {error}") from None
+        self.window.agent_panel.add(checked)
         return None
 
     # --- internals ----------------------------------------------------------------------

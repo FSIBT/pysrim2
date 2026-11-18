@@ -496,8 +496,23 @@ def test_ask_is_answered_by_the_window_dialog(qtbot, win, backend):
     assert answer.outcome == (True, "allowed")
 
 
-def test_log_does_nothing_yet(backend):
-    assert backend.handle("log", {"entry": {"tool": "get_setup"}}) is None
+def test_log_accepts_a_whole_entry(backend):
+    entry = {
+        "time": 1700000000.0,
+        "mode": "headless",
+        "client": "claude 1",
+        "tool": "get_setup",
+        "summary": "read the setup",
+        "ask": None,
+        "answer": None,
+        "error": None,
+    }
+    assert backend.handle("log", {"entry": entry}) is None
+
+
+def test_log_refuses_a_bare_entry(backend):
+    with pytest.raises(BackendError):
+        backend.handle("log", {"entry": {"tool": "get_setup"}})
 
 
 # --- the window: the app backend answers the agent's socket -------------------------------------
