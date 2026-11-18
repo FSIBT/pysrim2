@@ -36,6 +36,7 @@ from srim.app.runs import (
 )
 from srim.app.scan_model import new_scan, scan_from_section, to_scan
 from srim.app.settings import AppSettings
+from srim.mcp import results as results_lib
 from srim.mcp.backend import BackendError, NeedsApp
 from srim.mcp.detached import PID_FILE, run_state, send_control, start_detached
 from srim.mcp.limits import default_workers
@@ -259,6 +260,34 @@ class HeadlessBackend:
         if self._started == target:
             self._started = None
         return {"folder": str(target), "deleted": True}
+
+    # --- results ---------------------------------------------------------------------
+
+    def summary(self, folder: str | None, point: int | None = None) -> list[dict]:
+        return results_lib.summary(self._run_folder(folder), point)
+
+    def available_plots(self, folder: str | None, point: int | None = None) -> list[dict]:
+        return results_lib.available_plots(self._run_folder(folder), point)
+
+    def table(self, folder: str | None, point: int | None, key: str, max_rows: int = 500) -> dict:
+        return results_lib.table(self._run_folder(folder), point, key, max_rows)
+
+    def plot(self, folder: str | None, point: int | None, key: str) -> dict:
+        target = self._run_folder(folder)
+        path = results_lib.render_plot(target, point, key, target / results_lib.PLOTS_DIR)
+        return {"path": str(path), "shown": False}
+
+    def export(
+        self,
+        folder: str | None,
+        fmt: str,
+        dest: str,
+        include_collision: bool = False,
+        point: int | None = None,
+    ) -> dict:
+        return results_lib.export(
+            self._run_folder(folder), fmt, self._resolve(dest), include_collision, point
+        )
 
     # --- undo and redo (the app's) ----------------------------------------------------
 

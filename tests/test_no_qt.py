@@ -22,6 +22,7 @@ def test_the_library_and_cli_never_import_qt(tmp_path):
         "import srim.mcp, srim.mcp.limits, srim.mcp.approval, srim.mcp.activity\n"
         "import srim.mcp.backend, srim.mcp.headless, srim.mcp.lookup\n"
         "import srim.mcp.detached\n"
+        "import srim.mcp.results\n"
         "import srim.app.notebooks, srim.installer.app\n"
         # pandas imports pyarrow itself when it is installed; the export extras are not ours to load
         "heavy = [m for m in sys.modules if m in ('tables', 'pyarrow.parquet')]\n"
@@ -43,11 +44,12 @@ def test_the_library_and_cli_never_import_qt(tmp_path):
 
 
 def test_the_plot_catalogue_does_not_import_matplotlib():
-    # A fresh interpreter: the catalogue is Qt-free, and matplotlib is only for the drawing
-    # functions of the GUI and the tests, which import it themselves.
+    # A fresh interpreter: the catalogue and the agent's results are Qt-free, and matplotlib is only
+    # for the drawing functions (the GUI, the tests and render_plot), which import it themselves.
     code = (
         "import sys\n"
         "import srim.app.plots\n"
+        "import srim.mcp.results\n"
         "loaded = [m for m in sys.modules if m == 'matplotlib' or m.startswith('matplotlib.')]\n"
         "assert not loaded, loaded\n"
     )

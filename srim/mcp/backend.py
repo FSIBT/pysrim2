@@ -90,6 +90,35 @@ class Backend(Protocol):
     def open_run(self, folder: str) -> dict:
         """``{"folder", "finished", "points"}`` of a run folder, read back (finished or not)."""
 
+    def summary(self, folder: str | None, point: int | None = None) -> list[dict]:
+        """The implant summary of a point, as one row: mean depth and straggle (Å), the lateral
+        and radial ranges, and ``capped``. A scan needs ``point``. None for ``folder`` is the
+        run of :meth:`run_status`. Raises :class:`BackendError`."""
+
+    def available_plots(self, folder: str | None, point: int | None = None) -> list[dict]:
+        """Every plot: ``{"key", "title", "available", "reason"}`` (the reason when it is not
+        available). Raises :class:`BackendError`."""
+
+    def table(self, folder: str | None, point: int | None, key: str, max_rows: int = 500) -> dict:
+        """The data of a plot: ``{"columns", "rows", "total_rows", "capped"}``, at most
+        ``max_rows`` rows (5000 at most). Raises :class:`BackendError`."""
+
+    def plot(self, folder: str | None, point: int | None, key: str) -> dict:
+        """Draw a plot to a PNG in the run folder's ``plots`` folder: ``{"path", "shown"}``
+        (``shown`` is False here). Raises :class:`BackendError` (matplotlib missing, a bad key)."""
+
+    def export(
+        self,
+        folder: str | None,
+        fmt: str,
+        dest: str,
+        include_collision: bool = False,
+        point: int | None = None,
+    ) -> dict:
+        """Export the tables to ``csv``, ``parquet`` (folders) or ``hdf5`` (a file) at ``dest``,
+        relative to the working directory: ``{"written": [paths]}``. Raises
+        :class:`BackendError`. Replacing an existing file is for the caller to ask about."""
+
     def delete_run(self, folder: str) -> dict:
         """Delete a run folder of the setup. Refuses a running one and any folder that is not one
         of the setup's run folders. Raises :class:`BackendError`."""
