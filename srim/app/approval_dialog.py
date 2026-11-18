@@ -19,11 +19,20 @@ The rules of the answers:
   any later answer.
 """
 
+import unicodedata
 from collections import deque
 from collections.abc import Callable
 
 from PySide6.QtCore import QObject, Qt, QTimer
-from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QDialog,
+    QHBoxLayout,
+    QLabel,
+    QPlainTextEdit,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 from srim.app.agent_server import Deferred
 
@@ -33,6 +42,42 @@ DENIED = "denied"
 TIMED_OUT = "timed out"
 #: the dialog's title
 TITLE = "Agent request"
+#: the longest client name shown (the rest is cut with an ellipsis)
+CLIENT_CAP = 60
+#: the most characters of the request shown (the rest is said to be left out, not silently cut)
+TEXT_CAP = 2000
+#: the tallest the text area gets; a longer request scrolls in it
+TEXT_HEIGHT = 160
+
+
+def _plain(text: str) -> str:
+    """``text`` as one line of plain characters: every whitespace (a newline too) becomes a space,
+    the control and format characters (bidi overrides included) are dropped, and runs of spaces
+    are one space."""
+    kept = []
+    for ch in text:
+        if ch.isspace():
+            kept.append(" ")
+        elif unicodedata.category(ch) not in ("Cc", "Cf"):
+            kept.append(ch)
+    return " ".join("".join(kept).split())
+
+
+def display_client(client: str) -> str:
+    """The client's name as the dialog shows it: one line, at most :data:`CLIENT_CAP` characters."""
+    name = _plain(client) or "an agent"
+    if len(name) > CLIENT_CAP:
+        name = name[: CLIENT_CAP - 1] + "…"
+    return name
+
+
+def display_text(text: str) -> str:
+    """The request as the dialog shows it: one line, at most :data:`TEXT_CAP` characters, then
+    how many more there are."""
+    plain = _plain(text)
+    if len(plain) <= TEXT_CAP:
+        return plain
+    return plain[:TEXT_CAP] + f"… ({len(plain) - TEXT_CAP} more characters)"
 
 
 class ApprovalDialog(QDialog):
@@ -53,11 +98,19 @@ class ApprovalDialog(QDialog):
         self.setWindowTitle(TITLE)
         self.setMinimumWidth(360)
 
-        self.text_label = QLabel(f"{client} wants to: {text}", self)
+        self.text_label = QLabel(f"{display_client(client)} wants to:", self)
         # plain text: an agent's markup is shown as it is, and no link is made
         self.text_label.setTextFormat(Qt.TextFormat.PlainText)
         self.text_label.setWordWrap(True)
         self.text_label.setOpenExternalLinks(False)
+        # the request itself: read-only, bounded, scrolling; it takes no keyboard focus, so Enter
+        # goes to the default button and never into the text
+        self.text_area = QPlainTextEdit(self)
+        self.text_area.setPlainText(display_text(text))
+        self.text_area.setReadOnly(True)
+        self.text_area.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.text_area.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+        self.text_area.setMaximumHeight(TEXT_HEIGHT)
         self.countdown_label = QLabel(self)
         self.set_remaining(timeout_s)
 
@@ -77,6 +130,7 @@ class ApprovalDialog(QDialog):
         buttons.addWidget(self.deny_button)
         layout = QVBoxLayout(self)
         layout.addWidget(self.text_label)
+        layout.addWidget(self.text_area)
         layout.addWidget(self.countdown_label)
         layout.addLayout(buttons)
 

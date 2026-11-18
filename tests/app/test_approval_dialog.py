@@ -77,7 +77,8 @@ def test_the_dialog_shows_the_client_text_title_and_countdown(qtbot, window):
     assert isinstance(dialog, QDialog)
     assert dialog.windowTitle() == "Agent request"
     assert dialog.isVisible()
-    assert dialog.text_label.text() == "claude 1.2 wants to: start a run of 2 hours"
+    assert dialog.text_label.text() == "claude 1.2 wants to:"
+    assert dialog.text_area.toPlainText() == "start a run of 2 hours"
     assert "3 s" in dialog.countdown_label.text()
 
 
@@ -85,10 +86,11 @@ def test_the_request_text_is_plain_text(qtbot, queue):
     """Markup in an agent's text is shown as it is: no rich text, no links."""
     text = "<b>bold</b> <a href='https://example.org'>go</a> <img src='x'>"
     queue.request("claude", text)
-    label = shown(qtbot, queue).text_label
-    assert label.textFormat() == Qt.TextFormat.PlainText
-    assert label.text() == f"claude wants to: {text}"
-    assert label.openExternalLinks() is False
+    dialog = shown(qtbot, queue)
+    assert dialog.text_label.textFormat() == Qt.TextFormat.PlainText
+    assert dialog.text_label.openExternalLinks() is False
+    assert dialog.text_area.toPlainText() == text
+    assert dialog.text_area.isReadOnly()
 
 
 # --- the queue -----------------------------------------------------------------------------
@@ -98,12 +100,12 @@ def test_two_requests_show_one_after_the_other(qtbot, queue):
     first = queue.request("claude", "start run one")
     second = queue.request("claude", "start run two")
     dialog = shown(qtbot, queue)
-    assert "run one" in dialog.text_label.text()
+    assert "run one" in dialog.text_area.toPlainText()
     assert queue.waiting == 1
     dialog.allow_button.click()
     assert first.outcome == (True, "allowed")
     qtbot.waitUntil(lambda: queue.shown is not None and queue.shown is not dialog, timeout=WAIT)
-    assert "run two" in queue.shown.text_label.text()
+    assert "run two" in queue.shown.text_area.toPlainText()
     queue.shown.deny_button.click()
     assert second.outcome == (True, "denied")
     assert queue.waiting == 0
@@ -116,7 +118,7 @@ def test_a_cancel_while_showing_closes_the_dialog_and_shows_the_next(qtbot, queu
     first._cancel()  # the server's cancel: the peer that asked has gone
     assert first.cancelled and not first.settled
     qtbot.waitUntil(lambda: queue.shown is not None and queue.shown is not dialog, timeout=WAIT)
-    assert "run two" in queue.shown.text_label.text()
+    assert "run two" in queue.shown.text_area.toPlainText()
     assert queue.waiting == 0
     queue.shown.allow_button.click()
     assert second.outcome == (True, "allowed")
@@ -132,7 +134,7 @@ def test_a_cancel_while_queued_removes_the_request(qtbot, queue):
     dialog.deny_button.click()
     assert first.outcome == (True, "denied")
     qtbot.waitUntil(lambda: queue.shown is not None, timeout=WAIT)
-    assert "run three" in queue.shown.text_label.text()
+    assert "run three" in queue.shown.text_area.toPlainText()
     assert not second.settled
     queue.shown.allow_button.click()
     assert third.outcome == (True, "allowed")
@@ -216,7 +218,8 @@ def test_an_agent_request_over_the_socket_is_answered_by_the_dialog(qtbot, windo
 
     thread = in_thread(talk)
     qtbot.waitUntil(lambda: window.approvals.shown is not None, timeout=WAIT)
-    assert window.approvals.shown.text_label.text() == "claude 1.2 wants to: start a run"
+    assert window.approvals.shown.text_label.text() == "claude 1.2 wants to:"
+    assert window.approvals.shown.text_area.toPlainText() == "start a run"
     window.approvals.shown.allow_button.click()
     assert finish(qtbot, thread) == {"id": 1, "result": "allowed"}
 
@@ -244,3 +247,52 @@ def test_the_agent_cannot_name_another_client_in_the_arguments(window):
     backend = AgentBackend(window)
     with pytest.raises(BackendError):
         backend.handle("ask", {"client": "someone else", "text": "start a run"})
+
+
+# --- bounds and the text shown -------------------------------------------------------------
+
+
+def test_a_long_text_is_cut_and_says_how_much_is_left(qtbot, queue):
+    queue.request("claude", "x" * 5000)
+    dialog = shown(qtbot, queue)
+    assert dialog.text_area.toPlainText() == "x" * 2000 + "… (3000 more characters)"
+
+
+def test_many_lines_are_one_line_and_the_dialog_stays_short(qtbot, queue):
+    queue.request("claude", "\n".join(f"line {i}" for i in range(300)))
+    dialog = shown(qtbot, queue)
+    text = dialog.text_area.toPlainText()
+    assert "\n" not in text
+    assert text.startswith("line 0 line 1 line 2")
+    dialog.adjustSize()
+    assert dialog.height() <= 600
+    assert_buttons_inside(dialog)
+
+
+def test_the_buttons_stay_inside_the_dialog_for_a_long_request(qtbot, queue):
+    queue.request("claude", "word " * 1000)
+    dialog = shown(qtbot, queue)
+    dialog.adjustSize()
+    assert_buttons_inside(dialog)
+
+
+def test_markup_and_bidi_controls_are_dropped_from_the_text(qtbot, queue):
+    queue.request("claude", "start\u202e run\x00 now\u2066\tdone")
+    text = shown(qtbot, queue).text_area.toPlainText()
+    assert text == "start run now done"
+
+
+def test_the_client_name_is_one_short_line(qtbot, queue):
+    queue.request("claude\n\u202eBAD " + "c" * 100, "x")
+    label = shown(qtbot, queue).text_label.text()
+    assert label.endswith(" wants to:")
+    name = label[: -len(" wants to:")]
+    assert len(name) == 60 and name.endswith("…")
+    assert "\n" not in label and "\u202e" not in label
+
+
+def assert_buttons_inside(dialog):
+    rect = dialog.rect()
+    for button in (dialog.allow_button, dialog.deny_button):
+        assert button.isVisible()
+        assert rect.contains(button.geometry())
