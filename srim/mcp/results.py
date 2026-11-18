@@ -310,3 +310,37 @@ def export(
     except (ValueError, OSError) as error:
         raise BackendError(f"cannot export to {dest}: {error}") from error
     return {"written": [str(path) for path in written]}
+
+
+def _exported_names(results, include_collision: bool) -> list[str]:
+    """The tables an export writes, in table order: the ones present, and the collision events
+    only when they are asked for (the same tables :func:`export` writes, found without parsing)."""
+    return [
+        name
+        for name in _TABLE_NAMES
+        if (include_collision or name != "collision") and _present(results, name)
+    ]
+
+
+def export_files(
+    folder: Path,
+    fmt: str,
+    dest: Path,
+    include_collision: bool = False,
+    point: int | None = None,
+) -> list[str]:
+    """The files :func:`export` would write, without writing any: ``csv`` and ``parquet`` name
+    ``<table>.csv`` (or ``.parquet``) and ``metadata.yaml`` inside the folder ``dest``, ``hdf5``
+    is the one file ``dest``."""
+    if fmt not in FORMATS:
+        raise BackendError(f"unknown format {fmt!r} (formats: {', '.join(FORMATS)})")
+    results = _open(folder, point).results
+    dest = Path(dest)
+    if fmt == "hdf5":
+        return [str(dest)]
+    extension = "csv" if fmt == "csv" else "parquet"
+    names = _exported_names(results, include_collision)
+    files = [str(dest / f"{name}.{extension}") for name in names]
+    if fmt == "csv":
+        files.append(str(dest / "metadata.yaml"))
+    return files

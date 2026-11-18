@@ -122,3 +122,29 @@ class Backend(Protocol):
     def delete_run(self, folder: str) -> dict:
         """Delete a run folder of the setup. Refuses a running one and any folder that is not one
         of the setup's run folders. Raises :class:`BackendError`."""
+
+    def export_files(
+        self,
+        folder: str | None,
+        fmt: str,
+        dest: str,
+        include_collision: bool = False,
+        point: int | None = None,
+    ) -> list[str]:
+        """The files :meth:`export` would write, listed without writing anything, so the caller
+        can ask before one that exists and was not written in this session is replaced."""
+
+    def status(self) -> dict:
+        """``{"mode", "version", "checks", "srim_ready", "srim_problem", "setup", "running"}``:
+        the doctor's checks, whether SRIM is usable (and the first problem when it is not), the
+        setup's file and the latest run (None when there is none)."""
+
+    def install_plan(self, components: list[str] | None = None) -> list[dict]:
+        """One row per installer step of ``components`` (the default ones of this system when
+        None): ``{"component", "step", "description", "admin", "commands", "done"}``. Raises
+        :class:`BackendError` for an unknown component."""
+
+    def install_step(self, component: str) -> dict:
+        """Run the steps of ``component`` that need no admin rights. Admin steps are never run:
+        their commands come back in ``commands``. ``{"component", "ran", "commands", "failed",
+        "interrupted", "log"}``. Raises :class:`BackendError` for an unknown component."""

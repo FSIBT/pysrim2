@@ -9,6 +9,7 @@ and redo need the app.
 
 import os
 import shutil
+from collections.abc import Callable
 from copy import deepcopy
 from datetime import UTC, datetime
 from pathlib import Path
@@ -16,6 +17,7 @@ from typing import Any
 
 import yaml
 
+import srim
 from srim.app.model import (
     History,
     best_unit,
@@ -36,6 +38,9 @@ from srim.app.runs import (
 )
 from srim.app.scan_model import new_scan, scan_from_section, to_scan
 from srim.app.settings import AppSettings
+from srim.installer import steps as installer_steps
+from srim.installer.runner import run_steps
+from srim.installer.steps import ComponentUnavailable, Step
 from srim.mcp import results as results_lib
 from srim.mcp.backend import BackendError, NeedsApp
 from srim.mcp.detached import PID_FILE, run_state, send_control, start_detached
@@ -55,21 +60,45 @@ SECTIONS = ("ion", "target", "run", "scan")
 NOT_STARTED = "not started"
 #: the statuses of a run that is going: its folder is not deleted
 LIVE_STATUSES = ("running", "paused")
+#: the doctor's checks that a run does not need: a stale agent skill, the size of the run
+#: folders and the package's own version never stop a run
+NOT_NEEDED_FOR_RUNS = ("pysrim2", "agent-skill", "run-directories")
 
 
 class HeadlessBackend:
-    """The setup of one agent session, with no window."""
+    """The setup of one agent session, with no window.
+
+    ``checks`` (the doctor's checks), ``plan_steps`` (the installer steps of component names) and
+    ``default_components`` default to the library's; tests pass fakes so that nothing probes the
+    machine or installs anything.
+    """
 
     mode = "headless"
 
-    def __init__(self, cwd: Path, settings: AppSettings | None = None, cores: int | None = None):
+    def __init__(
+        self,
+        cwd: Path,
+        settings: AppSettings | None = None,
+        cores: int | None = None,
+        *,
+        checks: Callable[[], list[dict]] | None = None,
+        plan_steps: Callable[[list[str]], list[Step]] | None = None,
+        default_components: Callable[[], list[str]] | None = None,
+    ):
         self._cwd = Path(cwd).absolute()
         self.settings = settings if settings is not None else AppSettings()
         self._cores = cores if cores is not None else (os.cpu_count() or 1)
+        self._checks = checks if checks is not None else _doctor_checks
+        self._plan_steps = plan_steps if plan_steps is not None else installer_steps.plan
+        self._default_components = (
+            default_components
+            if default_components is not None
+            else installer_steps.default_components
+        )
         self._doc: dict = new_document()
         self._path: Path | None = None
         self._history = History()
-        self._written: set[Path] = set()  # files this backend saved in this session
+        self._written: set[Path] = set()  # files this backend saved or exported in this session
         self._started: Path | None = None  # the run folder this backend started last
 
     # --- reading -------------------------------------------------------------------
@@ -285,9 +314,81 @@ class HeadlessBackend:
         include_collision: bool = False,
         point: int | None = None,
     ) -> dict:
-        return results_lib.export(
+        out = results_lib.export(
             self._run_folder(folder), fmt, self._resolve(dest), include_collision, point
         )
+        self._written.update(Path(path) for path in out["written"])
+        return out
+
+    def export_files(
+        self,
+        folder: str | None,
+        fmt: str,
+        dest: str,
+        include_collision: bool = False,
+        point: int | None = None,
+    ) -> list[str]:
+        return results_lib.export_files(
+            self._run_folder(folder), fmt, self._resolve(dest), include_collision, point
+        )
+
+    # --- status and installs ------------------------------------------------------------
+
+    def status(self) -> dict:
+        checks = self._checks()
+        problem = srim_problem(checks)
+        try:
+            running = self.run_status()
+        except BackendError:  # no run yet: the status says so with None
+            running = None
+        return {
+            "mode": self.mode,
+            "version": srim.__version__,
+            "checks": checks,
+            "srim_ready": problem is None,
+            "srim_problem": problem,
+            "setup": self.get_setup()["path"],
+            "running": running,
+        }
+
+    def install_plan(self, components: list[str] | None = None) -> list[dict]:
+        names = self._component_names(components)
+        rows = []
+        for component in names:
+            for step in self._steps([component]):
+                rows.append(
+                    {
+                        "component": component,
+                        "step": step.name,
+                        "description": step.summary,
+                        "admin": step.needs_admin,
+                        "commands": step.commands(),
+                        "done": step.check(),
+                    }
+                )
+        return rows
+
+    def install_step(self, component: str) -> dict:
+        steps = self._steps([component])
+        log: list[str] = []
+        # the steps' lines are kept, not printed: stdout carries the MCP protocol
+        outcome = run_steps(
+            steps,
+            yes=False,
+            confirm=None,
+            say=log.append,
+            warn=log.append,
+            admin_hint="run these in a terminal yourself, then check again:",
+        )
+        commands = [command for _, owed in outcome.admin_skipped for command in owed]
+        return {
+            "component": component,
+            "ran": list(outcome.installed),
+            "commands": commands,
+            "failed": outcome.failed,
+            "interrupted": outcome.interrupted,
+            "log": log,
+        }
 
     # --- undo and redo (the app's) ----------------------------------------------------
 
@@ -357,6 +458,22 @@ class HeadlessBackend:
                     return Path(run["folder"])
         raise BackendError("no run: start one with start_run()")
 
+    def _steps(self, components: list[str]) -> list[Step]:
+        """The installer steps of ``components``. Raises :class:`BackendError` when one is
+        unknown."""
+        try:
+            return self._plan_steps(components)
+        except ComponentUnavailable as error:
+            raise BackendError(error.reason) from error
+
+    def _component_names(self, components: list[str] | None) -> list[str]:
+        """``components`` checked as a list of names (the default ones of this system when None)."""
+        if components is None:
+            return list(self._default_components())
+        if not isinstance(components, list) or not all(isinstance(c, str) for c in components):
+            raise BackendError('components must be a list of component names, e.g. ["srim"]')
+        return components
+
     def _with_spec_values(self, doc: dict, items: list[str]) -> dict:
         """``doc`` with the ``dotted.key=value`` items applied to its spec, app keys kept."""
         data = clean(doc)
@@ -373,6 +490,28 @@ class HeadlessBackend:
 
 
 # --- helpers ---------------------------------------------------------------------------
+
+
+def _doctor_checks() -> list[dict]:
+    """The doctor's checks of this machine (imported here: the CLI imports the backend's peers)."""
+    from srim.cli import collect_checks
+
+    return collect_checks()
+
+
+def srim_problem(checks: list[dict]) -> str | None:
+    """The first doctor check that stops a run, in the doctor's words, or None when none does.
+
+    The text is the check's name, detail and fix, as ``pysrim2 doctor`` and the app's guidance
+    give them, so the agent can show the user the same advice.
+    """
+    for check in checks:
+        if check.get("ok") or check.get("name") in NOT_NEEDED_FOR_RUNS:
+            continue
+        text = f"{check.get('name')}: {check.get('detail')}"
+        fix = check.get("fix")
+        return f"{text}. Fix: {fix}" if fix else text
+    return None
 
 
 def _whole(value: Any, name: str) -> int | None:
