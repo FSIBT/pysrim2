@@ -8,8 +8,9 @@ a file (files, not pipes), and reads back a JSON result the child writes. The ch
 ``confirm=None``), so an admin step is never run; its commands come back to the caller.
 
 The steps the user was shown are checked in the child: a plan that differs from them is refused
-before anything runs. ``PYSRIM2_INSTALL_PLANNER=module:function`` names the planner the child
-uses in place of the installer's registry (tests use fake steps this way, as the scan runner does).
+before anything runs. The request may name a planner as ``module:function`` (tests use fake
+steps this way, through ``HeadlessBackend(plan_steps=...)``); production requests name none, and
+the child uses the installer's registry. The environment is never read for this.
 """
 
 import importlib
@@ -27,16 +28,18 @@ from srim.installer.runner import run_steps
 from srim.installer.steps import Step
 from srim.mcp.backend import BackendError
 
-PLANNER_VAR = "PYSRIM2_INSTALL_PLANNER"
 #: the output lines a crash message keeps: the last of the child's log
 TAIL_LINES = 20
 
 
-def run_install(component: str, expected: list[dict] | None = None) -> dict:
+def run_install(
+    component: str, expected: list[dict] | None = None, planner: str | None = None
+) -> dict:
     """Install ``component`` in a child process and return the outcome.
 
     ``expected`` is the list of steps the caller showed the user (``{"step", "commands"}`` each,
-    the non-admin steps that would run); when given, the child refuses a different plan. Returns
+    the non-admin steps that would run); when given, the child refuses a different plan.
+    ``planner`` is ``module:function`` for the child's planner (None: the installer's). Returns
     ``{"component", "ran", "commands", "failed", "interrupted", "log"}``. Raises
     :class:`BackendError`, with the output of the child, when the child could not report.
     """
@@ -44,7 +47,7 @@ def run_install(component: str, expected: list[dict] | None = None) -> dict:
         request_path = Path(folder) / "request.json"
         result_path = Path(folder) / "result.json"
         output_path = Path(folder) / "output.txt"
-        request = {"component": component, "expected": expected}
+        request = {"component": component, "expected": expected, "planner": planner}
         request_path.write_text(json.dumps(request), encoding="utf-8")
         code = _start_child(request_path, result_path, output_path, component)
         output = output_path.read_text(encoding="utf-8", errors="replace")
@@ -107,7 +110,7 @@ def _execute(request: dict) -> dict:
     """What the install of the request's component does, as the JSON result."""
     component = request["component"]
     try:
-        steps = _planner()([component])
+        steps = _planner(request.get("planner"))([component])
         expected = request.get("expected")
         if expected is not None:
             shown = [{"step": row["step"], "commands": list(row["commands"])} for row in expected]
@@ -147,13 +150,13 @@ def would_run(steps: list[Step]) -> list[dict]:
     ]
 
 
-def _planner() -> Callable[[list[str]], list[Step]]:
-    name = os.environ.get(PLANNER_VAR)
+def _planner(name: str | None) -> Callable[[list[str]], list[Step]]:
+    """The planner named by ``module:function``, or the installer's when None."""
     if not name:
         return installer_steps.plan
     module_name, _, attribute = name.partition(":")
     if not module_name or not attribute:
-        raise ValueError(f"{PLANNER_VAR} must look like module:function, got {name!r}")
+        raise ValueError(f"the planner must look like module:function, got {name!r}")
     planner: Any = getattr(importlib.import_module(module_name), attribute)
     return planner
 

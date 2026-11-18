@@ -90,6 +90,8 @@ class HeadlessBackend:
         self._cores = cores if cores is not None else (os.cpu_count() or 1)
         self._checks = checks if checks is not None else _doctor_checks
         self._plan_steps = plan_steps if plan_steps is not None else installer_steps.plan
+        # the child names the same planner by module and function (None: the installer's)
+        self._planner = None if plan_steps is None else _planner_ref(plan_steps)
         self._default_components = (
             default_components
             if default_components is not None
@@ -374,7 +376,7 @@ class HeadlessBackend:
 
     def install_step(self, component: str, expected: list[dict] | None = None) -> dict:
         self._steps([component])  # an unknown component is refused before a process starts
-        return run_install(component, expected)
+        return run_install(component, expected, planner=self._planner)
 
     # --- undo and redo (the app's) ----------------------------------------------------
 
@@ -498,6 +500,11 @@ def srim_problem(checks: list[dict]) -> str | None:
         fix = check.get("fix")
         return f"{text}. Fix: {fix}" if fix else text
     return None
+
+
+def _planner_ref(plan: Callable[[list[str]], list[Step]]) -> str:
+    """``module:function`` of a planner, which the install child imports by name."""
+    return f"{plan.__module__}:{plan.__qualname__}"
 
 
 def _key(path: Path) -> Path:
