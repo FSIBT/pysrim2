@@ -833,3 +833,28 @@ def test_a_closed_connection_leaves_no_timers_behind(qtbot, make_server):
         finish(qtbot, in_thread(lambda: connect(endpoint)[0].close()))
     qtbot.waitUntil(lambda: server.connection_count == 0, timeout=5000)
     qtbot.waitUntil(lambda: not server.findChildren(QTimer), timeout=5000)
+
+
+def test_the_handler_can_read_the_name_of_the_client_that_asks(qtbot, make_server):
+    """The app's confirm dialog names the client: the handler reads it from the request's
+    connection, while the request is being handled (and only then)."""
+    seen = []
+
+    class Named(StandIn):
+        def handle(self, method, params):
+            seen.append(agent_server.current_client())
+            return super().handle(method, params)
+
+    server = make_server(Named())
+    endpoint = read_endpoint()
+
+    def talk():
+        channel, _ = connect(endpoint, client="claude 1.2")
+        channel.send(protocol.request(1, "echo", {}))
+        channel.receive()
+        channel.close()
+
+    finish(qtbot, in_thread(talk))
+    assert seen == ["claude 1.2"]
+    assert agent_server.current_client() is None
+    assert server.listening

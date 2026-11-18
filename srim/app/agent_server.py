@@ -22,6 +22,7 @@ import logging
 import os
 import re
 import secrets
+from contextvars import ContextVar
 from dataclasses import dataclass
 
 from PySide6.QtCore import QDir, QObject, QTimer, Signal
@@ -64,6 +65,20 @@ MAX_QUEUED_BYTES = 2 * MAX_LINE
 INTERNAL_ERROR_TEXT = "internal error in the app; see its log"
 #: the reply to a hello that is refused (the token is never in it)
 TOKEN_REFUSED_TEXT = "the token is not this app's"
+
+
+#: the client name of the connection whose request the handler is answering (see current_client)
+_CALLER: ContextVar[str | None] = ContextVar("pysrim2_agent_caller", default=None)
+
+
+def current_client() -> str | None:
+    """The client name (from its hello) of the connection whose request is being handled, or None.
+
+    The handler's ``handle`` is called on the GUI thread, one request at a time, so this is the
+    connection that asked for it, even when other connections are open. It is None outside a
+    request (a call made by the app itself).
+    """
+    return _CALLER.get()
 
 
 class AgentSocketError(RuntimeError):
@@ -520,6 +535,7 @@ class AgentServer(QObject):
         except ProtocolError as error:
             self._send(peer, error_reply(request_id, "BackendError", str(error)))
             return
+        token = _CALLER.set(peer.client)
         try:
             value = self._handler.handle(method, params)
         except NeedsApp as error:
@@ -535,6 +551,8 @@ class AgentServer(QObject):
                 self._wait_for(peer, request_id, value)
             else:
                 self._send(peer, result_reply(request_id, value))
+        finally:
+            _CALLER.reset(token)
 
     def _wait_for(self, peer: _Peer, request_id, deferred: Deferred) -> None:
         if deferred.settled:
