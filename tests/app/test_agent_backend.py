@@ -484,15 +484,15 @@ def test_show_plot_of_a_plot_the_run_cannot_give_is_refused(qtbot, win, backend)
         )
 
 
-# --- ask and log: stubs until the confirm dialog and the activity panel --------------------------
+# --- ask and log: the confirm dialog, and the activity panel (a stub until Task 6) ----------------
 
 
-def test_ask_is_not_available_yet(backend):
-    deferred = backend.handle("ask", {"client": "claude", "text": "start a run"})
-    assert deferred.settled
-    ok, error = deferred.outcome
-    assert ok is False
-    assert "not available yet" in str(error)
+def test_ask_is_answered_by_the_window_dialog(qtbot, win, backend):
+    answer = backend.handle("ask", {"text": "start a run"})
+    assert not answer.settled
+    qtbot.waitUntil(lambda: win.approvals.shown is not None, timeout=5000)
+    win.approvals.shown.allow_button.click()
+    assert answer.outcome == (True, "allowed")
 
 
 def test_log_does_nothing_yet(backend):

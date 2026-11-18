@@ -20,6 +20,7 @@ import srim
 from srim.app import DOCS_URL
 from srim.app.agent_backend import AgentBackend
 from srim.app.agent_server import AgentServer, AgentSocketError
+from srim.app.approval_dialog import ApprovalQueue
 from srim.app.beam_tab import BeamTab
 from srim.app.document import DocumentModel
 from srim.app.geometry import GeometryTab
@@ -120,6 +121,8 @@ class MainWindow(QMainWindow):
         self.document = document if document is not None else DocumentModel(self)
         #: the run of the setup (``run_runner`` replaces SRIM in tests; see srim.app.run_control)
         self.run = RunController(self, runner=run_runner)
+        #: the agent's ask-first requests wait here for the user's answer (see approval_dialog)
+        self.approvals = ApprovalQueue(self)
         #: the agent socket: listening for agents while it runs (see srim.app.agent_server); the
         #: handler answers them from this window (a test may pass another one)
         handler = agent_handler if agent_handler is not None else AgentBackend(self)
@@ -873,6 +876,7 @@ class MainWindow(QMainWindow):
         Called when the window closes and when the application quits (see
         :func:`srim.app.main.stop_on_quit`). Safe to call more than once.
         """
-        self.agent.stop()
+        self.agent.stop()  # the asks of a connection that is gone are cancelled first
+        self.approvals.close()  # then every ask still open is denied
         self._stop_notebook()
         stop_exports()

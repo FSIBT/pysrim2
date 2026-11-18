@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any
 
 import srim
-from srim.app.agent_server import INTERNAL_ERROR_TEXT, Deferred
+from srim.app.agent_server import INTERNAL_ERROR_TEXT, Deferred, current_client
 from srim.app.document import LOCKED_TEXT
 from srim.app.model import clean, problems
 from srim.app.runs import RUNS_SUFFIX, ParallelChoice
@@ -70,6 +70,8 @@ SERVED = frozenset(
         "log",
     }
 )
+#: the name of a client that asked without one (a call the app made itself)
+UNKNOWN_CLIENT = "an agent"
 #: the answer of an open that another open or a run took the place of
 REPLACED_TEXT = "the open was replaced by another one before its folder was read"
 #: the answer of an open that a run took the place of
@@ -349,13 +351,15 @@ class AgentBackend:
             failed_text="could not check the installation",
         )
 
-    # --- stubs until the confirm dialog (Task 5) and the activity panel (Task 6) --------------
+    # --- the confirm dialog (Task 5) and the activity panel (Task 6, a stub until then) -------
 
-    def ask(self, text: str, client: str = "") -> Deferred:
-        """STUB (Task 5): the confirm dialog answers this. Until then nothing can be asked."""
-        deferred = Deferred()
-        deferred.reject(BackendError("asking the user in the app is not available yet"))
-        return deferred
+    def ask(self, text: str) -> Deferred:
+        """The user's answer to an ask-first request: "allowed", "denied" or "timed out".
+
+        The client is the connection's (see :func:`srim.app.agent_server.current_client`), not an
+        argument the agent could change. The window's confirm dialog answers the Deferred.
+        """
+        return self.window.approvals.request(current_client() or UNKNOWN_CLIENT, text)
 
     def log(self, entry: dict) -> None:
         """STUB (Task 6): the Agent activity panel records the entry here. Until then, nothing."""
