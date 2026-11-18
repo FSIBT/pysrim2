@@ -50,7 +50,7 @@ plot = ["matplotlib"]
 tui = ["textual>=0.86.2", "textual-plotext>=1.0.1", "textual-serve>=1.1.3"]
 # the MCP server of `pysrim2 mcp` (the official MCP Python SDK); the library and the other
 # commands never import it
-mcp = ["mcp>=1.12"]
+mcp = ["mcp>=2.3,<3"]
 # the desktop app (`pysrim2 app`), with its notebook tools (marimo, JupyterLab) and the PDF export
 # (nbconvert's WebPDF uses playwright's Chromium, which `pysrim2 install app` downloads). Installed
 # by `pysrim2 install app`. Not on Python 3.15 yet: importing PySide6 breaks its lazy imports

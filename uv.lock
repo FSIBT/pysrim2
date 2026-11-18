@@ -4120,7 +4120,7 @@ requires-dist = [
     { name = "marimo", marker = "python_full_version < '3.15' and extra == 'app'", specifier = ">=0.25" },
     { name = "matplotlib", marker = "python_full_version < '3.15' and extra == 'app'" },
     { name = "matplotlib", marker = "extra == 'plot'" },
-    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.12" },
+    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=2.3,<3" },
     { name = "nbconvert", extras = ["webpdf"], marker = "python_full_version < '3.15' and extra == 'app'", specifier = ">=7" },
     { name = "nbformat", marker = "python_full_version < '3.15' and extra == 'app'" },
     { name = "numpy" },
