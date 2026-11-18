@@ -16,7 +16,7 @@ import os
 import secrets
 import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from srim.paths import data_dir
@@ -34,7 +34,8 @@ class AppEndpoint:
     """Where the app is: ``socket`` is the name ``QLocalServer`` reports, ``token`` opens it."""
 
     socket: str
-    token: str
+    #: never in the repr, so a log line or an error message cannot show it
+    token: str = field(repr=False)
     pid: int
     version: str
 

@@ -133,3 +133,12 @@ def test_the_file_is_plain_json_with_the_documented_fields(home):
     write_endpoint(endpoint(token="c" * 64))
     data = json.loads(discovery_path().read_text(encoding="utf-8"))
     assert set(data) == {"socket", "token", "pid", "version"}
+
+
+def test_the_token_stays_out_of_the_repr_and_of_errors(home):
+    token = new_token()
+    secret = endpoint(token=token)
+    assert token not in repr(secret) and token not in str(secret)
+    with pytest.raises(ValueError) as caught:
+        write_endpoint(AppEndpoint("", token, 0, "0"))
+    assert token not in str(caught.value)
