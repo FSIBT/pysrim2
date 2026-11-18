@@ -557,3 +557,19 @@ def test_an_approval_code_is_not_written_to_the_log(tmp_path):
     assert info.value.code not in logged
     entry = tools.log.last(1)[0]
     assert entry.error == f"approval needed: {entry.ask}"
+
+
+def test_a_code_for_one_setup_file_does_not_redeem_for_another_with_the_same_content(tmp_path):
+    backend = complete(real_backend(tmp_path))
+    backend.save_setup("a.yaml")
+    backend.save_setup("b.yaml")
+    backend.open_setup("a.yaml")
+    assert (tmp_path / "a.yaml").read_text(encoding="utf-8") == (tmp_path / "b.yaml").read_text(
+        encoding="utf-8"
+    )
+    tools = make_tools(tmp_path, backend)
+    with pytest.raises(ApprovalNeeded) as info:
+        tools.delete_run("a-runs/20261115T000000Z")
+    tools.open_setup("b.yaml")
+    with pytest.raises(ApprovalNeeded):
+        tools.delete_run("a-runs/20261115T000000Z", confirm_code=info.value.code)

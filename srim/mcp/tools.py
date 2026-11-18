@@ -365,7 +365,9 @@ class Tools:
         any other answer raises :class:`BackendError`. With no answer possible, a code is issued
         and :class:`ApprovalNeeded` raised.
         """
-        setup = self.backend.get_setup()["setup"]
+        current = self.backend.get_setup()
+        # the file is part of the action: a code for one file is no use for another
+        setup = {"path": current["path"], "setup": current["setup"]}
         action = action_hash(tool, args, setup, workers)
         record.ask = text
         if confirm_code is not None and self.approvals.redeem(str(confirm_code), action):
