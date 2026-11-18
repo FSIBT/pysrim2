@@ -9,8 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `pysrim2 mcp` runs an MCP server over stdio for an AI agent: it sets up, runs and reads pysrim2 runs without the app (undo and redo need the app), asks the user first before a long or large run, a delete or a save that replaces a file, and keeps an activity log. It needs the new `mcp` extra (`pysrim2[mcp]`, also in `app` and `all`); without it, the command says how to install the extra. `pysrim2 mcp --print-config CLIENT` prints the config that connects Claude Code, Codex, Gemini CLI, Cursor, VS Code or any other stdio client to the server (the absolute path of the installed `pysrim2`), and says which file it goes in.
-- The agent's ask-first limits are settings in `settings.json`: `agent_max_minutes` (a run estimated longer needs the user's OK, default 30), `agent_max_core_fraction` (more workers than this share of the cores need the OK, default 0.5) and `agent_socket` (default true).
+- `pysrim2 mcp` runs an MCP server over stdio for an AI agent (Claude Code, Codex, Gemini CLI, Cursor, VS Code or any stdio client). The agent sets up a run, starts it, follows it and reads its tables and plots, on the `run.yaml` files and run folders of the working directory (headless; undo and redo need the app). It asks the user before a long or large run, a save or export that replaces a file, a discarded setup, a run delete and an installer step; admin installer steps are never run, their commands are shown. It needs the new `mcp` extra (`pysrim2[mcp]`, the MCP SDK 2.x, also in `app` and `all`); without it, the command says how to install the extra.
+- `pysrim2 mcp --print-config CLIENT` prints the config that connects Claude Code, Codex, Gemini CLI, Cursor, VS Code or any other stdio client to the server (the absolute path of the installed `pysrim2`), and says which file it goes in.
+- The agent's activity is kept in `activity.jsonl` under the data directory (`agent/`): each request and answer, the client's name and the mode, up to 1 MB per file.
+- The agent's ask-first limits are settings in `settings.json`: `agent_max_minutes` (a run estimated longer needs the user's OK, default 30) and `agent_max_core_fraction` (more workers than this share of the cores need the OK, default 0.5).
+- The documentation has a section on the MCP server (`docs/agents.md`) and on the command (`docs/cli.md`); the pysrim2 skill has a section on it (section 10), and the API reference lists `srim.mcp.connect`, `srim.mcp.limits` and `srim.mcp.activity`.
 
 ### Changed
 
