@@ -396,7 +396,7 @@ class Tools:
         try:
             result = action(record)
         except BaseException as error:
-            self._record(tool, summary, record, str(error) or type(error).__name__)
+            self._record(tool, summary, record, _error_text(error, record))
             raise
         self._record(tool, summary, record, None)
         return _with_mode(result, self.backend.mode)
@@ -414,6 +414,13 @@ class Tools:
                 error=error,
             )
         )
+
+
+def _error_text(error: BaseException, record: _Record) -> str:
+    """The error as the log keeps it: an approval request is logged without its one-time code."""
+    if isinstance(error, ApprovalNeeded):
+        return f"approval needed: {record.ask}"
+    return str(error) or type(error).__name__
 
 
 def _with_mode(result: Any, mode: str) -> dict:

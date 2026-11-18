@@ -547,3 +547,13 @@ def test_a_changed_install_plan_invalidates_the_code(tmp_path):
     commands[0] = "download another zip"
     with pytest.raises(ApprovalNeeded):
         tools.install_step("srim", confirm_code=info.value.code)
+
+
+def test_an_approval_code_is_not_written_to_the_log(tmp_path):
+    tools = make_tools(tmp_path, FakeBackend(seconds=LONG))
+    with pytest.raises(ApprovalNeeded) as info:
+        tools.start_run()
+    logged = (tmp_path / "activity.jsonl").read_text(encoding="utf-8")
+    assert info.value.code not in logged
+    entry = tools.log.last(1)[0]
+    assert entry.error == f"approval needed: {entry.ask}"
