@@ -99,6 +99,24 @@ def _check_same_bins(frames, name):
             raise ValueError(f"cannot merge {name!r}: the batches have different depth bins")
 
 
+def _split(frame, chunk_rows):
+    """``frame`` in consecutive pieces of ``chunk_rows`` rows (one piece if it is empty)"""
+    if len(frame) == 0:
+        return iter([frame])
+    return (frame.iloc[start : start + chunk_rows] for start in range(0, len(frame), chunk_rows))
+
+
+def _as_merged(frame, info, offset):
+    """A batch's rows as part of the merged table: ``ion`` numbered from ``offset``, the
+    ``batch`` index and the batch's columns (bins) after it. Copies ``frame``."""
+    frame = frame.copy()
+    frame["ion"] = frame["ion"] + offset
+    frame.insert(1, "batch", info.index)
+    for position, (name, value) in enumerate((info.columns or {}).items(), start=2):
+        frame.insert(position, name, value)
+    return frame
+
+
 class _MergedTable:
     """Merged output with the ``.df`` / ``.metadata`` interface of the single-run outputs."""
 
@@ -135,14 +153,45 @@ class _MergedTable:
         offset = 0
         out = []
         for info, frame in zip(self._merged.batches, frames, strict=True):
-            frame = frame.copy()
-            frame["ion"] = frame["ion"] + offset
-            frame.insert(1, "batch", info.index)
-            for position, (name, value) in enumerate((info.columns or {}).items(), start=2):
-                frame.insert(position, name, value)
+            out.append(_as_merged(frame, info, offset))
             offset += info.n_ions
-            out.append(frame)
         return pd.concat(out, ignore_index=True)
+
+    def iter_chunks(self, chunk_rows=50_000):
+        """The merged table in chunks of up to ``chunk_rows`` rows, as ``.df`` (the chunks of
+        the batches in batch order, see :meth:`srim.output.Range3D.iter_chunks`).
+
+        Batches whose bin columns differ (no scan makes such batches) are merged by
+        :attr:`df`, which unions their columns and may change their dtypes; then the whole
+        table is built once and only the writing is in chunks. Depth profiles are small and
+        come as one chunk."""
+        if int(chunk_rows) < 1:
+            raise ValueError("chunk_rows must be a positive integer")
+        if self._kind == "profile":
+            return iter([self.df])
+        if not self._same_batch_columns():
+            return _split(self.df, chunk_rows)
+        return self._chunks(chunk_rows)
+
+    def _same_batch_columns(self):
+        """True when every batch adds the same columns, with the same value types, so that
+        the chunks of each batch have the columns of the merged table"""
+        layouts = {
+            tuple((name, type(value).__name__) for name, value in (info.columns or {}).items())
+            for info in self._merged.batches
+        }
+        return len(layouts) <= 1
+
+    def _chunks(self, chunk_rows):
+        offset = 0
+        rows = 0
+        for info, part in zip(self._merged.batches, self._parts(), strict=True):
+            for frame in part.iter_chunks(chunk_rows):
+                frame = _as_merged(frame, info, offset)
+                frame.index = pd.RangeIndex(rows, rows + len(frame))
+                rows += len(frame)
+                yield frame
+            offset += info.n_ions
 
     @property
     def metadata(self):

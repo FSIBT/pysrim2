@@ -89,6 +89,24 @@ changes. Compare with loading `Collision.df` (a 100 MB file: 2.9 s, 281 MiB peak
 of which 150 MB is the frame), which is what `iter_events()` and the chunked
 export avoid. Reading `EXYZ.txt` (80 MB) takes 3.9 s and about 256 MB resident.
 
+## Per-ion tables
+
+`range3d`, `exyz`, `backscat`, `transmit` and `sputter` are exported in chunks as well,
+so an export never holds a whole per-ion output in memory. Each chunk is `chunk_rows`
+rows (default 100 000) read from the file through `iter_chunks(chunk_rows)`, the same
+rows, columns and dtypes as `.df` in the same order. The files are the same as the
+whole-table export writes:
+
+- CSV is byte-identical; the header is written once.
+- Parquet holds the same rows, dtypes and metadata, with one row group per chunk.
+- HDF5 holds the same data, appended chunk by chunk to the table.
+
+The depth profiles (`ioniz`, `range` ...) are small and are written whole.
+
+A batched result (`MergedResults`) streams its per-ion tables the same way, batch
+after batch, with the global `ion` numbers. The one exception: batches whose bin
+columns differ (no scan makes such batches) are merged whole, as `.df` merges them.
+
 ## Reading back
 
 ```python
