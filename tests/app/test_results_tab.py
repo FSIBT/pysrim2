@@ -428,3 +428,48 @@ def test_a_scan_whose_point_folders_are_gone_says_so_on_its_scan_group(
     run.finished.emit(run.result)
     assert tab.item_for("scan:summary").isDisabled()
     assert tab.item_for("scan:summary").toolTip(0) == MISSING_OUTPUTS_TEXT
+
+
+# --- show_plot: the agent names a point and a plot, and the tab shows them -----------------
+
+
+def test_show_plot_selects_the_point_and_the_plot(qtbot, tab, run, document, folder):
+    scan = scan_of(document, grid={"ion.energy_keV": [10.0, 20.0]})
+    finish(run, document, folder, scan, [DONE, DONE])
+    rel = tab.point_combo.itemData(1)
+    with qtbot.waitSignal(tab.canvas.drawn, timeout=10000):
+        tab.show_plot(rel, "vacancies")
+    assert tab.point_combo.currentData() == rel
+    assert tab.plot_list.currentItem() is tab.item_for("vacancies")
+    assert tab.canvas.figure.axes[0].get_title() == BY_KEY["vacancies"].title
+
+
+def test_show_plot_refuses_a_point_or_a_plot_it_cannot_show(qtbot, tab, run, document, folder):
+    finish(run, document, folder, scan_of(document), [DONE])
+    with pytest.raises(ValueError, match="no results to show"):
+        tab.show_plot("points/not-a-point", "ionization")
+    with pytest.raises(ValueError, match="no plot"):
+        tab.show_plot(None, "no-such-plot")
+
+
+def test_show_plot_switches_the_window_to_the_results_tab(qtbot, run, document, folder):
+    from PySide6.QtWidgets import QTabWidget, QWidget
+
+    class Holder(QWidget):
+        """A top-level widget with a ``tabs`` attribute, as MainWindow has."""
+
+        def __init__(self):
+            super().__init__()
+            self.tabs = QTabWidget(self)
+
+    holder = Holder()
+    qtbot.addWidget(holder)
+    other = QWidget()
+    holder.tabs.addTab(other, "Other")
+    widget = ResultsTab(run, document, AppSettings(refresh_seconds=1))
+    holder.tabs.addTab(widget, "Results")
+    finish(run, document, folder, scan_of(document), [DONE])
+    holder.tabs.setCurrentWidget(other)
+    with qtbot.waitSignal(widget.canvas.drawn, timeout=10000):
+        widget.show_plot(None, "ionization")
+    assert holder.tabs.currentWidget() is widget

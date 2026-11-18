@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QTabWidget,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -367,6 +368,34 @@ class ResultsTab(QWidget):
             if self._enabled(plot.key):
                 return plot.key
         return None
+
+    def show_plot(self, rel_point: str | None, key: str) -> None:
+        """Show the plot ``key`` of the point ``rel_point`` (its folder relative to the run folder;
+        None keeps the chosen point), and switch to this tab.
+
+        Raises :class:`ValueError` for a point the tab does not list or a plot that is not
+        available for the point (the tab's tooltip says why). Nothing changes then.
+        """
+        self._rebuild()
+        if rel_point is not None:
+            index = self.point_combo.findData(rel_point)
+            if index < 0:
+                raise ValueError(f"the point {rel_point!r} has no results to show")
+        item = self._items.get(key)
+        if item is None:
+            raise ValueError(f"there is no plot {key!r}")
+        if item.isDisabled():
+            raise ValueError(f"the plot {key!r} is not available: {item.toolTip(0) or 'none'}")
+        if rel_point is not None:
+            self.point_combo.blockSignals(True)
+            self.point_combo.setCurrentIndex(index)
+            self.point_combo.blockSignals(False)
+        self._select(key)
+        self._refresh_view(draw=True)
+        # the window's tab widget (a window of the app has one; a bare tab has none)
+        tabs = getattr(self.window(), "tabs", None)
+        if isinstance(tabs, QTabWidget) and tabs.indexOf(self) >= 0:
+            tabs.setCurrentWidget(self)
 
     def _select(self, key: str) -> None:
         self.plot_list.blockSignals(True)
