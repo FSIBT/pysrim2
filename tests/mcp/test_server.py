@@ -140,6 +140,8 @@ def test_the_instructions_give_the_run_flow_and_the_code_protocol(tmp_path):
 
     text = asyncio.run(instructions())
     assert "start_run" in text and "confirm_code" in text and "lookup_element" in text
+    assert "is final" in text and "the exact action" in text
+    assert "never" in text and "approval" in text
 
 
 def test_the_skill_is_a_resource(tmp_path):
