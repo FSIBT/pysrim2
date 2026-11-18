@@ -4,8 +4,11 @@ The checks, the installer steps and the default components are injected, so noth
 machine, runs wine or installs anything.
 """
 
+import os
+import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 from test_results import run_folder
@@ -13,6 +16,7 @@ from test_results import run_folder
 from srim.installer.steps import Step
 from srim.mcp.backend import BackendError
 from srim.mcp.headless import HeadlessBackend
+from srim.output.tables import Results
 
 
 def check(name, ok, detail="", fix="run: pysrim2 install srim"):
@@ -280,3 +284,68 @@ def test_a_step_that_prints_or_spawns_a_process_writes_nothing_to_fd_1(tmp_path,
     text = "\n".join(out["log"])
     assert "python says hi" in text
     assert "child says hi" in text
+
+
+# --- export writes exactly the files it lists -------------------------------------------------
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def collision_folder(tmp_path):
+    """A run folder with collision events (SiC-C's COLLISON.txt) in its point."""
+    folder = run_folder(tmp_path)
+    point = next((folder / "points").iterdir())
+    shutil.copy(ROOT / "test_files" / "SiC-C" / "COLLISON.txt", point / "COLLISON.txt")
+    return folder
+
+
+def realpaths(paths):
+    return {os.path.realpath(path) for path in paths}
+
+
+@pytest.mark.parametrize("fmt", ["csv", "parquet", "hdf5"])
+@pytest.mark.parametrize("collision", [False, True])
+def test_the_listed_files_are_exactly_the_written_files(tmp_path, fmt, collision):
+    if fmt == "parquet":
+        pytest.importorskip("pyarrow")
+    if fmt == "hdf5":
+        pytest.importorskip("tables")
+    folder = collision_folder(tmp_path) if collision else run_folder(tmp_path)
+    backend = HeadlessBackend(tmp_path)
+    dest = "out.h5" if fmt == "hdf5" else "out"
+    listed = backend.export_files(str(folder), fmt, dest, collision)
+    written = backend.export(str(folder), fmt, dest, collision)["written"]
+    assert realpaths(listed) == realpaths(written)
+    if fmt != "hdf5":  # one file per table: the collision table is listed by its name
+        assert any(Path(path).stem == "collision" for path in listed) == collision
+
+
+def test_export_asks_the_writer_for_exactly_the_listed_tables(tmp_path, monkeypatch):
+    folder = run_folder(tmp_path)
+    seen = {}
+
+    def fake_to_csv(self, directory, spec=None, include=None, chunk_rows=100_000):
+        seen["include"] = include
+        return {}
+
+    monkeypatch.setattr(Results, "to_csv", fake_to_csv)
+    backend = HeadlessBackend(tmp_path)
+    listed = backend.export_files(str(folder), "csv", "out")
+    backend.export(str(folder), "csv", "out")
+    listed_tables = sorted(Path(p).stem for p in listed if not p.endswith("metadata.yaml"))
+    assert sorted(seen["include"]) == listed_tables
+
+
+def test_an_export_that_writes_an_unlisted_file_is_refused(tmp_path, monkeypatch):
+    folder = run_folder(tmp_path)
+
+    def rogue_to_csv(self, directory, spec=None, include=None, chunk_rows=100_000):
+        os.makedirs(directory, exist_ok=True)
+        rogue = os.path.join(directory, "rogue.txt")
+        with open(rogue, "w", encoding="utf-8") as handle:
+            handle.write("not listed")
+        return {"rogue": rogue}
+
+    monkeypatch.setattr(Results, "to_csv", rogue_to_csv)
+    with pytest.raises(BackendError, match="did not list"):
+        HeadlessBackend(tmp_path).export(str(folder), "csv", "out")

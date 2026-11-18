@@ -9,6 +9,7 @@ catalogue's row cap. Every failure a caller can cause is a
 """
 
 import math
+import os
 from pathlib import Path
 from typing import Any, NamedTuple
 
@@ -285,31 +286,57 @@ def export(
     """Export the point's tables through :mod:`srim.export`: ``csv`` and ``parquet`` write one file
     per table into the folder ``dest`` (csv adds ``metadata.yaml``), ``hdf5`` one file at ``dest``.
     The collision events are written only when ``include_collision`` is set (in chunks).
+
+    The tables are the ones :func:`export_files` lists, and they are passed to the writer by
+    name, so it writes no other table; anything else it writes is refused.
     Returns ``{"written": [paths]}``."""
-    if fmt not in FORMATS:
-        raise BackendError(f"unknown format {fmt!r} (formats: {', '.join(FORMATS)})")
+    _check_format(fmt)
     opened = _open(folder, point)
     results = opened.results
-    include = None
-    if include_collision:
-        include = [name for name in _TABLE_NAMES if _present(results, name)]
-        if "collision" not in include:
-            raise BackendError("this run has no collision events (COLLISON.txt) to export")
+    names = _exported_names(results, include_collision)
+    if include_collision and "collision" not in names:
+        raise BackendError("this run has no collision events (COLLISON.txt) to export")
+    targets = _targets(fmt, Path(dest), names)
     spec = _point_spec(opened.point_dir)
     dest = Path(dest)
     try:
         if fmt == "hdf5":
-            written = [results.to_hdf5(dest, spec=spec, include=include)]
+            written = [results.to_hdf5(dest, spec=spec, include=names)]
         else:
             method = results.to_csv if fmt == "csv" else results.to_parquet
-            written = list(method(dest, spec=spec, include=include).values())
+            written = list(method(dest, spec=spec, include=names).values())
             if fmt == "csv":
                 written.append(str(dest / "metadata.yaml"))
     except ImportError as error:  # the message names the extra to install
         raise BackendError(str(error)) from error
     except (ValueError, OSError) as error:
         raise BackendError(f"cannot export to {dest}: {error}") from error
-    return {"written": [str(path) for path in written]}
+    written = [str(path) for path in written]
+    unlisted = sorted(realpaths_of(written) - realpaths_of(targets))
+    if unlisted:
+        raise BackendError(f"the export wrote files it did not list: {', '.join(unlisted)}")
+    return {"written": written}
+
+
+def realpaths_of(paths) -> set[str]:
+    return {os.path.realpath(path) for path in paths}
+
+
+def _check_format(fmt: str) -> None:
+    if fmt not in FORMATS:
+        raise BackendError(f"unknown format {fmt!r} (formats: {', '.join(FORMATS)})")
+
+
+def _targets(fmt: str, dest: Path, names: list[str]) -> list[str]:
+    """The files an export of the tables ``names`` writes: one per table in the folder ``dest``
+    (csv adds ``metadata.yaml``), or the one file ``dest`` for hdf5."""
+    if fmt == "hdf5":
+        return [str(dest)]
+    extension = "csv" if fmt == "csv" else "parquet"
+    files = [str(dest / f"{name}.{extension}") for name in names]
+    if fmt == "csv":
+        files.append(str(dest / "metadata.yaml"))
+    return files
 
 
 def _exported_names(results, include_collision: bool) -> list[str]:
@@ -329,18 +356,7 @@ def export_files(
     include_collision: bool = False,
     point: int | None = None,
 ) -> list[str]:
-    """The files :func:`export` would write, without writing any: ``csv`` and ``parquet`` name
-    ``<table>.csv`` (or ``.parquet``) and ``metadata.yaml`` inside the folder ``dest``, ``hdf5``
-    is the one file ``dest``."""
-    if fmt not in FORMATS:
-        raise BackendError(f"unknown format {fmt!r} (formats: {', '.join(FORMATS)})")
-    results = _open(folder, point).results
-    dest = Path(dest)
-    if fmt == "hdf5":
-        return [str(dest)]
-    extension = "csv" if fmt == "csv" else "parquet"
-    names = _exported_names(results, include_collision)
-    files = [str(dest / f"{name}.{extension}") for name in names]
-    if fmt == "csv":
-        files.append(str(dest / "metadata.yaml"))
-    return files
+    """The files :func:`export` would write, without writing any (the same list it writes from)."""
+    _check_format(fmt)
+    names = _exported_names(_open(folder, point).results, include_collision)
+    return _targets(fmt, Path(dest), names)
