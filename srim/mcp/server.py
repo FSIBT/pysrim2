@@ -71,13 +71,14 @@ class _State:
     async def run(self, ctx: Context, action: Callable[[Tools], Any]) -> Any:
         """``action`` on a worker thread, with this call's tools. A :class:`BackendError` is
         returned to the agent as a tool error with its message."""
+        abandoned = threading.Event()  # set when the client cancels this call
         tools = Tools(
             choose_backend(self.cwd, self.headless),
             self.log,
             self.approvals,
             self.settings,
             client=_client_name(ctx),
-            ask=_ask_for(ctx, self._one_at_a_time),
+            ask=_ask_for(ctx, self._one_at_a_time, abandoned),
             cores=None,  # the backend's own core count: the limit is the library's
         )
 
@@ -85,12 +86,18 @@ class _State:
             # one call at a time, except while a question waits for the user (see _ask_for)
             self._one_at_a_time.acquire()
             try:
+                if abandoned.is_set():
+                    raise BackendError("the call was cancelled, so nothing was done")
                 return action(tools)
             finally:
                 self._one_at_a_time.release()
 
         try:
-            return await anyio.to_thread.run_sync(work)
+            # the worker is not waited for on cancel: it gives up at its next question or check
+            return await anyio.to_thread.run_sync(work, abandon_on_cancel=True)
+        except anyio.get_cancelled_exc_class():
+            abandoned.set()
+            raise
         except BackendError as error:
             raise ToolError(str(error)) from error
         except Exception as error:  # a bug: the agent gets a short message, the log the traceback
@@ -306,7 +313,7 @@ def _client_name(ctx: Context) -> str:
     return f"{info.name} {info.version}".strip()
 
 
-def _ask_for(ctx: Context, one_at_a_time: threading.Lock) -> Ask | None:
+def _ask_for(ctx: Context, one_at_a_time: threading.Lock, abandoned: threading.Event) -> Ask | None:
     """The question to ask the user through the client, or None when the client cannot answer
     questions (it did not declare elicitation). Called on the event loop; the question itself
     runs in the worker thread that is making the call. The lock is released while the user
@@ -316,33 +323,48 @@ def _ask_for(ctx: Context, one_at_a_time: threading.Lock) -> Ask | None:
         return None
 
     def ask(text: str) -> Answer | None:
+        if abandoned.is_set():
+            return "denied"
         one_at_a_time.release()
         try:
-            return anyio.from_thread.run(_answer, ctx, text)
+            answer = anyio.from_thread.run(_answer, ctx, text, abandoned)
+        except BaseException:  # anyio's cancel of the question is not an Exception
+            if abandoned.is_set():  # the call was cancelled while the question was open
+                return "denied"
+            raise
         finally:
             one_at_a_time.acquire()
+        # an answer that comes after a cancel does not count: nothing is started for it
+        return "denied" if abandoned.is_set() else answer
 
     return ask
 
 
-async def _answer(ctx: Context, text: str) -> Answer | None:
-    """The user's answer to ``text``, through the client's elicitation. Only an explicit yes
-    allows; a refusal, a cancel, a malformed answer or no answer in time does not. None when
+async def _answer(ctx: Context, text: str, abandoned: threading.Event) -> Answer | None:
+    """The user's answer to ``text``, or "timed out" after :data:`ASK_SECONDS`. Set ``abandoned``
+    when the client cancels the call while the question is open: the worker then starts nothing."""
+    try:
+        with anyio.move_on_after(ASK_SECONDS) as timer:
+            answer = await _form_answer(ctx, text)
+        return "timed out" if timer.cancelled_caught else answer
+    except anyio.get_cancelled_exc_class():
+        abandoned.set()  # set here, on the loop, before the worker sees the cancel
+        raise
+
+
+async def _form_answer(ctx: Context, text: str) -> Answer | None:
+    """Only an explicit yes allows; a refusal, a cancel, a malformed answer does not. None when
     the protocol cannot carry the question mid-call (2026-07-28 and later have no back channel
     for server requests): the caller then uses the one-time code."""
-    with anyio.move_on_after(ASK_SECONDS):
-        try:
-            result = await ctx.elicit(
-                message=f"pysrim2 agent request: {text}. Allow it?", schema=Allow
-            )
-        except NoBackChannelError:
-            return None
-        except (MCPError, ValueError):  # the client refused the form, or answered badly: no
-            return "denied"
-        if isinstance(result, AcceptedElicitation) and result.data.allow:
-            return "allowed"
+    try:
+        result = await ctx.elicit(message=f"pysrim2 agent request: {text}. Allow it?", schema=Allow)
+    except NoBackChannelError:
+        return None
+    except (MCPError, ValueError):  # the client refused the form, or answered badly: no
         return "denied"
-    return "timed out"
+    if isinstance(result, AcceptedElicitation) and result.data.allow:
+        return "allowed"
+    return "denied"
 
 
 def main() -> int:

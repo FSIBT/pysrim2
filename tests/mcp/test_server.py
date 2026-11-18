@@ -9,6 +9,7 @@ connects the server in this process; the stdio test starts ``python -m srim.mcp.
 
 import asyncio
 import base64
+import contextlib
 import json
 import os
 import re
@@ -349,3 +350,35 @@ def test_a_pending_question_does_not_block_other_calls(tmp_path, fast):
         return status
 
     assert not asyncio.run(scenario()).is_error
+
+
+def test_a_call_cancelled_while_asked_starts_nothing_even_if_the_user_then_allows(tmp_path, fast):
+    async def scenario():
+        release = asyncio.Event()
+        asked = []
+
+        async def allow_later(context, params):
+            asked.append(params.message)
+            await release.wait()
+            return ElicitResult(action="accept", content={"allow": True})
+
+        srv, backend = server_for(tmp_path)
+        async with Client(srv, mode="legacy", elicitation_callback=allow_later) as client:
+            pending = asyncio.create_task(client.call_tool("start_run", {}))
+            while not asked:
+                await asyncio.sleep(0.05)
+            pending.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await pending
+            await asyncio.sleep(0.5)  # the cancellation reaches the server first
+            release.set()
+            for _ in range(200):  # the server logs its refusal once the answer is in
+                if any(e.tool == "start_run" for e in ActivityLog(activity_path()).last(5)):
+                    break
+                await asyncio.sleep(0.05)
+        return backend
+
+    backend = asyncio.run(scenario())
+    assert backend.list_runs("n15.yaml") == []
+    assert not (tmp_path / "n15-runs").exists()
+    assert ActivityLog(activity_path()).last(1)[0].answer == "denied"
