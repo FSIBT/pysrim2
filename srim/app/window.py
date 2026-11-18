@@ -554,9 +554,16 @@ class MainWindow(QMainWindow):
         if choice is None:
             return
         try:
-            self.run.start(choice)
+            self.start_run_with(choice)
         except SpecError as error:
             QMessageBox.warning(self, "Run", str(error))
+
+    def start_run_with(self, choice: ParallelChoice) -> None:
+        """Start a run of the setup as ``choice`` says, with no dialog. The setup must have a
+        file of its own (see :meth:`save_setup_path`). Raises :class:`~srim.spec.SpecError` for
+        a setup the library refuses, and :class:`RuntimeError` while a run goes; nothing starts
+        then. The Progress tab is shown when the run starts (see :attr:`run`)."""
+        self.run.start(choice)
 
     def _choose_parallel(self) -> ParallelChoice | None:
         """The choice for the run: the dialog when the run is long enough to offer it, else one
@@ -664,10 +671,15 @@ class MainWindow(QMainWindow):
         if not self._may_discard():
             return
         try:
-            self.document.open(path)
+            self.open_setup_path(path)
         except (SpecError, OSError) as error:
             QMessageBox.warning(self, "Open setup", str(error))
-            return
+
+    def open_setup_path(self, path) -> None:
+        """Open the setup file at ``path`` with no dialog. Raises :class:`~srim.spec.SpecError`
+        or :class:`OSError`, and :class:`RuntimeError` while a run goes; the document is then
+        unchanged. The caller asks about unsaved edits first (the menu does)."""
+        self.document.open(path)
         self._remember_setup(path)
 
     def _needs_new_file(self) -> bool:
@@ -722,10 +734,14 @@ class MainWindow(QMainWindow):
 
     def _save_to(self, path: Path) -> None:
         try:
-            self.document.save(path)
+            self.save_setup_path(path)
         except (SpecError, OSError) as error:
             QMessageBox.warning(self, "Save setup", str(error))
-            return
+
+    def save_setup_path(self, path) -> None:
+        """Save the setup to ``path`` with no dialog, and remember it. Raises
+        :class:`~srim.spec.SpecError` or :class:`OSError`; the setup's file is then unchanged."""
+        self.document.save(path)
         self._remember_setup(path)
 
     # --- setup and checks ----------------------------------------------------------
