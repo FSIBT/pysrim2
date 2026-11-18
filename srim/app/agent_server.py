@@ -256,6 +256,8 @@ class AgentServer(QObject):
         self._server = server
         self._token = token
         self._session += 1
+        self._queue = []
+        self._waiting = None
         server.newConnection.connect(self._accept_all)
 
     def stop(self) -> None:
@@ -468,6 +470,8 @@ class AgentServer(QObject):
             ok, payload = deferred.outcome
             self._reply_outcome(peer, request_id, ok, payload)
             return
+        if self._server is None:
+            return  # stopped inside the handler: nothing is waiting for this answer any more
         session = self._session
         self._waiting = deferred
         deferred.done.connect(

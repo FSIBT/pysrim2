@@ -696,3 +696,45 @@ def test_a_dropped_peers_queued_requests_never_reach_the_handler(qtbot, make_ser
     finish(qtbot, in_thread(talk))
     qtbot.waitUntil(lambda: server.connection_count == 0, timeout=5000)
     assert [method for method, _ in handler.calls] == ["big"]
+
+
+def test_the_server_works_after_a_stop_inside_a_handler(qtbot):
+    class StopInside:
+        def __init__(self):
+            self.server = None
+
+        def handle(self, method, params):
+            if method == "stop_then_wait":
+                self.server.stop()
+                return Deferred()  # never settled: the server is gone with its peer
+            return params
+
+    handler = StopInside()
+    server = AgentServer(handler)
+    handler.server = server
+    server.start()
+    try:
+        endpoint = read_endpoint()
+
+        def first():
+            channel, _hello = connect(endpoint)
+            channel.send(protocol.request(1, "stop_then_wait", {}))
+            channel.close()
+            return None
+
+        finish(qtbot, in_thread(first))
+        qtbot.waitUntil(lambda: not server.listening, timeout=5000)
+
+        server.start()
+        endpoint = read_endpoint()
+
+        def second():
+            channel, _hello = connect(endpoint)
+            channel.send(protocol.request(2, "echo", {"again": True}))
+            reply = channel.receive()
+            channel.close()
+            return reply
+
+        assert finish(qtbot, in_thread(second)) == {"id": 2, "result": {"again": True}}
+    finally:
+        server.stop()
