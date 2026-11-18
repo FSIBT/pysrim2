@@ -80,6 +80,10 @@ NOT_STARTED = rules.NOT_STARTED
 class AgentBackend:
     """The agent's handler for one window. See the module docstring."""
 
+    mode = "app"
+    #: opening a run folder loads its setup into the window, replacing the unsaved changes
+    open_run_replaces_setup = True
+
     def __init__(self, window):
         self.window = window
         self._written: set[str] = set()  # the keys of the files this backend saved

@@ -31,6 +31,8 @@ class Backend(Protocol):
 
     #: "headless" or "app"
     mode: str
+    #: True when :meth:`open_run` replaces the setup (and its unsaved changes), as the app's does
+    open_run_replaces_setup: bool
 
     def get_setup(self) -> dict:
         """``{"path", "setup", "problems", "modified"}``: the setup in the RunSpec dict layout,

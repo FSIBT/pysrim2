@@ -28,14 +28,18 @@ class FakeBackend:
 
     mode = "headless"
 
-    def __init__(self, seconds=60.0, srim_ready=True, unsaved=False, path="n15.yaml"):
+    def __init__(
+        self, seconds=60.0, srim_ready=True, unsaved=False, path="n15.yaml", replaces=False
+    ):
         self.seconds = seconds
         self.srim_ready = srim_ready
         self.unsaved = unsaved
         self.path = path
+        self.open_run_replaces_setup = replaces
         self.setup = {"ion": {"symbol": "N", "energy_keV": 40}, "scan": None}
         self.started = []
         self.deleted = []
+        self.opened = []
 
     def status(self):
         problem = None
@@ -57,6 +61,10 @@ class FakeBackend:
     def start_run(self, workers=None, batch_ions=None):
         self.started.append((workers, batch_ions))
         return {"folder": f"run-{len(self.started)}", "estimate": self.estimate(workers)}
+
+    def open_run(self, folder):
+        self.opened.append(folder)
+        return {"folder": folder, "finished": True, "points": []}
 
     def delete_run(self, folder):
         self.deleted.append(folder)
@@ -595,3 +603,38 @@ def test_a_setup_changed_while_the_user_was_asked_is_not_started(tmp_path):
         tools.start_run()
     assert backend.started == []
     assert tools.log.last(1)[0].answer == "setup changed"
+
+
+def test_opening_a_run_over_unsaved_changes_asks_when_it_replaces_the_setup(tmp_path):
+    backend = FakeBackend(unsaved=True, replaces=True)
+    asker = Asker("denied")
+    tools = make_tools(tmp_path, backend, ask=asker)
+    with pytest.raises(BackendError, match="did not allow"):
+        tools.open_run("runs/a")
+    assert asker.asked == ["discard the unsaved changes of n15.yaml"]
+    assert backend.opened == []
+
+
+def test_opening_a_run_over_unsaved_changes_goes_ahead_when_allowed(tmp_path):
+    backend = FakeBackend(unsaved=True, replaces=True)
+    tools = make_tools(tmp_path, backend, ask=Asker("allowed"))
+    tools.open_run("runs/a")
+    assert backend.opened == ["runs/a"]
+
+
+def test_opening_a_run_does_not_ask_when_it_keeps_the_setup(tmp_path):
+    backend = FakeBackend(unsaved=True, replaces=False)
+    tools = make_tools(tmp_path, backend, ask=no_asks)
+    tools.open_run("runs/a")
+    assert backend.opened == ["runs/a"]
+
+
+def test_opening_a_run_without_unsaved_changes_does_not_ask(tmp_path):
+    backend = FakeBackend(unsaved=False, replaces=True)
+    tools = make_tools(tmp_path, backend, ask=no_asks)
+    tools.open_run("runs/a")
+    assert backend.opened == ["runs/a"]
+
+
+def test_the_headless_backend_keeps_the_setup_when_it_opens_a_run():
+    assert HeadlessBackend.open_run_replaces_setup is False

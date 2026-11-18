@@ -107,10 +107,15 @@ class Tools:
             "list_runs", "list the runs", lambda _: self.backend.list_runs(setup_path)
         )
 
-    def open_run(self, folder: str) -> dict:
-        return self._call(
-            "open_run", f"open the run {folder}", lambda _: self.backend.open_run(folder)
-        )
+    def open_run(self, folder: str, confirm_code: str | None = None) -> dict:
+        def act(record: _Record) -> dict:
+            # opening a run folder replaces the setup in the app: its unsaved changes are asked
+            # about, as open_setup does (a headless backend keeps the setup)
+            if self.backend.open_run_replaces_setup:
+                self._discard_unsaved(record, "open_run", {"folder": folder}, confirm_code)
+            return self.backend.open_run(folder)
+
+        return self._call("open_run", f"open the run {folder}", act)
 
     def summary(self, folder: str | None = None, point: int | None = None) -> dict:
         return self._call(

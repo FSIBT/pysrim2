@@ -74,6 +74,8 @@ class HeadlessBackend:
     """
 
     mode = "headless"
+    #: opening a run folder keeps the setup (the app's replaces it: see :class:`Backend`)
+    open_run_replaces_setup = False
 
     def __init__(
         self,

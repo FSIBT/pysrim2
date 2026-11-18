@@ -207,9 +207,10 @@ def build_server(cwd: Path | None = None, *, headless: HeadlessBackend | None = 
         return await state.run(ctx, lambda t: t.list_runs(setup_path))
 
     @server.tool()
-    async def open_run(ctx: Context, folder: str) -> dict:
-        """Read an earlier run folder: whether it finished and its points."""
-        return await state.run(ctx, lambda t: t.open_run(folder))
+    async def open_run(ctx: Context, folder: str, confirm_code: str | None = None) -> dict:
+        """Read an earlier run folder: whether it finished and its points. In the app the
+        unsaved changes of the setup are asked about first (they are replaced)."""
+        return await state.run(ctx, lambda t: t.open_run(folder, confirm_code))
 
     @server.tool()
     async def delete_run(ctx: Context, folder: str, confirm_code: str | None = None) -> dict:

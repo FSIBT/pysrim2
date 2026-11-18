@@ -523,3 +523,88 @@ def test_an_agent_reaches_the_window_over_the_socket(qtbot, win):
     thread.join(5)
     assert outcome["reply"]["result"]["path"] == str(win.document.path)
     win.stop_background()
+
+
+# --- the tools over the app's backend: asking before a run folder replaces the setup --------
+
+
+class Awaited:
+    """The backend as the socket client sees it: a Deferred is waited for (the event loop runs),
+    and its error is raised. The tools call the methods directly, so this stands in for the
+    client here."""
+
+    def __init__(self, backend, qtbot):
+        self._backend, self._qtbot = backend, qtbot
+        self.mode = backend.mode
+        self.open_run_replaces_setup = backend.open_run_replaces_setup
+
+    def __getattr__(self, name):
+        method = getattr(self._backend, name)
+
+        def call(*args, **kwargs):
+            result = method(*args, **kwargs)
+            if isinstance(result, Deferred):
+                self._qtbot.waitUntil(lambda: result.settled, timeout=RUN_TIMEOUT)
+                ok, value = result.outcome
+                if not ok:
+                    raise value
+                return value
+            return result
+
+        return call
+
+
+class Answers:
+    """The client's question: records each text and answers ``answer``."""
+
+    def __init__(self, answer):
+        self.answer = answer
+        self.asked: list[str] = []
+
+    def __call__(self, text):
+        self.asked.append(text)
+        return self.answer
+
+
+def tools_for(qtbot, win, tmp_path, answer):
+    from srim.mcp.activity import ActivityLog
+    from srim.mcp.approval import ApprovalCodes
+    from srim.mcp.tools import Tools
+
+    asks = Answers(answer)
+    tools = Tools(
+        Awaited(AgentBackend(win), qtbot),
+        ActivityLog(tmp_path / "activity.jsonl"),
+        ApprovalCodes(),
+        AppSettings(),
+        "test client 1.0",
+        ask=asks,
+    )
+    return tools, asks
+
+
+def test_opening_a_run_over_unsaved_edits_asks_and_keeps_them_when_refused(qtbot, win, tmp_path):
+    folder = run_once(qtbot, win)
+    win.document.edit(lambda doc: doc.__setitem__("number_ions", 300))  # the user's edit
+    tools, asks = tools_for(qtbot, win, tmp_path, "denied")
+    with pytest.raises(BackendError, match="did not allow"):
+        tools.open_run(str(folder))
+    assert asks.asked == [f"discard the unsaved changes of {win.document.path}"]
+    assert win.document.doc["number_ions"] == 300  # the edit survives
+    assert win.run.folder == folder
+
+
+def test_opening_a_run_over_unsaved_edits_replaces_the_setup_when_allowed(qtbot, win, tmp_path):
+    folder = run_once(qtbot, win)
+    win.document.edit(lambda doc: doc.__setitem__("number_ions", 300))
+    tools, asks = tools_for(qtbot, win, tmp_path, "allowed")
+    tools.open_run(str(folder))
+    assert len(asks.asked) == 1
+    assert win.document.doc["number_ions"] == 200  # the run's setup, as saved
+    assert not win.document.is_modified
+
+
+def test_the_app_backend_declares_that_opening_a_run_replaces_the_setup(win):
+    backend = AgentBackend(win)
+    assert backend.open_run_replaces_setup is True
+    assert backend.mode == "app"
