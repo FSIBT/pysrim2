@@ -7,9 +7,14 @@ fill in what is still missing (in a copy) so that a half-made setup can be check
 and redo need the app.
 """
 
+import contextlib
+import io
 import os
 import shutil
-from collections.abc import Callable
+import sys
+import tempfile
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from copy import deepcopy
 from datetime import UTC, datetime
 from pathlib import Path
@@ -371,15 +376,17 @@ class HeadlessBackend:
     def install_step(self, component: str) -> dict:
         steps = self._steps([component])
         log: list[str] = []
-        # the steps' lines are kept, not printed: stdout carries the MCP protocol
-        outcome = run_steps(
-            steps,
-            yes=False,
-            confirm=None,
-            say=log.append,
-            warn=log.append,
-            admin_hint="run these in a terminal yourself, then check again:",
-        )
+        # stdout carries the MCP protocol: what the steps print, and what their child processes
+        # write to the terminal, goes into the log instead
+        with _output_captured(log):
+            outcome = run_steps(
+                steps,
+                yes=False,
+                confirm=None,
+                say=log.append,
+                warn=log.append,
+                admin_hint="run these in a terminal yourself, then check again:",
+            )
         commands = [command for _, owed in outcome.admin_skipped for command in owed]
         return {
             "component": component,
@@ -490,6 +497,43 @@ class HeadlessBackend:
 
 
 # --- helpers ---------------------------------------------------------------------------
+
+
+@contextmanager
+def _output_captured(lines: list[str]) -> Iterator[None]:
+    """Keep what is written to stdout and stderr meanwhile out of the terminal.
+
+    Python-level writes go to a buffer, and file descriptors 1 and 2 (which child processes
+    inherit) go to a temporary file. Both are appended to ``lines`` when the block ends, and the
+    descriptors are restored even when the block raises.
+    """
+    buffer = io.StringIO()
+    with tempfile.TemporaryFile() as sink:
+        _flush_streams()
+        saved: list[tuple[int, int]] = []
+        try:
+            for fd in (1, 2):
+                saved.append((fd, os.dup(fd)))
+            for fd, _ in saved:
+                os.dup2(sink.fileno(), fd)
+            with contextlib.redirect_stdout(buffer), contextlib.redirect_stderr(buffer):
+                yield
+        finally:
+            _flush_streams()
+            for fd, original in saved:
+                os.dup2(original, fd)
+                os.close(original)
+            sink.seek(0)
+            written = sink.read().decode("utf-8", errors="replace")
+            text = buffer.getvalue() + written
+            lines.extend(line for line in text.splitlines() if line.strip())
+
+
+def _flush_streams() -> None:
+    for stream in (sys.stdout, sys.stderr, sys.__stdout__, sys.__stderr__):
+        with contextlib.suppress(Exception):
+            if stream is not None:
+                stream.flush()
 
 
 def _doctor_checks() -> list[dict]:

@@ -4,6 +4,9 @@ The checks, the installer steps and the default components are injected, so noth
 machine, runs wine or installs anything.
 """
 
+import subprocess
+import sys
+
 import pytest
 from test_results import run_folder
 
@@ -253,3 +256,27 @@ def test_a_file_the_session_did_not_write_is_a_replacement(tmp_path):
     backend = HeadlessBackend(tmp_path)
     assert backend.would_replace(str(tmp_path / "out" / "ioniz.csv")) is True
     assert backend.would_replace(str(tmp_path / "out" / "other.csv")) is False
+
+
+def test_a_step_that_prints_or_spawns_a_process_writes_nothing_to_fd_1(tmp_path, capfd):
+    # The MCP stdio transport owns file descriptor 1: a step's own print, and the output of a
+    # child process it starts (which inherits fd 1), are captured into the log instead.
+    def noisy():
+        print("python says hi")
+        subprocess.run([sys.executable, "-c", "print('child says hi')"], check=True)
+
+    noisy_step = Step(
+        name="noisy",
+        summary="noisy summary",
+        check=lambda: False,
+        commands=lambda: ["do it"],
+        run=noisy,
+    )
+    backend = HeadlessBackend(tmp_path, plan_steps=fake_steps({"srim": [noisy_step]}))
+    out = backend.install_step("srim")
+    captured = capfd.readouterr()
+    assert "says hi" not in captured.out and captured.out == ""
+    assert out["ran"] == ["noisy"]
+    text = "\n".join(out["log"])
+    assert "python says hi" in text
+    assert "child says hi" in text
