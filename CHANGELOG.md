@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `pysrim2 mcp` runs an MCP server over stdio for an AI agent: it sets up, runs and reads pysrim2 runs without the app (undo and redo need the app), asks the user first before a long or large run, a delete or a save that replaces a file, and keeps an activity log. It needs the new `mcp` extra (`pysrim2[mcp]`, also in `app` and `all`); without it, the command says how to install the extra.
+- `pysrim2 mcp` runs an MCP server over stdio for an AI agent: it sets up, runs and reads pysrim2 runs without the app (undo and redo need the app), asks the user first before a long or large run, a delete or a save that replaces a file, and keeps an activity log. It needs the new `mcp` extra (`pysrim2[mcp]`, also in `app` and `all`); without it, the command says how to install the extra. `pysrim2 mcp --print-config CLIENT` prints the config that connects Claude Code, Codex, Gemini CLI, Cursor, VS Code or any other stdio client to the server (the absolute path of the installed `pysrim2`), and says which file it goes in.
 - The agent's ask-first limits are settings in `settings.json`: `agent_max_minutes` (a run estimated longer needs the user's OK, default 30), `agent_max_core_fraction` (more workers than this share of the cores need the OK, default 0.5) and `agent_socket` (default true).
 
 ### Changed
