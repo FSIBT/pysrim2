@@ -8,7 +8,6 @@ import threading
 
 import pytest
 
-from srim.mcp import protocol
 from srim.mcp.backend import BackendError, NeedsApp
 from srim.mcp.protocol import (
     MAX_LINE,
@@ -108,7 +107,11 @@ def test_a_message_over_the_limit_is_not_sent():
 
 
 def test_parse_request_reads_id_method_and_params():
-    assert parse_request({"id": 4, "method": "status", "params": {"a": 1}}) == (4, "status", {"a": 1})
+    assert parse_request({"id": 4, "method": "status", "params": {"a": 1}}) == (
+        4,
+        "status",
+        {"a": 1},
+    )
 
 
 def test_parse_request_defaults_params_to_an_empty_dict():
@@ -133,7 +136,9 @@ def test_a_bad_request_is_a_protocol_error(message):
 
 def test_hello_carries_the_token_client_and_protocol():
     message = hello_request(TOKEN, "Codex 1.2")
-    assert message == {"hello": {"token": TOKEN, "client": "Codex 1.2", "protocol": PROTOCOL_VERSION}}
+    assert message == {
+        "hello": {"token": TOKEN, "client": "Codex 1.2", "protocol": PROTOCOL_VERSION}
+    }
     assert check_hello(message) == (TOKEN, "Codex 1.2")
 
 
@@ -291,3 +296,40 @@ def test_deep_nesting_cannot_be_encoded():
         deep = [deep]
     with pytest.raises(ValueError):
         encode({"value": deep})
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the POSIX socket test")
+def test_a_receive_with_no_answer_times_out(short_dir):
+    import time
+
+    path = os.path.join(short_dir, "t.sock")
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(path)
+    server.listen(1)
+    stream = socket_connect(path, timeout=2.0)
+    conn, _ = server.accept()  # the peer is there, and says nothing
+    channel = Channel(stream, timeout=0.2)
+    started = time.monotonic()
+    with pytest.raises(TimeoutError):
+        channel.receive()
+    assert time.monotonic() - started < 5
+    channel.close()
+    conn.close()
+    server.close()
+
+
+def test_a_receive_with_a_timeout_still_returns_what_is_there():
+    class Ready:
+        def __init__(self):
+            self.chunks = [b'{"id": 1}\n']
+
+        def read(self, size):
+            return self.chunks.pop(0) if self.chunks else b""
+
+        def wait_readable(self, timeout):
+            return True
+
+        def close(self):
+            pass
+
+    assert Channel(Ready(), timeout=0.2).receive() == {"id": 1}

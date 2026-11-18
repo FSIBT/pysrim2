@@ -18,7 +18,9 @@ A malformed request is answered with ``id`` null and a ``BackendError`` naming t
 
 import json
 import os
+import select
 import socket
+import time
 from collections import deque
 from typing import Any
 
@@ -159,7 +161,7 @@ def exception_for(error: dict) -> BackendError:
 
 
 class Stream:
-    """A connected byte stream to the app: ``read``, ``write``, ``settimeout`` and ``close``."""
+    """A connected byte stream to the app: ``read``, ``write``, ``wait_readable`` and ``close``."""
 
     def __init__(self, handle, sock: socket.socket | None = None):
         self._handle = handle
@@ -173,10 +175,18 @@ class Stream:
         """Write some of ``data``; the count written (the caller writes the rest)."""
         return self._handle.write(data)
 
-    def settimeout(self, seconds: float | None) -> None:
-        """Limit how long a read or write waits (POSIX sockets only; a no-op for a pipe)."""
-        if self._sock is not None:
-            self._sock.settimeout(seconds)
+    def wait_readable(self, seconds: float | None) -> bool:
+        """True when a read will not wait: data, or the end of the stream, is there.
+
+        False when ``seconds`` pass first (None waits for ever). POSIX uses ``select``; on Windows
+        the named pipe is polled with ``PeekNamedPipe``, so a read is never started on an empty
+        pipe. Neither changes the socket's own timeout.
+        """
+        if os.name == "nt":
+            return _pipe_readable(self._handle, seconds)
+        target = self._sock if self._sock is not None else self._handle
+        ready, _, _ = select.select([target], [], [], seconds)
+        return bool(ready)
 
     def close(self) -> None:
         try:
@@ -186,11 +196,46 @@ class Stream:
                 self._sock.close()
 
 
+def _pipe_readable(handle, seconds: float | None) -> bool:
+    """Windows: poll a named pipe's buffer until it has bytes or ``seconds`` pass.
+
+    ``PeekNamedPipe`` reads nothing. A pipe that is broken counts as readable, so the read that
+    follows reports the end of the stream instead of waiting.
+    """
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    peek = kernel32.PeekNamedPipe
+    peek.argtypes = [
+        wintypes.HANDLE,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD),
+        ctypes.POINTER(wintypes.DWORD),
+        ctypes.POINTER(wintypes.DWORD),
+    ]
+    peek.restype = wintypes.BOOL
+    osfhandle = msvcrt.get_osfhandle(handle.fileno())
+    deadline = None if seconds is None else time.monotonic() + seconds
+    while True:
+        available = wintypes.DWORD(0)
+        if not peek(osfhandle, None, 0, None, ctypes.byref(available), None):
+            return True
+        if available.value:
+            return True
+        if deadline is not None and time.monotonic() >= deadline:
+            return False
+        time.sleep(0.01)
+
+
 def socket_connect(name: str, timeout: float = 2.0) -> Stream:
     """Connect to the app's socket ``name``. Raises ``OSError`` when it cannot be reached.
 
     On POSIX ``name`` is the socket's path (a Unix socket). On Windows it is the pipe's name, or
-    the full ``\\\\.\\pipe\\`` path. ``timeout`` limits the connect only; see :meth:`Stream.settimeout`.
+    the full ``\\\\.\\pipe\\`` path. ``timeout`` limits the connect only; a receive takes its
+    own deadline (see :class:`Channel`).
     """
     if os.name == "nt":
         path = name if name.startswith("\\\\.\\pipe\\") else rf"\\.\pipe\{name}"
@@ -209,11 +254,13 @@ def socket_connect(name: str, timeout: float = 2.0) -> Stream:
 class Channel:
     """Messages over a stream: send one, receive the next (reads a chunk at a time)."""
 
-    def __init__(self, stream, max_line: int = MAX_LINE):
+    def __init__(self, stream, max_line: int = MAX_LINE, timeout: float | None = None):
         self.stream = stream
         self._reader = LineReader(max_line)
         self._pending: deque[dict] = deque()
         self._error: ProtocolError | None = None
+        #: seconds a :meth:`receive` may wait for the next message (None waits for ever)
+        self.timeout = timeout
 
     def send(self, message: dict) -> None:
         """Send ``message``. Raises :class:`ProtocolError` (not sent) or ``ConnectionError``."""
@@ -225,11 +272,18 @@ class Channel:
             data = data[sent:]
 
     def receive(self) -> dict:
-        """The next message. Raises ``ConnectionError`` at the end of the stream and
-        :class:`ProtocolError` for a bad line (after the good ones read with it)."""
+        """The next message. Raises ``ConnectionError`` at the end of the stream,
+        :class:`ProtocolError` for a bad line (after the good ones read with it), and
+        ``TimeoutError`` when ``timeout`` passes with nothing to read. After a timeout the
+        stream may hold part of a message, so the caller closes it."""
+        deadline = None if self.timeout is None else time.monotonic() + self.timeout
         while not self._pending:
             if self._error is not None:
                 raise self._error
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or not self.stream.wait_readable(remaining):
+                    raise TimeoutError("the app did not answer in time")
             data = self.stream.read(CHUNK)
             if not data:
                 raise ConnectionError("the connection closed")
