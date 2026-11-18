@@ -573,3 +573,11 @@ def test_a_code_for_one_setup_file_does_not_redeem_for_another_with_the_same_con
     tools.open_setup("b.yaml")
     with pytest.raises(ApprovalNeeded):
         tools.delete_run("a-runs/20261115T000000Z", confirm_code=info.value.code)
+
+
+def test_a_cores_override_can_only_tighten_the_core_limit(tmp_path):
+    # the backend sees eight cores: a larger override must not allow five workers unasked
+    tools = make_tools(tmp_path, FakeBackend(seconds=60), ask=Asker("denied"), cores=16)
+    with pytest.raises(BackendError, match="did not allow"):
+        tools.start_run(workers=5)
+    assert tools.log.last(1)[0].ask == "start the run: it uses 5 of 8 cores (limit 4)"

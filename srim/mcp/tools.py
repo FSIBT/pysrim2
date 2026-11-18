@@ -267,7 +267,8 @@ class Tools:
         if setup_path is None:
             raise BackendError("save the setup first: save_setup(path)")
         estimate = self.backend.estimate(args["workers"], batch_ions)
-        cores = self._cores if self._cores is not None else estimate["cores"]
+        # the override can only tighten the limit: it never counts more cores than the backend
+        cores = estimate["cores"] if self._cores is None else min(self._cores, estimate["cores"])
         request = RunRequest(
             seconds=estimate["seconds"],
             workers=estimate["workers"],
