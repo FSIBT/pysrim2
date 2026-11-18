@@ -7,8 +7,8 @@ The plan is a JSON file named by ``PYSRIM2_FAKE_PLAN``: ``{component: [step, ...
 appends the step's name to the file named by ``PYSRIM2_FAKE_CALLS``, so a test can see what ran,
 in the child too.
 
-``plan`` is the function both sides use (the child through ``PYSRIM2_INSTALL_PLANNER``, the
-parent as the backend's ``plan_steps``), so they agree on the steps.
+``plan`` is the function both sides use: the parent as the backend's ``plan_steps``, and the
+child by name (``HeadlessBackend`` sends ``install_fakes:plan`` in the request), so they agree.
 """
 
 import json
