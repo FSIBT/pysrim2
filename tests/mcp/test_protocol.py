@@ -418,3 +418,13 @@ def test_a_socket_of_another_user_is_refused_before_connecting(short_dir, monkey
             socket_connect(path, timeout=1.0)
     finally:
         server.close()
+
+
+def test_a_long_partial_line_is_not_scanned_again_on_each_read():
+    reader = LineReader()
+    chunk = b"x" * 1024
+    for _ in range(4096):  # 4 MiB with no newline yet
+        reader.feed(chunk)
+        assert reader._scanned == len(reader._buffer)  # only the new bytes were searched
+    with pytest.raises(ProtocolError):  # the finished line is not JSON, found after all of it
+        reader.feed(b"\n")

@@ -71,6 +71,8 @@ class LineReader:
     def __init__(self, max_line: int = MAX_LINE):
         self.max_line = max_line
         self._buffer = bytearray()
+        #: how many bytes at the start of ``_buffer`` are known to hold no newline
+        self._scanned = 0
         self._broken: ProtocolError | None = None
 
     def set_max_line(self, max_line: int) -> None:
@@ -83,9 +85,10 @@ class LineReader:
             raise ProtocolError("the connection had a protocol error and takes no more input")
         self._buffer += data
         messages: list[dict] = []
-        start = 0
+        start = 0  # where the line being read begins
+        search = self._scanned  # bytes before this hold no newline: they were searched already
         while True:
-            end = self._buffer.find(b"\n", start)
+            end = self._buffer.find(b"\n", search)
             if end < 0:
                 if len(self._buffer) - start > self.max_line:
                     self._fail("a line is longer than the protocol allows", messages)
@@ -93,11 +96,11 @@ class LineReader:
             if end - start > self.max_line:
                 self._fail("a line is longer than the protocol allows", messages)
             line = bytes(self._buffer[start:end]).rstrip(b"\r")
-            start = end + 1
-            if not line.strip():
-                continue
-            messages.append(self._decode(line, messages))
+            start = search = end + 1
+            if line.strip():
+                messages.append(self._decode(line, messages))
         del self._buffer[:start]
+        self._scanned = len(self._buffer)
         return messages
 
     def _decode(self, line: bytes, messages: list[dict]) -> dict:
