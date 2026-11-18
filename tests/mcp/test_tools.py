@@ -479,7 +479,7 @@ def test_a_run_that_would_save_over_a_foreign_file_asks_first(tmp_path):
     with pytest.raises(BackendError, match="did not allow"):
         tools.start_run()
     assert asker.asked == [
-        f"save the unsaved changes into {tmp_path / 'theirs.yaml'}, "
+        f"start the run: save the unsaved changes into {tmp_path / 'theirs.yaml'}, "
         "a file this session did not create"
     ]
     assert (tmp_path / "theirs.yaml").read_text(encoding="utf-8") == before
