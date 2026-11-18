@@ -130,34 +130,11 @@ class HeadlessBackend:
     # --- changing the setup ---------------------------------------------------------
 
     def set_values(self, assignments: list[str]) -> dict:
-        spec_items, scan_items = [], []
-        for item in assignments:
-            key = item.partition("=")[0].strip()
-            (scan_items if key.startswith("scan.") else spec_items).append(item)
-        new = deepcopy(self._doc)
-        if spec_items:
-            new = self._with_spec_values(new, spec_items)
-        for item in scan_items:
-            _set_scan_value(new, item)
-        self._keep(new)
+        self._keep(with_values(deepcopy(self._doc), assignments))
         return self.get_setup()
 
     def set_section(self, name: str, value: Any) -> dict:
-        new = deepcopy(self._doc)
-        if name == "ion":
-            new["ion"] = _mapping(value, "ion")
-        elif name == "target":
-            if not isinstance(value, list):
-                raise BackendError("target must be a list of layers")
-            new["target"] = [_mapping(layer, "a layer of target") for layer in value]
-            _set_units(new["target"])
-        elif name == "run":
-            _set_run(new, _mapping(value, "run"))
-        elif name == "scan":
-            _set_scan_section(new, value)
-        else:
-            raise BackendError(f"unknown section {name!r} (allowed: {', '.join(SECTIONS)})")
-        self._keep(new)
+        self._keep(with_section(deepcopy(self._doc), name, value))
         return self.get_setup()
 
     # --- files -----------------------------------------------------------------------
@@ -253,22 +230,7 @@ class HeadlessBackend:
             result, finished = read_run_folder(target)
         except Exception as error:  # an unreadable scan is refused with its message
             raise BackendError(f"cannot read {target}: {error}") from error
-        all_points = result.scan.points()
-        index_of = {point.id: point.index for point in all_points}
-        points = []
-        for _, row in result.table.iterrows():
-            index = index_of[row["id"]]
-            path = row.get("path")
-            points.append(
-                {
-                    "index": index,
-                    "status": row["status"],
-                    "path": path if isinstance(path, str) else None,
-                    "params": dict(all_points[index].params),
-                }
-            )
-        points.sort(key=lambda point: point["index"])
-        return {"folder": str(target), "finished": finished, "points": points}
+        return {"folder": str(target), "finished": finished, "points": run_points(result)}
 
     def delete_run(self, folder: str) -> dict:
         target = self._resolve(folder)
@@ -397,32 +359,11 @@ class HeadlessBackend:
         return self._path.parent if self._path is not None else self._cwd
 
     def _plan(self, workers: int | None, batch_ions: int | None) -> tuple[Scan, int]:
-        """The library's scan of the setup, and its workers (the default when None).
-
-        Raises :class:`BackendError` for an incomplete setup or one the library refuses.
-        """
-        workers = _whole(workers, "workers")
-        batch_ions = _whole(batch_ions, "batch_ions")
-        base = self._base_dir()
-        blocking = [p.text for p in problems(self._doc, base) if p.blocking]
-        if blocking:
-            raise BackendError("the setup is not complete: " + "; ".join(blocking))
-        try:
-            scan = plan_run(self._doc, base, ParallelChoice(batch_ions=batch_ions))
-        except SpecError as error:
-            raise BackendError(str(error)) from error
-        if workers is None:
-            workers = default_workers(scan_units(scan), self._cores)
-        return scan, workers
+        """:func:`plan_setup` for this setup, with this backend's cores."""
+        return plan_setup(self._doc, self._base_dir(), workers, batch_ions, self._cores)
 
     def _estimate(self, scan: Scan, workers: int) -> dict:
-        return {
-            "seconds": estimate_seconds(scan, self.settings.ions_per_s, workers),
-            "workers": workers,
-            "cores": self._cores,
-            "units": scan_units(scan),
-            "ions": _total_ions(scan),
-        }
+        return estimate_of(scan, workers, self.settings.ions_per_s, self._cores)
 
     def _runs_dir(self, setup_path: str | None) -> Path:
         """The ``<stem>-runs`` folder of the setup at ``setup_path`` (the current one when None)."""
@@ -462,15 +403,6 @@ class HeadlessBackend:
             raise BackendError('components must be a list of component names, e.g. ["srim"]')
         return components
 
-    def _with_spec_values(self, doc: dict, items: list[str]) -> dict:
-        """``doc`` with the ``dotted.key=value`` items applied to its spec, app keys kept."""
-        data = clean(doc)
-        try:
-            apply_overrides(data, items)
-        except SpecError as error:
-            raise BackendError(str(error)) from error
-        return _keep_app_keys(data, doc)
-
     def _keep(self, new: dict) -> None:
         """Check ``new`` with the library, then make it the setup. Raises :class:`BackendError`."""
         _check(new, self._base_dir())
@@ -500,6 +432,109 @@ def srim_problem(checks: list[dict]) -> str | None:
         fix = check.get("fix")
         return f"{text}. Fix: {fix}" if fix else text
     return None
+
+
+def with_values(doc: dict, assignments: list[str]) -> dict:
+    """``doc`` (changed in place, and returned) with the ``dotted.key=value`` assignments applied:
+    spec keys to its spec, ``scan.*`` keys to its scan. Not checked: see :func:`_check`."""
+    spec_items, scan_items = [], []
+    for item in assignments:
+        key = item.partition("=")[0].strip()
+        (scan_items if key.startswith("scan.") else spec_items).append(item)
+    new = doc
+    if spec_items:
+        new = spec_with_values(new, spec_items)
+    for item in scan_items:
+        _set_scan_value(new, item)
+    return new
+
+
+def with_section(doc: dict, name: str, value: Any) -> dict:
+    """``doc`` (changed in place, and returned) with the section ``name`` set to ``value``.
+
+    Raises :class:`BackendError` for a section or value it does not take. Not checked: see
+    :func:`_check`.
+    """
+    new = doc
+    if name == "ion":
+        new["ion"] = _mapping(value, "ion")
+    elif name == "target":
+        if not isinstance(value, list):
+            raise BackendError("target must be a list of layers")
+        new["target"] = [_mapping(layer, "a layer of target") for layer in value]
+        _set_units(new["target"])
+    elif name == "run":
+        _set_run(new, _mapping(value, "run"))
+    elif name == "scan":
+        _set_scan_section(new, value)
+    else:
+        raise BackendError(f"unknown section {name!r} (allowed: {', '.join(SECTIONS)})")
+    return new
+
+
+def spec_with_values(doc: dict, items: list[str]) -> dict:
+    """``doc`` with the ``dotted.key=value`` items applied to its spec, app keys kept."""
+    data = clean(doc)
+    try:
+        apply_overrides(data, items)
+    except SpecError as error:
+        raise BackendError(str(error)) from error
+    return _keep_app_keys(data, doc)
+
+
+def plan_setup(
+    doc: dict, base: Path, workers: int | None, batch_ions: int | None, cores: int
+) -> tuple[Scan, int]:
+    """The library's scan of the setup ``doc`` (read from ``base``), and its workers (the default
+    for ``cores`` when None).
+
+    Raises :class:`BackendError` for an incomplete setup or one the library refuses.
+    """
+    workers = _whole(workers, "workers")
+    batch_ions = _whole(batch_ions, "batch_ions")
+    blocking = [p.text for p in problems(doc, base) if p.blocking]
+    if blocking:
+        raise BackendError("the setup is not complete: " + "; ".join(blocking))
+    try:
+        scan = plan_run(doc, base, ParallelChoice(batch_ions=batch_ions))
+    except SpecError as error:
+        raise BackendError(str(error)) from error
+    if workers is None:
+        workers = default_workers(scan_units(scan), cores)
+    return scan, workers
+
+
+def estimate_of(scan: Scan, workers: int, ions_per_s: dict, cores: int) -> dict:
+    """The estimate of a run of ``scan`` with ``workers``: ``{"seconds", "workers", "cores",
+    "units", "ions"}``."""
+    return {
+        "seconds": estimate_seconds(scan, ions_per_s, workers),
+        "workers": workers,
+        "cores": cores,
+        "units": scan_units(scan),
+        "ions": _total_ions(scan),
+    }
+
+
+def run_points(result) -> list[dict]:
+    """The points of a run's result in index order: ``{"index", "status", "path", "params"}``
+    each (``path`` is None for a point without outputs)."""
+    all_points = result.scan.points()
+    index_of = {point.id: point.index for point in all_points}
+    points = []
+    for _, row in result.table.iterrows():
+        index = index_of[row["id"]]
+        path = row.get("path")
+        points.append(
+            {
+                "index": index,
+                "status": row["status"],
+                "path": path if isinstance(path, str) else None,
+                "params": dict(all_points[index].params),
+            }
+        )
+    points.sort(key=lambda point: point["index"])
+    return points
 
 
 def _planner_ref(plan: Callable[[list[str]], list[Step]]) -> str:
