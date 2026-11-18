@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 
 import srim
 from srim.app import DOCS_URL
+from srim.app.agent_server import AgentServer, AgentSocketError, UnavailableBackend
 from srim.app.beam_tab import BeamTab
 from srim.app.document import DocumentModel
 from srim.app.geometry import GeometryTab
@@ -94,6 +95,7 @@ class MainWindow(QMainWindow):
         parent=None,
         document: DocumentModel | None = None,
         run_runner=None,
+        agent_handler=None,
     ):
         super().__init__(parent)
         self.settings = settings
@@ -109,6 +111,12 @@ class MainWindow(QMainWindow):
         #: a notebook's start problem or failure; kept until the next start (a setup refresh
         #: replaces the setup messages, not this one)
         self._notebook_message: Guidance | None = None
+        #: the agent socket: listening for agents while it runs (see srim.app.agent_server)
+        self.agent = AgentServer(
+            agent_handler if agent_handler is not None else UnavailableBackend(), parent=self
+        )
+        #: why the agent socket did not start (None when it runs or was never asked to)
+        self._agent_message: Guidance | None = None
         #: True while a PDF export runs (one at a time; its entries are greyed out meanwhile)
         self._pdf_busy = False
         #: the export's problem (None when it can run), kept in a tuple once looked up; see
@@ -767,7 +775,21 @@ class MainWindow(QMainWindow):
         blocking = [problem for problem in problems if problem.blocking]
         notes = [problem for problem in problems if not problem.blocking]
         notebook = [self._notebook_message] if self._notebook_message is not None else []
-        self.status.set_messages([*notebook, *self._setup_messages, *blocking, *notes])
+        agent = [self._agent_message] if self._agent_message is not None else []
+        self.status.set_messages([*notebook, *agent, *self._setup_messages, *blocking, *notes])
+
+    def start_agent_socket(self) -> None:
+        """Listen for agents (the socket and the discovery file). A failure is shown in the status
+        bar; the window works without the socket."""
+        if self._closing or self.agent.listening:
+            return
+        try:
+            self.agent.start()
+        except AgentSocketError as error:
+            self._agent_message = Guidance(f"Agents cannot connect: {error}")
+        else:
+            self._agent_message = None
+        self._show_status()
 
     def refresh_checks(self) -> None:
         """Run the installation checks in a thread and show what is not ready."""
@@ -834,5 +856,6 @@ class MainWindow(QMainWindow):
         Called when the window closes and when the application quits (see
         :func:`srim.app.main.stop_on_quit`). Safe to call more than once.
         """
+        self.agent.stop()
         self._stop_notebook()
         stop_exports()
