@@ -793,3 +793,31 @@ def test_a_pending_answer_is_cancelled_when_its_peer_goes(qtbot, make_server):
     assert handler.pending[0].cancelled
     handler.pending[0].resolve("late")
     assert handler.pending[0].outcome is None
+
+
+def test_queued_request_bytes_are_capped_per_connection(qtbot, make_server):
+    handler = StandIn()
+    make_server(handler, max_queued_bytes=10_000)
+    endpoint = read_endpoint()
+    blob = "x" * 6000
+
+    def talk():
+        channel, _hello = connect(endpoint)
+        send_raw(
+            channel.stream,
+            encode(protocol.request(1, "later", {}))
+            + encode(protocol.request(2, "echo", {"blob": blob}))
+            + encode(protocol.request(3, "echo", {"blob": blob})),
+        )
+        replies = [channel.receive(), channel.receive(), channel.receive()]
+        closed = ends(channel)
+        return replies, closed
+
+    outcome = in_thread(talk)
+    qtbot.waitUntil(lambda: len(handler.pending) > 0, timeout=5000)
+    handler.pending[0].resolve("late")
+    replies, closed = finish(qtbot, outcome)
+    assert [reply.get("id") for reply in replies[:2]] == [1, 2]
+    assert replies[2]["id"] is None and "too large" in replies[2]["error"]["message"]
+    assert closed
+    assert [method for method, _ in handler.calls] == ["later", "echo"]

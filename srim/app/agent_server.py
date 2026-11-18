@@ -58,6 +58,8 @@ CLOSE_GRACE_MS = 2000
 MAX_CONNECTIONS = 16
 #: requests of one connection that may wait for their turn
 MAX_WAITING = 32
+#: the bytes of requests of one connection that may wait for their turn (two longest lines)
+MAX_QUEUED_BYTES = 2 * MAX_LINE
 #: the reply to a hello that is refused (the token is never in it)
 TOKEN_REFUSED_TEXT = "the token is not this app's"
 
@@ -187,6 +189,15 @@ def _listen(server: QLocalServer) -> None:
         raise AgentSocketError(f"the agent socket could not start: {server.errorString()}")
 
 
+def _request_size(message: dict) -> int:
+    """The bytes a request counts for while it waits: its encoded length (a request that cannot
+    be encoded within the line limit counts as too large)."""
+    try:
+        return len(encode(message))
+    except ProtocolError:
+        return MAX_LINE + 1
+
+
 def _timer(parent: QObject, single_shot: bool = True) -> QTimer:
     timer = QTimer(parent)
     timer.setSingleShot(single_shot)
@@ -200,6 +211,8 @@ class _Job:
     peer: "_Peer"
     message: dict | None = None
     refusal: str | None = None
+    #: the bytes the request counts for while it waits
+    size: int = 0
 
 
 class _Peer:
@@ -215,8 +228,9 @@ class _Peer:
         self.closing = False
         #: the socket has disconnected
         self.gone = False
-        #: requests of this connection waiting for their turn
+        #: requests of this connection waiting for their turn, and their bytes
         self.waiting = 0
+        self.queued_bytes = 0
         self.hello_timer = _timer(parent)
         self.close_timer = _timer(parent)
         self.stall_timer = _timer(parent)
@@ -240,6 +254,7 @@ class AgentServer(QObject):
         hello_timeout_ms: int = HELLO_TIMEOUT_MS,
         stall_ms: int = STALL_MS,
         max_pending: int = MAX_PENDING_BYTES,
+        max_queued_bytes: int = MAX_QUEUED_BYTES,
     ):
         super().__init__(parent)
         self._handler = handler
@@ -247,6 +262,7 @@ class AgentServer(QObject):
         self._hello_timeout_ms = hello_timeout_ms
         self._stall_ms = stall_ms
         self._max_pending = max_pending
+        self._max_queued_bytes = max_queued_bytes
         self._server: QLocalServer | None = None
         self._token: str | None = None
         #: bumped by start and stop, so an answer from an earlier start is dropped
@@ -382,12 +398,18 @@ class AgentServer(QObject):
         self._close(peer)
 
     def _add_request(self, peer: _Peer, message: dict) -> None:
+        size = _request_size(message)
         if peer.waiting >= MAX_WAITING:
             self._queue.append(_Job(peer, refusal="too many requests are waiting for the app"))
             peer.closing = True
             return
+        if peer.queued_bytes + size > self._max_queued_bytes:
+            self._queue.append(_Job(peer, refusal="the requests waiting for the app are too large"))
+            peer.closing = True
+            return
         peer.waiting += 1
-        self._queue.append(_Job(peer, message=message))
+        peer.queued_bytes += size
+        self._queue.append(_Job(peer, message=message, size=size))
 
     def _hello_expired(self, peer: _Peer) -> None:
         if peer.client is None:
@@ -481,6 +503,7 @@ class AgentServer(QObject):
                     self._close(job.peer)
                     continue
                 job.peer.waiting -= 1
+                job.peer.queued_bytes -= job.size
                 self._answer(job.peer, job.message)
         finally:
             self._pumping = False
