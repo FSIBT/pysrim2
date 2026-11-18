@@ -6,12 +6,13 @@ are fakes, so nothing probes the machine, installs, runs wine or SRIM.
 
 import os
 
+import install_fakes
 import pytest
-from test_headless_status import fake_checks, fake_steps, step
+from install_fakes import use
+from test_headless_status import fake_checks
 from test_results import run_folder
 
 from srim.app.settings import AppSettings
-from srim.installer.steps import Step
 from srim.mcp.activity import ActivityLog
 from srim.mcp.approval import ApprovalCodes
 from srim.mcp.backend import BackendError, NeedsApp
@@ -96,10 +97,15 @@ def make_tools(tmp_path, backend=None, ask=None, approvals=None, cores=None):
     )
 
 
-def real_backend(tmp_path, table=None):
-    """A headless backend with a passing doctor, and the fake installer steps of ``table``."""
-    plan = fake_steps(table or {})
-    return HeadlessBackend(tmp_path, checks=READY, plan_steps=plan, default_components=lambda: [])
+def real_backend(tmp_path):
+    """A headless backend with a passing doctor. Its installer steps are the fake plan that the
+    test has set up with ``install_fakes.use``."""
+    return HeadlessBackend(
+        tmp_path,
+        checks=READY,
+        plan_steps=install_fakes.plan,
+        default_components=lambda: [],
+    )
 
 
 def complete(backend):
@@ -267,48 +273,44 @@ def test_delete_without_elicitation_needs_a_code(tmp_path):
 # --- the install rules ------------------------------------------------------------------------
 
 
-def test_an_install_step_always_asks_and_runs_its_plain_steps(tmp_path):
-    calls = []
-    table = {"srim": [step("fetch", calls=calls)]}
+def test_an_install_step_always_asks_and_runs_its_plain_steps(tmp_path, monkeypatch):
+    fake = use(monkeypatch, tmp_path, {"srim": [{"name": "fetch"}]})
     asker = Asker("allowed")
-    tools = make_tools(tmp_path, real_backend(tmp_path, table), ask=asker)
+    tools = make_tools(tmp_path, real_backend(tmp_path), ask=asker)
     out = tools.install_step("srim")
     assert len(asker.asked) == 1 and "srim" in asker.asked[0]
-    assert out["ran"] == ["fetch"] and calls == ["fetch"]
+    assert out["ran"] == ["fetch"] and fake.calls() == ["fetch"]
     assert out["mode"] == "headless"
 
 
-def test_an_admin_step_is_never_run_even_when_allowed(tmp_path):
-    calls = []
-    table = {
-        "wine": [
-            step("wine-packages", admin=True, commands=("sudo apt install wine",), calls=calls)
-        ]
-    }
-    tools = make_tools(tmp_path, real_backend(tmp_path, table), ask=Asker("allowed"))
+def test_an_admin_step_is_never_run_even_when_allowed(tmp_path, monkeypatch):
+    fake = use(
+        monkeypatch,
+        tmp_path,
+        {"wine": [{"name": "wine-packages", "admin": True, "commands": ["sudo apt wine"]}]},
+    )
+    tools = make_tools(tmp_path, real_backend(tmp_path), ask=Asker("allowed"))
     out = tools.install_step("wine")
-    assert out["ran"] == [] and out["commands"] == ["sudo apt install wine"]
-    assert calls == []
+    assert out["ran"] == [] and out["commands"] == ["sudo apt wine"]
+    assert fake.calls() == []
 
 
-def test_an_install_step_without_elicitation_needs_a_code(tmp_path):
-    calls = []
-    table = {"srim": [step("fetch", calls=calls)]}
-    tools = make_tools(tmp_path, real_backend(tmp_path, table))
+def test_an_install_step_without_elicitation_needs_a_code(tmp_path, monkeypatch):
+    fake = use(monkeypatch, tmp_path, {"srim": [{"name": "fetch"}]})
+    tools = make_tools(tmp_path, real_backend(tmp_path))
     with pytest.raises(ApprovalNeeded) as info:
         tools.install_step("srim")
-    assert calls == []
+    assert fake.calls() == []
     out = tools.install_step("srim", confirm_code=info.value.code)
-    assert out["ran"] == ["fetch"] and calls == ["fetch"]
+    assert out["ran"] == ["fetch"] and fake.calls() == ["fetch"]
 
 
-def test_an_install_step_denied_runs_nothing(tmp_path):
-    calls = []
-    table = {"srim": [step("fetch", calls=calls)]}
-    tools = make_tools(tmp_path, real_backend(tmp_path, table), ask=Asker("denied"))
+def test_an_install_step_denied_runs_nothing(tmp_path, monkeypatch):
+    fake = use(monkeypatch, tmp_path, {"srim": [{"name": "fetch"}]})
+    tools = make_tools(tmp_path, real_backend(tmp_path), ask=Asker("denied"))
     with pytest.raises(BackendError, match="did not allow"):
         tools.install_step("srim")
-    assert calls == []
+    assert fake.calls() == []
 
 
 # --- files: exports, saves, opening and new setups ----------------------------------------------
@@ -397,9 +399,9 @@ def test_opening_and_starting_a_new_setup_without_changes_do_not_ask(tmp_path):
 # --- reads, edits and the log ---------------------------------------------------------------------
 
 
-def test_reads_and_edits_never_ask(tmp_path):
-    table = {"srim": [step("fetch")]}
-    tools = make_tools(tmp_path, complete(real_backend(tmp_path, table)), ask=no_asks)
+def test_reads_and_edits_never_ask(tmp_path, monkeypatch):
+    use(monkeypatch, tmp_path, {"srim": [{"name": "fetch"}]})
+    tools = make_tools(tmp_path, complete(real_backend(tmp_path)), ask=no_asks)
     tools.status()
     tools.get_setup()
     tools.lookup_element("N15")
@@ -514,15 +516,19 @@ def test_saving_through_a_dangling_link_asks_and_creates_nothing(tmp_path):
     assert len(asker.asked) == 1
 
 
-def test_the_install_ask_lists_the_steps_and_commands_that_would_run(tmp_path):
-    table = {
-        "srim": [
-            step("fetch", commands=("download the zip",)),
-            step("wine-packages", admin=True, commands=("sudo apt install wine",)),
-        ]
-    }
+def test_the_install_ask_lists_the_steps_and_commands_that_would_run(tmp_path, monkeypatch):
+    use(
+        monkeypatch,
+        tmp_path,
+        {
+            "srim": [
+                {"name": "fetch", "commands": ["download the zip"]},
+                {"name": "wine-packages", "admin": True, "commands": ["sudo apt wine"]},
+            ]
+        },
+    )
     asker = Asker("denied")
-    tools = make_tools(tmp_path, real_backend(tmp_path, table), ask=asker)
+    tools = make_tools(tmp_path, real_backend(tmp_path), ask=asker)
     with pytest.raises(BackendError, match="did not allow"):
         tools.install_step("srim")
     text = asker.asked[0]
@@ -530,23 +536,15 @@ def test_the_install_ask_lists_the_steps_and_commands_that_would_run(tmp_path):
     assert "wine-packages" not in text and "sudo" not in text
 
 
-def test_a_changed_install_plan_invalidates_the_code(tmp_path):
-    commands = ["download the zip"]
-    plan = [
-        Step(
-            name="fetch",
-            summary="fetch",
-            check=lambda: False,
-            commands=lambda: list(commands),
-            run=lambda: None,
-        )
-    ]
-    tools = make_tools(tmp_path, real_backend(tmp_path, {"srim": plan}))
+def test_a_changed_install_plan_invalidates_the_code(tmp_path, monkeypatch):
+    fake = use(monkeypatch, tmp_path, {"srim": [{"name": "fetch", "commands": ["get a"]}]})
+    tools = make_tools(tmp_path, real_backend(tmp_path))
     with pytest.raises(ApprovalNeeded) as info:
         tools.install_step("srim")
-    commands[0] = "download another zip"
+    fake.set({"srim": [{"name": "fetch", "commands": ["get b"]}]})
     with pytest.raises(ApprovalNeeded):
         tools.install_step("srim", confirm_code=info.value.code)
+    assert fake.calls() == []
 
 
 def test_an_approval_code_is_not_written_to_the_log(tmp_path):

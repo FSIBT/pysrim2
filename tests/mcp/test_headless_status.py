@@ -6,14 +6,15 @@ machine, runs wine or installs anything.
 
 import os
 import shutil
-import subprocess
-import sys
+import threading
+import time
 from pathlib import Path
 
+import install_fakes
 import pytest
+from install_fakes import use
 from test_results import run_folder
 
-from srim.installer.steps import Step
 from srim.mcp.backend import BackendError
 from srim.mcp.headless import HeadlessBackend
 from srim.output.tables import Results
@@ -25,39 +26,6 @@ def check(name, ok, detail="", fix="run: pysrim2 install srim"):
 
 def fake_checks(*checks):
     return lambda: list(checks)
-
-
-def step(name, *, done=False, admin=False, commands=("do it",), calls=None, error=None):
-    """A fake installer step: ``calls`` collects the names of the steps that ran."""
-
-    def run():
-        if calls is not None:
-            calls.append(name)
-        if error is not None:
-            raise error
-
-    return Step(
-        name=name,
-        summary=f"{name} summary",
-        check=lambda: done,
-        commands=lambda: list(commands),
-        run=run,
-        needs_admin=admin,
-    )
-
-
-def fake_steps(table, calls=None):
-    """A ``plan_steps`` that maps component names to the fake steps in ``table``."""
-
-    def plan_steps(components):
-        steps = []
-        for component in components:
-            if component not in table:
-                raise BackendError(f"component {component} is not available yet")
-            steps.extend(table[component])
-        return steps
-
-    return plan_steps
 
 
 def n15_backend(tmp_path, **kwargs):
@@ -118,14 +86,17 @@ def test_status_names_the_setup_file_once_it_has_one(tmp_path):
 # --- install planning -----------------------------------------------------------------------
 
 
-def test_install_plan_lists_each_step_with_its_commands(tmp_path):
-    table = {
-        "srim": [step("fetch", commands=("download the zip",))],
-        "wine": [step("wine-packages", admin=True, commands=("sudo apt install wine",))],
-    }
-    backend = HeadlessBackend(tmp_path, plan_steps=fake_steps(table))
-    rows = backend.install_plan(["srim", "wine"])
-    assert rows == [
+def test_install_plan_lists_each_step_with_its_commands(tmp_path, monkeypatch):
+    use(
+        monkeypatch,
+        tmp_path,
+        {
+            "srim": [{"name": "fetch", "commands": ["download the zip"]}],
+            "wine": [{"name": "wine-packages", "admin": True, "commands": ["sudo apt wine"]}],
+        },
+    )
+    backend = HeadlessBackend(tmp_path, plan_steps=install_fakes.plan)
+    assert backend.install_plan(["srim", "wine"]) == [
         {
             "component": "srim",
             "step": "fetch",
@@ -139,16 +110,17 @@ def test_install_plan_lists_each_step_with_its_commands(tmp_path):
             "step": "wine-packages",
             "description": "wine-packages summary",
             "admin": True,
-            "commands": ["sudo apt install wine"],
+            "commands": ["sudo apt wine"],
             "done": False,
         },
     ]
 
 
-def test_install_plan_defaults_to_the_components_of_this_system(tmp_path):
+def test_install_plan_defaults_to_the_components_of_this_system(tmp_path, monkeypatch):
+    use(monkeypatch, tmp_path, {"skill": [{"name": "skill"}]})
     backend = HeadlessBackend(
         tmp_path,
-        plan_steps=fake_steps({"skill": [step("skill")]}),
+        plan_steps=install_fakes.plan,
         default_components=lambda: ["skill"],
     )
     assert [row["component"] for row in backend.install_plan()] == ["skill"]
@@ -164,55 +136,110 @@ def test_components_must_be_a_list_of_names(tmp_path):
         HeadlessBackend(tmp_path).install_plan("srim")
 
 
-# --- install steps --------------------------------------------------------------------------
+# --- install steps: run in a child process --------------------------------------------------
 
 
-def test_install_step_runs_the_non_admin_steps_and_returns_the_admin_commands(tmp_path):
-    calls = []
-    table = {
-        "wine": [
-            step("fetch", calls=calls),
-            step("wine-packages", admin=True, commands=("sudo apt install wine",), calls=calls),
-        ]
-    }
-    backend = HeadlessBackend(tmp_path, plan_steps=fake_steps(table))
-    out = backend.install_step("wine")
+def test_install_step_runs_the_non_admin_steps_and_returns_the_admin_commands(
+    tmp_path, monkeypatch
+):
+    fake = use(
+        monkeypatch,
+        tmp_path,
+        {
+            "wine": [
+                {"name": "fetch"},
+                {"name": "wine-packages", "admin": True, "commands": ["sudo apt wine"]},
+            ]
+        },
+    )
+    out = HeadlessBackend(tmp_path, plan_steps=install_fakes.plan).install_step("wine")
     assert out["component"] == "wine"
     assert out["ran"] == ["fetch"]
-    assert out["commands"] == ["sudo apt install wine"]
-    assert out["failed"] is None
-    assert calls == ["fetch"]  # the admin step's run was never called
+    assert out["commands"] == ["sudo apt wine"]
+    assert out["failed"] is None and out["interrupted"] is False
+    assert fake.calls() == ["fetch"]  # the admin step's run was never called
 
 
-def test_an_admin_only_component_runs_nothing(tmp_path):
-    calls = []
-    table = {"vb5": [step("vb5", admin=True, commands=("regsvr32 /s X.OCX",), calls=calls)]}
-    out = HeadlessBackend(tmp_path, plan_steps=fake_steps(table)).install_step("vb5")
-    assert out["ran"] == []
-    assert out["commands"] == ["regsvr32 /s X.OCX"]
-    assert calls == []
+def test_an_admin_only_component_runs_nothing(tmp_path, monkeypatch):
+    fake = use(
+        monkeypatch,
+        tmp_path,
+        {"vb5": [{"name": "vb5", "admin": True, "commands": ["regsvr32 /s X.OCX"]}]},
+    )
+    out = HeadlessBackend(tmp_path, plan_steps=install_fakes.plan).install_step("vb5")
+    assert out["ran"] == [] and out["commands"] == ["regsvr32 /s X.OCX"]
+    assert fake.calls() == []
 
 
-def test_a_component_already_installed_does_nothing(tmp_path):
-    calls = []
-    table = {"srim": [step("srim", done=True, calls=calls)]}
-    out = HeadlessBackend(tmp_path, plan_steps=fake_steps(table)).install_step("srim")
-    assert out["ran"] == [] and out["commands"] == [] and calls == []
+def test_a_component_already_installed_does_nothing(tmp_path, monkeypatch):
+    fake = use(monkeypatch, tmp_path, {"srim": [{"name": "srim", "done": True}]})
+    out = HeadlessBackend(tmp_path, plan_steps=install_fakes.plan).install_step("srim")
+    assert out["ran"] == [] and out["commands"] == [] and fake.calls() == []
     assert any("[ok] srim" in line for line in out["log"])
 
 
-def test_a_failed_step_is_reported_not_raised(tmp_path):
-    table = {"srim": [step("fetch", error=OSError("disk full"))]}
-    out = HeadlessBackend(tmp_path, plan_steps=fake_steps(table)).install_step("srim")
+def test_a_failed_step_is_reported_not_raised(tmp_path, monkeypatch):
+    use(monkeypatch, tmp_path, {"srim": [{"name": "fetch", "action": "fail"}]})
+    out = HeadlessBackend(tmp_path, plan_steps=install_fakes.plan).install_step("srim")
     assert out["failed"] == "fetch"
     assert any("[fail] fetch: disk full" in line for line in out["log"])
 
 
-def test_install_step_writes_nothing_to_stdout(tmp_path, capsys):
-    # the MCP stdio transport owns stdout: the steps' lines are returned, never printed
-    table = {"srim": [step("fetch")]}
-    HeadlessBackend(tmp_path, plan_steps=fake_steps(table)).install_step("srim")
-    assert capsys.readouterr().out == ""
+def test_a_step_that_prints_or_spawns_writes_nothing_to_the_servers_stdout(
+    tmp_path, monkeypatch, capfd
+):
+    # the MCP protocol owns file descriptor 1: the child's output goes to its own file
+    use(monkeypatch, tmp_path, {"srim": [{"name": "noisy", "action": "print"}]})
+    out = HeadlessBackend(tmp_path, plan_steps=install_fakes.plan).install_step("srim")
+    assert capfd.readouterr().out == ""
+    text = "\n".join(out["log"])
+    assert "python says hi" in text
+    assert "child says hi" in text
+
+
+def test_the_server_keeps_its_stdout_while_an_install_runs(tmp_path, monkeypatch, capfd):
+    # a second thread of the server writes to stdout during the install (as the protocol's
+    # responses do): the text reaches stdout, because the install does not redirect it
+    use(monkeypatch, tmp_path, {"srim": [{"name": "slow", "action": "sleep"}]})
+    backend = HeadlessBackend(tmp_path, plan_steps=install_fakes.plan)
+    stop = threading.Event()
+
+    def chatter():
+        while not stop.is_set():
+            os.write(1, b"server says tick\n")
+            time.sleep(0.05)
+
+    thread = threading.Thread(target=chatter)
+    thread.start()
+    try:
+        out = backend.install_step("srim")
+    finally:
+        stop.set()
+        thread.join()
+    assert out["ran"] == ["slow"]
+    assert "server says tick" in capfd.readouterr().out
+
+
+def test_a_child_that_crashes_is_a_backend_error_with_its_log(tmp_path, monkeypatch):
+    use(monkeypatch, tmp_path, {"srim": [{"name": "fetch", "action": "crash"}]})
+    with pytest.raises(BackendError) as info:
+        HeadlessBackend(tmp_path, plan_steps=install_fakes.plan).install_step("srim")
+    assert not isinstance(info.value, KeyError)
+    assert "exit code 3" in str(info.value)
+    assert "[do] fetch" in str(info.value)
+
+
+def test_a_plan_that_changed_since_it_was_shown_is_refused_before_anything_runs(
+    tmp_path, monkeypatch
+):
+    fake = use(monkeypatch, tmp_path, {"srim": [{"name": "fetch", "commands": ["get a"]}]})
+    backend = HeadlessBackend(tmp_path, plan_steps=install_fakes.plan)
+    shown = [{"step": "fetch", "commands": ["get b"]}]
+    with pytest.raises(BackendError, match="changed"):
+        backend.install_step("srim", expected=shown)
+    assert fake.calls() == []
+    out = backend.install_step("srim", expected=[{"step": "fetch", "commands": ["get a"]}])
+    assert out["ran"] == ["fetch"]
 
 
 def test_install_step_refuses_an_unknown_component(tmp_path):
@@ -260,30 +287,6 @@ def test_a_file_the_session_did_not_write_is_a_replacement(tmp_path):
     backend = HeadlessBackend(tmp_path)
     assert backend.would_replace(str(tmp_path / "out" / "ioniz.csv")) is True
     assert backend.would_replace(str(tmp_path / "out" / "other.csv")) is False
-
-
-def test_a_step_that_prints_or_spawns_a_process_writes_nothing_to_fd_1(tmp_path, capfd):
-    # The MCP stdio transport owns file descriptor 1: a step's own print, and the output of a
-    # child process it starts (which inherits fd 1), are captured into the log instead.
-    def noisy():
-        print("python says hi")
-        subprocess.run([sys.executable, "-c", "print('child says hi')"], check=True)
-
-    noisy_step = Step(
-        name="noisy",
-        summary="noisy summary",
-        check=lambda: False,
-        commands=lambda: ["do it"],
-        run=noisy,
-    )
-    backend = HeadlessBackend(tmp_path, plan_steps=fake_steps({"srim": [noisy_step]}))
-    out = backend.install_step("srim")
-    captured = capfd.readouterr()
-    assert "says hi" not in captured.out and captured.out == ""
-    assert out["ran"] == ["noisy"]
-    text = "\n".join(out["log"])
-    assert "python says hi" in text
-    assert "child says hi" in text
 
 
 # --- export writes exactly the files it lists -------------------------------------------------

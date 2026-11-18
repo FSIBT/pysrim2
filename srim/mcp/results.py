@@ -312,13 +312,13 @@ def export(
     except (ValueError, OSError) as error:
         raise BackendError(f"cannot export to {dest}: {error}") from error
     written = [str(path) for path in written]
-    unlisted = sorted(realpaths_of(written) - realpaths_of(targets))
+    unlisted = sorted(_realpaths_of(written) - _realpaths_of(targets))
     if unlisted:
         raise BackendError(f"the export wrote files it did not list: {', '.join(unlisted)}")
     return {"written": written}
 
 
-def realpaths_of(paths) -> set[str]:
+def _realpaths_of(paths) -> set[str]:
     return {os.path.realpath(path) for path in paths}
 
 

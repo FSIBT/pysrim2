@@ -7,14 +7,9 @@ fill in what is still missing (in a copy) so that a half-made setup can be check
 and redo need the app.
 """
 
-import contextlib
-import io
 import os
 import shutil
-import sys
-import tempfile
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from collections.abc import Callable
 from copy import deepcopy
 from datetime import UTC, datetime
 from pathlib import Path
@@ -44,11 +39,11 @@ from srim.app.runs import (
 from srim.app.scan_model import new_scan, scan_from_section, to_scan
 from srim.app.settings import AppSettings
 from srim.installer import steps as installer_steps
-from srim.installer.runner import run_steps
 from srim.installer.steps import ComponentUnavailable, Step
 from srim.mcp import results as results_lib
 from srim.mcp.backend import BackendError, NeedsApp
 from srim.mcp.detached import PID_FILE, run_state, send_control, start_detached
+from srim.mcp.install_child import run_install
 from srim.mcp.limits import default_workers
 from srim.notebook import read_run_folder
 from srim.scan import Precision, Scan
@@ -377,29 +372,9 @@ class HeadlessBackend:
                 )
         return rows
 
-    def install_step(self, component: str) -> dict:
-        steps = self._steps([component])
-        log: list[str] = []
-        # stdout carries the MCP protocol: what the steps print, and what their child processes
-        # write to the terminal, goes into the log instead
-        with _output_captured(log):
-            outcome = run_steps(
-                steps,
-                yes=False,
-                confirm=None,
-                say=log.append,
-                warn=log.append,
-                admin_hint="run these in a terminal yourself, then check again:",
-            )
-        commands = [command for _, owed in outcome.admin_skipped for command in owed]
-        return {
-            "component": component,
-            "ran": list(outcome.installed),
-            "commands": commands,
-            "failed": outcome.failed,
-            "interrupted": outcome.interrupted,
-            "log": log,
-        }
+    def install_step(self, component: str, expected: list[dict] | None = None) -> dict:
+        self._steps([component])  # an unknown component is refused before a process starts
+        return run_install(component, expected)
 
     # --- undo and redo (the app's) ----------------------------------------------------
 
@@ -501,43 +476,6 @@ class HeadlessBackend:
 
 
 # --- helpers ---------------------------------------------------------------------------
-
-
-@contextmanager
-def _output_captured(lines: list[str]) -> Iterator[None]:
-    """Keep what is written to stdout and stderr meanwhile out of the terminal.
-
-    Python-level writes go to a buffer, and file descriptors 1 and 2 (which child processes
-    inherit) go to a temporary file. Both are appended to ``lines`` when the block ends, and the
-    descriptors are restored even when the block raises.
-    """
-    buffer = io.StringIO()
-    with tempfile.TemporaryFile() as sink:
-        _flush_streams()
-        saved: list[tuple[int, int]] = []
-        try:
-            for fd in (1, 2):
-                saved.append((fd, os.dup(fd)))
-            for fd, _ in saved:
-                os.dup2(sink.fileno(), fd)
-            with contextlib.redirect_stdout(buffer), contextlib.redirect_stderr(buffer):
-                yield
-        finally:
-            _flush_streams()
-            for fd, original in saved:
-                os.dup2(original, fd)
-                os.close(original)
-            sink.seek(0)
-            written = sink.read().decode("utf-8", errors="replace")
-            text = buffer.getvalue() + written
-            lines.extend(line for line in text.splitlines() if line.strip())
-
-
-def _flush_streams() -> None:
-    for stream in (sys.stdout, sys.stderr, sys.__stdout__, sys.__stderr__):
-        with contextlib.suppress(Exception):
-            if stream is not None:
-                stream.flush()
 
 
 def _doctor_checks() -> list[dict]:

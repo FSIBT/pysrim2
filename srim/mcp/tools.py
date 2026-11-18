@@ -329,7 +329,7 @@ class Tools:
                 text,
                 confirm_code=confirm_code,
             )
-            return self.backend.install_step(component)
+            return self.backend.install_step(component, expected=would_run)
 
         return self._call("install_step", f"install {component}", act)
 

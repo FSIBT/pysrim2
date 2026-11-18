@@ -144,7 +144,9 @@ class Backend(Protocol):
         None): ``{"component", "step", "description", "admin", "commands", "done"}``. Raises
         :class:`BackendError` for an unknown component."""
 
-    def install_step(self, component: str) -> dict:
-        """Run the steps of ``component`` that need no admin rights. Admin steps are never run:
-        their commands come back in ``commands``. ``{"component", "ran", "commands", "failed",
-        "interrupted", "log"}``. Raises :class:`BackendError` for an unknown component."""
+    def install_step(self, component: str, expected: list[dict] | None = None) -> dict:
+        """Run the steps of ``component`` that need no admin rights, in a process of their own.
+        Admin steps are never run: their commands come back in ``commands``. ``expected`` are the
+        steps the user was shown (``{"step", "commands"}``); a different plan is refused.
+        ``{"component", "ran", "commands", "failed", "interrupted", "log"}``. Raises
+        :class:`BackendError` for an unknown component or a child that could not report."""
