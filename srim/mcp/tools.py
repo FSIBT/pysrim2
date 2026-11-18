@@ -380,10 +380,24 @@ class Tools:
             record.answer = "code issued"
             raise ApprovalNeeded(self._needs_ok(tool, text, code), code)
         if answer == "allowed":
+            # the question was open for a while: the setup must still be the one the user saw
+            if self._action(tool, args, workers) != action:
+                record.answer = "setup changed"
+                raise BackendError(
+                    f"the setup changed while the user was asked, so nothing was done: {text}. "
+                    "Ask again with the current setup."
+                )
             record.answer = "allowed"
             return
         record.answer = "timed out" if answer == "timed out" else "denied"
         raise BackendError(f"the user did not allow this: {text}")
+
+    def _action(self, tool: str, args: dict, workers: int | None) -> str:
+        """The hash of the action as the setup is now (see :meth:`_approve`)."""
+        current = self.backend.get_setup()
+        return action_hash(
+            tool, args, {"path": current["path"], "setup": current["setup"]}, workers
+        )
 
     def _needs_ok(self, tool: str, text: str, code: str) -> str:
         minutes = round(self.approvals.ttl / 60)

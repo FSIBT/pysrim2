@@ -579,3 +579,19 @@ def test_a_cores_override_can_only_tighten_the_core_limit(tmp_path):
     with pytest.raises(BackendError, match="did not allow"):
         tools.start_run(workers=5)
     assert tools.log.last(1)[0].ask == "start the run: it uses 5 of 8 cores (limit 4)"
+
+
+def test_a_setup_changed_while_the_user_was_asked_is_not_started(tmp_path):
+    """The user allowed the run of the setup they were shown. A setup changed meanwhile (another
+    call, while the question was open) is a different action: nothing starts, and it is logged."""
+    backend = FakeBackend(seconds=3 * 3600)
+
+    def allow_after_a_change(text):
+        backend.set_values(["ion.energy_keV=50"])
+        return "allowed"
+
+    tools = make_tools(tmp_path, backend=backend, ask=allow_after_a_change)
+    with pytest.raises(BackendError, match="changed while the user was asked"):
+        tools.start_run()
+    assert backend.started == []
+    assert tools.log.last(1)[0].answer == "setup changed"
