@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 
 from srim.analysis import implant_summary as analysis_implant_summary
-from srim.output import Range, Results
+from srim.output import Range, Range3D, Results
 from srim.output.events import Backscat, Sputter, Transmit
 from srim.scan import extract, run_batches
 from srim.scan.extract import combine, get, register, resolve
@@ -110,6 +110,32 @@ def test_implant_summary_matches_analysis_and_raw_depths(single):
 def test_implant_summary_needs_range3d():
     with pytest.raises(ValueError, match="ranges=1"):
         extract.implant_summary(stub())
+
+
+@pytest.mark.parametrize("directory", [SINGLE, os.path.join(D, "comma")])
+def test_implant_summary_extractor_equals_whole_table_on_fixtures(directory):
+    results = Results(directory)
+    row = extract.implant_summary(results)
+    raw = results.range3d.df  # the whole-table reference, as before the streamed version
+    expected = analysis_implant_summary(raw)
+    expected["n_ions_stopped"] = expected.pop("n_ions")
+    assert list(row) == list(expected)
+    assert type(row["n_ions_stopped"]) is int and row["n_ions_stopped"] == len(raw)
+    for key, value in expected.items():
+        if key != "n_ions_stopped":
+            assert row[key] == pytest.approx(value, rel=1e-12, nan_ok=True), key
+
+
+def test_implant_summary_extractor_does_not_read_df(single, monkeypatch):
+    expected = extract.implant_summary(single)
+
+    def no_whole_table(self):
+        raise AssertionError("the implant_summary extractor read the whole RANGE_3D table")
+
+    monkeypatch.setattr(Range3D, "df", property(no_whole_table))
+    row = extract.implant_summary(single)
+    monkeypatch.undo()
+    assert row == pytest.approx(expected, nan_ok=True)
 
 
 # -- vacancy_at and peak_vacancy_depth ----------------------------------------------------

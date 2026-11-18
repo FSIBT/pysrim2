@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Exporting the big per-ion outputs (`range3d`, `exyz`, `backscat`, `transmit`, `sputter`, also of batched results) writes them in chunks instead of loading the whole output into memory; the files are the same.
-- A scan's per-point implant summary reads `RANGE_3D` in chunks instead of loading the whole table (the new `srim.analysis.implant_summary_chunks` gives the same values as `implant_summary`).
+- A scan's per-point implant summary, both the `implant_summary` extractor and the batch summary, reads `RANGE_3D` in chunks instead of loading the whole table (the new `srim.analysis.implant_summary_chunks` gives the same values as `implant_summary`).
 
 ## [0.12.1] - 2026-11-15
 
