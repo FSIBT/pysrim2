@@ -131,7 +131,7 @@ markers = [
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-extend-exclude = ["test_files", "examples/notebooks", "docs/paper"]
+extend-exclude = ["test_files", "examples/notebooks", "docs/paper", "docs/superpowers"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "NPY", "PD"]
