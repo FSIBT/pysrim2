@@ -30,7 +30,13 @@ SPEC = RunSpec.from_dict(
 
 
 def table(df, num_ions):
-    return SimpleNamespace(df=df, metadata={"num_ions": num_ions, "source": "x"})
+    def iter_chunks(chunk_rows=50_000):  # as Range3D.iter_chunks
+        for start in range(0, max(len(df), 1), chunk_rows):
+            yield df.iloc[start : start + chunk_rows]
+
+    return SimpleNamespace(
+        df=df, metadata={"num_ions": num_ions, "source": "x"}, iter_chunks=iter_chunks
+    )
 
 
 class FakeResults:

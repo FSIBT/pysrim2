@@ -246,6 +246,9 @@ implant_summary(results.range3d.df)
 #  'skewness': ..., 'kurtosis': ...}
 ```
 
+For a large `RANGE_3D.txt`, `implant_summary_chunks(results.range3d.iter_chunks())` gives the same
+dictionary (the same values and types) reading one chunk of rows at a time.
+
 | Key | Definition |
 |---|---|
 | `n_ions` | number of ions (rows) |

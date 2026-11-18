@@ -525,10 +525,15 @@ def _collect(executor, futures, annotate, convert):
     raise exc
 
 
+#: rows of RANGE_3D read at a time for a batch's summary
+_SUMMARY_CHUNK_ROWS = 50_000
+
+
 def _summary(results):
+    """The implant summary of a batch's ions, read from RANGE_3D in chunks (never ``.df``)."""
     range3d = getattr(results, "range3d", None)
     if range3d is None:
         return None
-    from ..analysis import implant_summary
+    from ..analysis import implant_summary_chunks
 
-    return implant_summary(range3d.df)
+    return implant_summary_chunks(range3d.iter_chunks(chunk_rows=_SUMMARY_CHUNK_ROWS))
