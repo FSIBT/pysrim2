@@ -608,3 +608,45 @@ def test_the_app_backend_declares_that_opening_a_run_replaces_the_setup(win):
     backend = AgentBackend(win)
     assert backend.open_run_replaces_setup is True
     assert backend.mode == "app"
+
+
+# --- would_replace for the setup's own file ----------------------------------------------------
+
+
+def test_would_replace_is_false_for_a_clean_setup_and_true_once_it_is_edited(win, backend):
+    own = str(win.document.path)
+    assert backend.would_replace(own) is False
+    win.document.edit(lambda doc: doc.__setitem__("number_ions", 300))
+    assert backend.would_replace(own) is True
+
+
+def test_would_replace_is_false_for_an_own_path_that_is_not_there_yet(win, backend, tmp_path):
+    win.document.edit(lambda doc: doc.__setitem__("number_ions", 300))
+    gone = win.document.path.parent / "gone.yaml"
+    assert backend.would_replace(str(gone)) is False
+    assert backend.would_replace(str(tmp_path / "other.yaml")) is False
+
+
+def test_a_start_over_the_edits_of_an_opened_file_asks_until_the_agent_saves_it(
+    qtbot, win, tmp_path
+):
+    tools, asks = tools_for(qtbot, win, tmp_path, "denied")
+    win.document.edit(lambda doc: doc.__setitem__("number_ions", 150))  # the user's edit
+    with pytest.raises(BackendError, match="did not allow"):
+        tools.start_run(workers=1)
+    assert any("save the unsaved changes into" in text for text in asks.asked)
+    assert win.run.running is False
+
+
+def test_after_an_approved_save_by_the_agent_a_later_start_does_not_ask_about_the_file(
+    qtbot, win, tmp_path
+):
+    tools, asks = tools_for(qtbot, win, tmp_path, "allowed")
+    win.document.edit(lambda doc: doc.__setitem__("number_ions", 150))
+    tools.save_setup()  # asks: the file was not made by this session; allowed
+    assert asks.asked == [f"replace {win.document.path}, a file this session did not create"]
+    win.document.edit(lambda doc: doc.__setitem__("number_ions", 120))  # edited again
+    asks.asked.clear()
+    tools.start_run(workers=1)
+    assert not any("save the unsaved changes" in text for text in asks.asked)
+    qtbot.waitUntil(lambda: not win.run.running, timeout=RUN_TIMEOUT)
