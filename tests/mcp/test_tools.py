@@ -465,3 +465,34 @@ def test_the_log_records_what_was_asked_and_answered(tmp_path):
     assert entry.summary.startswith("start a run")
     assert entry.answer == "denied"
     assert entry.error is not None
+
+
+def test_a_run_that_would_save_over_a_foreign_file_asks_first(tmp_path):
+    # a file another session made, opened here and edited: the start would save it
+    complete(real_backend(tmp_path)).save_setup("theirs.yaml")
+    backend = real_backend(tmp_path)
+    backend.open_setup("theirs.yaml")
+    backend.set_values(["number_ions=12"])
+    before = (tmp_path / "theirs.yaml").read_text(encoding="utf-8")
+    asker = Asker("denied")
+    tools = make_tools(tmp_path, backend, ask=asker)
+    with pytest.raises(BackendError, match="did not allow"):
+        tools.start_run()
+    assert asker.asked == [
+        f"save the unsaved changes into {tmp_path / 'theirs.yaml'}, "
+        "a file this session did not create"
+    ]
+    assert (tmp_path / "theirs.yaml").read_text(encoding="utf-8") == before
+    assert backend.list_runs() == []
+
+
+def test_the_save_reason_is_asked_without_elicitation_as_a_code(tmp_path):
+    complete(real_backend(tmp_path)).save_setup("theirs.yaml")
+    backend = real_backend(tmp_path)
+    backend.open_setup("theirs.yaml")
+    backend.set_values(["number_ions=12"])
+    tools = make_tools(tmp_path, backend)
+    with pytest.raises(ApprovalNeeded) as info:
+        tools.start_run()
+    assert "save the unsaved changes into" in str(info.value)
+    assert backend.list_runs() == []

@@ -263,7 +263,8 @@ class Tools:
         status = self.backend.status()
         if not status["srim_ready"]:
             raise BackendError(f"SRIM is not ready: {status['srim_problem']}. See install_plan().")
-        if self.backend.get_setup()["path"] is None:
+        setup_path = self.backend.get_setup()["path"]
+        if setup_path is None:
             raise BackendError("save the setup first: save_setup(path)")
         estimate = self.backend.estimate(args["workers"], batch_ions)
         cores = self._cores if self._cores is not None else estimate["cores"]
@@ -274,6 +275,12 @@ class Tools:
             units=estimate["units"],
         )
         reasons = reasons_to_ask(request, self.settings)
+        # starting saves unsaved changes into the setup's own file: that is a replacement when
+        # this session did not create the file, so it is one of the reasons to ask
+        if self.backend.has_unsaved_changes() and self.backend.would_replace(setup_path):
+            reasons.append(
+                f"save the unsaved changes into {setup_path}, a file this session did not create"
+            )
         if reasons:
             self._approve(
                 record,
