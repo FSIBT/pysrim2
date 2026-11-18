@@ -66,6 +66,17 @@ def settle(qtbot, deferred, timeout=RUN_TIMEOUT):
     return deferred.outcome
 
 
+def value_of(qtbot, answer):
+    """The answer of a handle() call: its value, or the BackendError it failed with. A Deferred
+    is waited for (the event loop runs), as the socket client waits for it."""
+    if not isinstance(answer, Deferred):
+        return answer
+    ok, value = settle(qtbot, answer)
+    if not ok:
+        raise value
+    return value
+
+
 def run_to_end(qtbot, win, timeout=RUN_TIMEOUT):
     qtbot.waitUntil(lambda: not win.run.running, timeout=timeout)
 
@@ -279,7 +290,7 @@ def test_an_agent_run_shows_in_progress_and_finishes(qtbot, win, backend, setup_
     folder = Path(result["folder"])
     assert folder.parent == setup_file.parent / "run-runs"
     assert win.run.folder == folder
-    assert backend.handle("run_status", {})["status"] == "finished"
+    assert value_of(qtbot, backend.handle("run_status", {}))["status"] == "finished"
 
 
 def test_start_run_saves_an_unsaved_change_first(qtbot, win, backend, setup_file):
@@ -301,15 +312,15 @@ def test_start_without_a_file_asks_for_a_save_first(backend, make_window):
 
 def test_a_run_started_in_the_window_is_the_latest_run_for_the_agent(qtbot, win, backend):
     run_once(qtbot, win)
-    assert backend.handle("run_status", {})["status"] == "finished"
-    listed = backend.handle("list_runs", {})
+    assert value_of(qtbot, backend.handle("run_status", {}))["status"] == "finished"
+    listed = value_of(qtbot, backend.handle("list_runs", {}))
     assert listed[0]["folder"] == str(win.run.folder)
     assert listed[0]["status"] == "finished"
 
 
-def test_run_status_without_a_run_says_so(backend):
+def test_run_status_without_a_run_says_so(qtbot, backend):
     with pytest.raises(BackendError, match="no run"):
-        backend.handle("run_status", {})
+        value_of(qtbot, backend.handle("run_status", {}))
 
 
 def test_pause_and_stop_act_on_the_run_in_the_window(qtbot, make_window, setup_file):
@@ -317,15 +328,15 @@ def test_pause_and_stop_act_on_the_run_in_the_window(qtbot, make_window, setup_f
     win.document.open(setup_file)
     backend = AgentBackend(win)
     backend.handle("start_run", {"workers": 1})
-    backend.handle("control_run", {"action": "pause"})
+    value_of(qtbot, backend.handle("control_run", {"action": "pause"}))
     assert win.pause_action.isChecked()
-    backend.handle("control_run", {"action": "resume"})
+    value_of(qtbot, backend.handle("control_run", {"action": "resume"}))
     assert not win.pause_action.isChecked()
-    backend.handle("control_run", {"action": "stop"})
+    value_of(qtbot, backend.handle("control_run", {"action": "stop"}))
     run_to_end(qtbot, win, STOP_TIMEOUT)
-    assert backend.handle("run_status", {})["status"] == "stopped"
+    assert value_of(qtbot, backend.handle("run_status", {}))["status"] == "stopped"
     with pytest.raises(BackendError, match="nothing to pause"):
-        backend.handle("control_run", {"action": "pause"})
+        value_of(qtbot, backend.handle("control_run", {"action": "pause"}))
 
 
 # --- opening a run folder (its Deferred) --------------------------------------------------------
@@ -443,8 +454,11 @@ def test_show_plot_switches_to_the_results_tab_and_shows_the_plot(qtbot, win, ba
     for point in plan_run(win.document.doc, win.document.base_dir, ParallelChoice()).points():
         point.spec.to_yaml(folder / "points" / point.id[:16] / "run.yaml", provenance={"t": "x"})
     with qtbot.waitSignal(win.results.canvas.drawn, timeout=10000):
-        answer = backend.handle(
-            "show_plot", {"folder": str(folder), "point": None, "key": "ionization"}
+        answer = value_of(
+            qtbot,
+            backend.handle(
+                "show_plot", {"folder": str(folder), "point": None, "key": "ionization"}
+            ),
         )
     assert answer == {"shown": True}
     assert win.tabs.currentWidget() is win.results
@@ -455,13 +469,19 @@ def test_show_plot_of_a_run_that_is_not_open_is_refused(qtbot, win, backend, tmp
     run_once(qtbot, win)
     other = str(tmp_path / "other")
     with pytest.raises(BackendError, match="not open in the app"):
-        backend.handle("show_plot", {"folder": other, "point": None, "key": "ionization"})
+        value_of(
+            qtbot,
+            backend.handle("show_plot", {"folder": other, "point": None, "key": "ionization"}),
+        )
 
 
 def test_show_plot_of_a_plot_the_run_cannot_give_is_refused(qtbot, win, backend):
     folder = run_once(qtbot, win)
     with pytest.raises(BackendError, match="no plot"):
-        backend.handle("show_plot", {"folder": str(folder), "point": None, "key": "no-such"})
+        value_of(
+            qtbot,
+            backend.handle("show_plot", {"folder": str(folder), "point": None, "key": "no-such"}),
+        )
 
 
 # --- ask and log: stubs until the confirm dialog and the activity panel --------------------------
@@ -650,3 +670,93 @@ def test_after_an_approved_save_by_the_agent_a_later_start_does_not_ask_about_th
     tools.start_run(workers=1)
     assert not any("save the unsaved changes" in text for text in asks.asked)
     qtbot.waitUntil(lambda: not win.run.running, timeout=RUN_TIMEOUT)
+
+
+# --- the folder reads of the Deferred methods happen off the GUI thread ------------------------
+
+
+def test_a_run_status_of_another_folder_is_read_in_a_thread(qtbot, win, make_window, monkeypatch):
+    import threading
+
+    from srim.app import agent_backend
+
+    folder = run_once(qtbot, win)
+    fresh = make_window()  # a window that holds no run: the folder is read from its files
+    seen = []
+    real = agent_backend.run_state
+
+    def spy(target):
+        seen.append(threading.current_thread())
+        return real(target)
+
+    monkeypatch.setattr(agent_backend, "run_state", spy)
+    deferred = AgentBackend(fresh).handle("run_status", {"folder": str(folder)})
+    assert isinstance(deferred, Deferred)
+    ok, value = settle(qtbot, deferred)
+    assert ok is True and value["status"] == "finished"
+    assert seen and all(thread is not threading.main_thread() for thread in seen)
+
+
+def test_a_list_of_runs_is_read_in_a_thread(qtbot, win, make_window, monkeypatch):
+    import threading
+
+    from srim.mcp import headless
+
+    run_once(qtbot, win)
+    fresh = make_window()
+    fresh.document.open(win.document.path)
+    seen = []
+    real = headless._status_of
+
+    def spy(folder):
+        seen.append(threading.current_thread())
+        return real(folder)
+
+    monkeypatch.setattr(headless, "_status_of", spy)
+    deferred = AgentBackend(fresh).handle("list_runs", {})
+    assert isinstance(deferred, Deferred)
+    ok, value = settle(qtbot, deferred)
+    assert ok is True and value[0]["status"] == "finished"
+    assert seen and all(thread is not threading.main_thread() for thread in seen)
+
+
+def test_a_control_of_another_folder_is_sent_in_a_thread_and_refused_as_a_deferred(
+    qtbot, win, make_window, monkeypatch
+):
+    import threading
+
+    from srim.mcp import detached
+
+    folder = run_once(qtbot, win)
+    fresh = make_window()
+    seen = []
+    real = detached.run_state
+
+    def spy(target):
+        seen.append(threading.current_thread())
+        return real(target)
+
+    monkeypatch.setattr(detached, "run_state", spy)
+    deferred = AgentBackend(fresh).handle("control_run", {"action": "pause", "folder": str(folder)})
+    assert isinstance(deferred, Deferred)  # refused in the thread, not raised here
+    ok, error = settle(qtbot, deferred)
+    assert ok is False and "nothing to pause" in str(error)
+    assert seen and all(thread is not threading.main_thread() for thread in seen)
+
+
+def test_a_deferred_read_that_fails_unexpectedly_still_settles(
+    qtbot, win, make_window, monkeypatch
+):
+    from srim.app import agent_backend
+
+    folder = run_once(qtbot, win)
+
+    def broken(target):
+        raise OSError("the disk is gone")
+
+    monkeypatch.setattr(agent_backend, "run_state", broken)
+    deferred = AgentBackend(make_window()).handle("run_status", {"folder": str(folder)})
+    ok, error = settle(qtbot, deferred)
+    assert ok is False
+    assert isinstance(error, BackendError)
+    assert "disk is gone" not in str(error)  # the agent gets the internal text, not the detail

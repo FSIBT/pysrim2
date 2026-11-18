@@ -26,6 +26,7 @@ import os
 import time
 from collections.abc import Callable
 from copy import deepcopy
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -73,7 +74,7 @@ SERVED = frozenset(
 REPLACED_TEXT = "the open was replaced by another one before its folder was read"
 #: the answer of an open that a run took the place of
 RUN_STARTED_TEXT = "a run started before the folder was opened: open it again when the run ends"
-#: the run state of a run folder that is not one this window ran (see :meth:`_listed_status`)
+#: the status of a run folder with no run file (a run that never started)
 NOT_STARTED = rules.NOT_STARTED
 
 
@@ -241,34 +242,50 @@ class AgentBackend:
         self._started = folder
         return {"folder": str(folder), "estimate": self._estimate(scan, workers)}
 
-    def run_status(self, folder: str | None = None) -> dict:
-        return self._status_of(self._run_folder(folder))
+    def run_status(self, folder: str | None = None) -> Deferred:
+        """The state of a run folder (the latest run when None). The folder is read in a thread."""
+        wanted = self._resolve(folder) if folder is not None else None
+        snap = self._snapshot()
+        return _in_thread(lambda: _status_at(_target(wanted, snap), snap), lambda status: status)
 
-    def control_run(self, action: str, folder: str | None = None) -> dict:
+    def control_run(self, action: str, folder: str | None = None) -> Deferred:
+        """Pause, resume or stop a run. The window's own run is controlled here; another run
+        folder gets its control request in a thread (see :func:`srim.mcp.detached.send_control`)."""
         if action not in ACTIONS:
             raise BackendError(f"unknown action {action!r} (have: {', '.join(ACTIONS)})")
-        target = self._run_folder(folder)
-        run = self.window.run
-        if self._is_open_run(target):
-            if not run.running:
-                status = self._app_status(target)["status"]
-                raise BackendError(f"the run is {status}; there is nothing to {action}")
-            if action == "stop":
-                run.stop()
-            else:
-                # the toggled signal of the action pauses or resumes the run
-                self.window.pause_action.setChecked(action == "pause")
-        else:
-            send_control(target, action)
-        return {"folder": str(target), "requested": action}
+        wanted = self._resolve(folder) if folder is not None else None
+        snap = self._snapshot()
 
-    def list_runs(self, setup_path: str | None = None) -> list[dict]:
-        runs = self._runs_dir(setup_path)
-        if not runs.is_dir():
-            return []
-        folders = [p for p in runs.iterdir() if (p / "scan.yaml").is_file()]
-        folders.sort(key=rules._run_order, reverse=True)
-        return [{"folder": str(p), "status": self._listed_status(p)} for p in folders]
+        def read() -> tuple[Path, bool]:
+            target = _target(wanted, snap)
+            if _is_open(target, snap):
+                return target, True
+            send_control(target, action)  # raises BackendError when the run is not going
+            return target, False
+
+        def then(result: tuple[Path, bool]) -> dict:
+            target, is_open = result
+            if is_open:
+                run = self.window.run
+                if not run.running:
+                    status = self._app_status(target)["status"]
+                    raise BackendError(f"the run is {status}; there is nothing to {action}")
+                if action == "stop":
+                    run.stop()
+                else:
+                    # the toggled signal of the action pauses or resumes the run
+                    self.window.pause_action.setChecked(action == "pause")
+            return {"folder": str(target), "requested": action}
+
+        return _in_thread(read, then)
+
+    def list_runs(self, setup_path: str | None = None) -> Deferred:
+        """The run folders of a setup, newest first, read in a thread."""
+        snap = replace(self._snapshot(), runs_dir=self._runs_dir(setup_path))
+        return _in_thread(
+            lambda: [{"folder": str(p), "status": status} for p, status in _listed(snap)],
+            lambda rows: rows,
+        )
 
     def open_run(self, folder: str) -> Deferred:
         run = self.window.run
@@ -290,35 +307,47 @@ class AgentBackend:
 
     # --- the Results tab ----------------------------------------------------------------
 
-    def show_plot(self, folder: str | None, point: int | None, key: str) -> dict:
-        target = self._run_folder(folder)
-        if not self._is_open_run(target):
-            raise BackendError(f"the run {target} is not open in the app: open it with open_run")
-        rel = self._point_path(point)
-        try:
-            self.window.results.show_plot(rel, key)
-        except ValueError as error:
-            raise BackendError(str(error)) from error
-        return {"shown": True}
+    def show_plot(self, folder: str | None, point: int | None, key: str) -> Deferred:
+        """Show a plot of a run the window holds in the Results tab. The folder is found in a
+        thread; the tab is changed here."""
+        wanted = self._resolve(folder) if folder is not None else None
+        snap = self._snapshot()
+
+        def then(target: Path) -> dict:
+            if not self._is_open_run(target):
+                raise BackendError(
+                    f"the run {target} is not open in the app: open it with open_run first"
+                )
+            rel = self._point_path(point)
+            try:
+                self.window.results.show_plot(rel, key)
+            except ValueError as error:
+                raise BackendError(str(error)) from error
+            return {"shown": True}
+
+        return _in_thread(lambda: _target(wanted, snap), then)
 
     # --- the status ---------------------------------------------------------------------
 
     def status(self) -> Deferred:
+        """The doctor's checks and the latest run, both read in a thread."""
         route = self.window.settings.route
         checks_fn = self.window._checks_fn
-        deferred = Deferred()
+        snap = self._snapshot()
 
-        def done(checks):
-            _settle(deferred, lambda: self._status_of_checks(checks))
+        def read():
+            checks = checks_fn(route)
+            try:
+                latest = _status_at(_target(None, snap), snap)
+            except BackendError:  # no run yet: the status says so with None
+                latest = None
+            return checks, latest
 
-        def failed(error):
-            deferred.reject(BackendError(f"could not check the installation: {_text(error)}"))
-
-        try:
-            run_in_thread(lambda: checks_fn(route), done, failed)
-        except Exception as error:  # the thread could not start: the Deferred still settles
-            failed(error)
-        return deferred
+        return _in_thread(
+            read,
+            lambda result: self._status_dict(*result),
+            failed_text="could not check the installation",
+        )
 
     # --- stubs until the confirm dialog (Task 5) and the activity panel (Task 6) --------------
 
@@ -362,17 +391,6 @@ class AgentBackend:
         run = self.window.run
         return run.folder is not None and run.state is not None and _same(run.folder, folder)
 
-    def _status_of(self, folder: Path) -> dict:
-        """The state of a run folder: the window's run when it is that one, else its runner's."""
-        if self._is_open_run(folder):
-            return self._app_status(folder)
-        return run_state(folder)
-
-    def _listed_status(self, folder: Path) -> str:
-        if self._is_open_run(folder):
-            return self._app_status(folder)["status"]
-        return rules._status_of(folder)
-
     def _app_status(self, folder: Path) -> dict:
         """The state of the window's run, in the shape of :func:`srim.mcp.detached.run_state`."""
         run = self.window.run
@@ -402,13 +420,22 @@ class AgentBackend:
     def _estimate(self, scan, workers: int) -> dict:
         return rules.estimate_of(scan, workers, self.window.settings.ions_per_s, _cores())
 
-    def _status_of_checks(self, checks: list[dict]) -> dict:
+    def _snapshot(self) -> "_Snapshot":
+        """The window's state that the folder reads need, taken in the GUI thread."""
+        run = self.window.run
+        open_folder = Path(run.folder) if run.folder is not None and run.state is not None else None
+        document = self.window.document
+        return _Snapshot(
+            open_folder=open_folder,
+            open_status=self._app_status(open_folder) if open_folder is not None else None,
+            started=self._started,
+            runs_dir=self._runs_dir(None) if document.path is not None else None,
+        )
+
+    def _status_dict(self, checks: list[dict], latest: dict | None) -> dict:
+        """The answer of :meth:`status`: the checks, and the latest run's state (or None)."""
         problem = rules.srim_problem(checks)
         document = self.window.document
-        try:
-            running = self.run_status(None)
-        except BackendError:  # no run yet: the status says so with None
-            running = None
         return {
             "mode": "app",
             "version": srim.__version__,
@@ -416,23 +443,8 @@ class AgentBackend:
             "srim_ready": problem is None,
             "srim_problem": problem,
             "setup": str(document.path) if document.path is not None else None,
-            "running": running,
+            "running": latest,
         }
-
-    def _run_folder(self, folder: str | None) -> Path:
-        """``folder`` as a path; None is the latest run this backend started, else the newest run
-        of the setup (as :class:`HeadlessBackend` picks it)."""
-        if folder is not None:
-            return self._resolve(folder)
-        if self.window.document.path is not None:
-            started = self._started
-            # a run started for another setup (opened or saved since) is not this setup's run
-            if started is not None and started.parent == self._runs_dir(None):
-                return started
-            for run in self.list_runs():
-                if run["status"] != NOT_STARTED:
-                    return Path(run["folder"])
-        raise BackendError("no run: start one with start_run()")
 
     def _point_path(self, point: int | None) -> str | None:
         """The point's folder relative to the run folder (None for a single run's point)."""
@@ -507,6 +519,91 @@ class AgentBackend:
 
 
 # --- helpers ----------------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class _Snapshot:
+    """What the folder reads of the window need, as the GUI thread saw it when they were asked:
+    the window's own run (its folder and its state, when it has one), the run this backend
+    started last, and the runs folder of the setup (None without a setup file)."""
+
+    open_folder: Path | None
+    open_status: dict | None
+    started: Path | None
+    runs_dir: Path | None
+
+
+def _is_open(folder: Path, snap: _Snapshot) -> bool:
+    return snap.open_folder is not None and _same(folder, snap.open_folder)
+
+
+def _listed(snap: _Snapshot) -> list[tuple[Path, str]]:
+    """The run folders of ``snap.runs_dir``, newest first, with their states (read in a thread)."""
+    if snap.runs_dir is None or not snap.runs_dir.is_dir():
+        return []
+    folders = [p for p in snap.runs_dir.iterdir() if (p / "scan.yaml").is_file()]
+    folders.sort(key=rules._run_order, reverse=True)
+    rows = []
+    for folder in folders:
+        if _is_open(folder, snap):
+            rows.append((folder, snap.open_status["status"]))
+        else:
+            rows.append((folder, rules._status_of(folder)))
+    return rows
+
+
+def _target(wanted: Path | None, snap: _Snapshot) -> Path:
+    """``wanted``, or the latest run: the one this backend started, else the newest run of the
+    setup that has a run file (as :class:`HeadlessBackend` picks it)."""
+    if wanted is not None:
+        return wanted
+    if snap.runs_dir is None:
+        raise BackendError("no run: start one with start_run()")
+    if snap.started is not None and snap.started.parent == snap.runs_dir:
+        return snap.started
+    for folder, status in _listed(snap):
+        if status != NOT_STARTED:
+            return folder
+    raise BackendError("no run: start one with start_run()")
+
+
+def _status_at(folder: Path, snap: _Snapshot) -> dict:
+    """The state of ``folder``: the window's run when it is that one, else its run file's."""
+    if _is_open(folder, snap):
+        return snap.open_status
+    return run_state(folder)
+
+
+def _in_thread(
+    read: Callable[[], Any],
+    then: Callable[[Any], Any],
+    failed_text: str | None = None,
+) -> Deferred:
+    """Run ``read`` in a thread and answer with ``then(value)`` in the GUI thread.
+
+    The Deferred always settles: with ``then``'s value, with the BackendError ``read`` or ``then``
+    raised, or with ``failed_text`` and the error text for another error of ``read`` (an
+    unexpected one is logged, and the agent gets the internal-error text).
+    """
+    deferred = Deferred()
+
+    def done(value):
+        _settle(deferred, lambda: then(value))
+
+    def failed(error: BaseException):
+        if isinstance(error, BackendError):
+            deferred.reject(error)
+        elif failed_text is not None:
+            deferred.reject(BackendError(f"{failed_text}: {_text(error)}"))
+        else:
+            logger.error("an agent read failed", exc_info=error)
+            deferred.reject(BackendError(INTERNAL_ERROR_TEXT))
+
+    try:
+        run_in_thread(read, done, failed)
+    except Exception as error:  # the thread could not start: the Deferred still settles
+        failed(error)
+    return deferred
 
 
 def _own_step(available: bool, label: str | None, verb: str) -> None:
