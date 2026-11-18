@@ -7,7 +7,14 @@ file, so a reader never sees half of it. A file left behind by an app that crash
 removed here: a failed connection is what tells ``pysrim2 mcp`` that no app is there, and the
 next app start replaces the file.
 
-The token never goes on a command line or into a log.
+The token never goes on a command line or into a log, and it is not part of the endpoint's
+repr. The file is read only when it is a regular file that its owner alone can read (POSIX: no
+group or other bits, owned by the current uid, not a link or a FIFO); the folders this module
+creates are private (0o700), and an existing folder is left as it is.
+
+Windows: the mode bits do nothing there. The file is protected by the user's profile folder
+(its ACL), and the socket by QLocalServer's user-access option; the token in the hello is the
+real gate on both platforms.
 """
 
 import hmac

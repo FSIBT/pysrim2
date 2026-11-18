@@ -14,6 +14,12 @@ The messages:
   ``"NeedsApp"`` or ``"BackendError"`` (anything else reads as a backend error).
 
 A malformed request is answered with ``id`` null and a ``BackendError`` naming the problem.
+
+Limits and timeouts: before the hello a line may be :data:`HELLO_MAX_LINE` (4 KiB) long; the
+server raises the limit with :meth:`LineReader.set_max_line` once the hello is accepted. A
+:class:`Channel` with a ``timeout`` raises ``TimeoutError`` when no bytes arrive in time: POSIX
+waits with ``select``; Windows polls the named pipe with ``PeekNamedPipe`` and reads only when
+bytes are there, so neither leaves a read blocked on an app that has gone quiet.
 """
 
 import json
