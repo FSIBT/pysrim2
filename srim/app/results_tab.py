@@ -381,15 +381,16 @@ class ResultsTab(QWidget):
             index = self.point_combo.findData(rel_point)
             if index < 0:
                 raise ValueError(f"the point {rel_point!r} has no results to show")
-        item = self._items.get(key)
-        if item is None:
+        if key not in self._items:
             raise ValueError(f"there is no plot {key!r}")
-        if item.isDisabled():
-            raise ValueError(f"the plot {key!r} is not available: {item.toolTip(0) or 'none'}")
         if rel_point is not None:
             self.point_combo.blockSignals(True)
             self.point_combo.setCurrentIndex(index)
             self.point_combo.blockSignals(False)
+        self._refresh_view(draw=False)  # the plots this point can give, even on a tab never shown
+        item = self._items[key]
+        if item.isDisabled():
+            raise ValueError(f"the plot {key!r} is not available: {item.toolTip(0) or 'none'}")
         self._select(key)
         self._refresh_view(draw=True)
         # the window's tab widget (a window of the app has one; a bare tab has none)
