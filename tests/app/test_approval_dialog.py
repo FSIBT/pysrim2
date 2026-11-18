@@ -15,6 +15,7 @@ from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtWidgets import QDialog  # noqa: E402
 from test_agent_server import connect, finish, in_thread  # noqa: E402
 
+from srim.app import approval_dialog  # noqa: E402
 from srim.app.agent_backend import AgentBackend  # noqa: E402
 from srim.app.agent_server import AgentServer  # noqa: E402
 from srim.app.approval_dialog import ApprovalQueue  # noqa: E402
@@ -349,3 +350,15 @@ def test_the_next_dialog_waits_for_the_gap(qtbot, window):
     assert "run two" in quick.shown.text_area.toPlainText()
     quick.shown.deny_button.click()
     assert second.outcome == (True, "denied")
+
+
+def test_the_timeout_is_a_deadline_on_the_clock_not_a_count_of_ticks(qtbot, window, monkeypatch):
+    """One tick after the deadline has passed ends the request: the timeout follows the clock."""
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(approval_dialog, "monotonic", lambda: clock["now"])
+    timed = ApprovalQueue(window, timeout_s=120, allow_delay_s=0, gap_s=0)
+    answer = timed.request("claude", "start a run")
+    shown(qtbot, timed)
+    clock["now"] += 121
+    qtbot.waitUntil(lambda: answer.settled, timeout=3000)
+    assert answer.outcome == (True, "timed out")

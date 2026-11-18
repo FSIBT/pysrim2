@@ -213,8 +213,9 @@ class ApprovalQueue(QObject):
         self._waiting: deque[_Request] = deque()
         self._current: _Request | None = None
         self._dialog: ApprovalDialog | None = None
-        self._remaining = timeout_s
-        #: one tick a second: the countdown, and the timeout when it runs out
+        #: when the request on screen times out (on the monotonic clock, not counted in ticks)
+        self._deadline = 0.0
+        #: one tick a second: the countdown, and the timeout once the deadline has passed
         self._clock = QTimer(self)
         self._clock.setInterval(1000)
         self._clock.timeout.connect(self._tick)
@@ -258,7 +259,7 @@ class ApprovalQueue(QObject):
             return
         req = self._waiting.popleft()
         self._current = req
-        self._remaining = self._timeout_s
+        self._deadline = monotonic() + self._timeout_s
         dialog = ApprovalDialog(
             req.client,
             req.text,
@@ -308,11 +309,11 @@ class ApprovalQueue(QObject):
         if self._dialog is None:
             self._clock.stop()
             return
-        self._remaining -= 1
-        if self._remaining <= 0:
+        remaining = self._deadline - monotonic()
+        if remaining <= 0:
             self._dialog.expire()
         else:
-            self._dialog.set_remaining(self._remaining)
+            self._dialog.set_remaining(math.ceil(remaining))
 
     def _cancel(self, req: _Request) -> None:
         """The request's asker has gone: its dialog closes, or it leaves the queue."""
