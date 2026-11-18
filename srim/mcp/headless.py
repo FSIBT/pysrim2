@@ -124,7 +124,11 @@ class HeadlessBackend:
 
     def would_replace(self, path: str) -> bool:
         target = self._resolve(path)
-        return target.exists() and target not in self._written
+        # a link is never trusted: what it points to, even a file this session wrote, is not
+        # known to be this session's, and a dangling link would create a file elsewhere
+        if os.path.islink(target):
+            return True
+        return target.exists() and _key(target) not in self._written
 
     # --- changing the setup ---------------------------------------------------------
 
@@ -192,7 +196,7 @@ class HeadlessBackend:
             raise BackendError(str(error)) from error
         self._doc = saved
         self._path = target
-        self._written.add(target)
+        self._written.add(_key(target))
         self._history.mark_saved(saved)
         return self.get_setup()
 
@@ -322,7 +326,7 @@ class HeadlessBackend:
         out = results_lib.export(
             self._run_folder(folder), fmt, self._resolve(dest), include_collision, point
         )
-        self._written.update(Path(path) for path in out["written"])
+        self._written.update(_key(Path(path)) for path in out["written"])
         return out
 
     def export_files(
@@ -556,6 +560,12 @@ def srim_problem(checks: list[dict]) -> str | None:
         fix = check.get("fix")
         return f"{text}. Fix: {fix}" if fix else text
     return None
+
+
+def _key(path: Path) -> Path:
+    """The key a written file is remembered by: its resolved path, so that another spelling of
+    the same file (``a/../b.yaml``) is the same file."""
+    return Path(os.path.realpath(path))
 
 
 def _whole(value: Any, name: str) -> int | None:

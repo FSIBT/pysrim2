@@ -349,3 +349,39 @@ def test_an_export_that_writes_an_unlisted_file_is_refused(tmp_path, monkeypatch
     monkeypatch.setattr(Results, "to_csv", rogue_to_csv)
     with pytest.raises(BackendError, match="did not list"):
         HeadlessBackend(tmp_path).export(str(folder), "csv", "out")
+
+
+# --- files written in this session: resolved paths, and links -----------------------------------
+
+
+def make_link(link: Path, target: str) -> None:
+    try:
+        os.symlink(target, link)
+    except (OSError, NotImplementedError):
+        pytest.skip("symbolic links cannot be made here")
+
+
+def saved_here(tmp_path, name="real.yaml"):
+    backend = n15_backend(tmp_path)
+    backend.set_values(["number_ions=10"])
+    backend.save_setup(name)
+    return backend
+
+
+def test_a_file_saved_here_is_not_a_replacement_through_another_spelling(tmp_path):
+    backend = saved_here(tmp_path)
+    (tmp_path / "sub").mkdir()
+    assert backend.would_replace(str(tmp_path / "sub" / ".." / "real.yaml")) is False
+
+
+def test_a_link_to_a_file_saved_here_is_a_replacement(tmp_path):
+    backend = saved_here(tmp_path)
+    make_link(tmp_path / "link.yaml", "real.yaml")
+    assert backend.would_replace(str(tmp_path / "link.yaml")) is True
+
+
+def test_a_dangling_link_is_a_replacement(tmp_path):
+    backend = HeadlessBackend(tmp_path)
+    make_link(tmp_path / "dangling.yaml", "nowhere.yaml")
+    assert backend.would_replace(str(tmp_path / "dangling.yaml")) is True
+    assert not (tmp_path / "nowhere.yaml").exists()

@@ -4,6 +4,8 @@ starts, and the real headless backend only refuses or lists them. Its checks and
 are fakes, so nothing probes the machine, installs, runs wine or SRIM.
 """
 
+import os
+
 import pytest
 from test_headless_status import fake_checks, fake_steps, step
 from test_results import run_folder
@@ -496,3 +498,16 @@ def test_the_save_reason_is_asked_without_elicitation_as_a_code(tmp_path):
         tools.start_run()
     assert "save the unsaved changes into" in str(info.value)
     assert backend.list_runs() == []
+
+
+def test_saving_through_a_dangling_link_asks_and_creates_nothing(tmp_path):
+    try:
+        os.symlink("nowhere.yaml", tmp_path / "dangling.yaml")
+    except (OSError, NotImplementedError):
+        pytest.skip("symbolic links cannot be made here")
+    asker = Asker("denied")
+    tools = make_tools(tmp_path, complete(real_backend(tmp_path)), ask=asker)
+    with pytest.raises(BackendError, match="did not allow"):
+        tools.save_setup("dangling.yaml")
+    assert not (tmp_path / "nowhere.yaml").exists()
+    assert len(asker.asked) == 1
