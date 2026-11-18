@@ -535,3 +535,120 @@ def test_a_write_or_read_error_on_a_live_socket_does_not_stop_the_server(qtbot, 
     qtbot.waitUntil(lambda: server.connection_count == 0, timeout=5000)
     assert server.listening
     assert read_endpoint() is not None
+
+
+def test_a_full_server_closes_a_further_connection(qtbot, make_server, monkeypatch):
+    monkeypatch.setattr(agent_server, "MAX_CONNECTIONS", 2)
+    server = make_server()
+    endpoint = read_endpoint()
+    held = []  # the two accepted clients stay open
+
+    def talk_held():
+        channel, hello = connect(endpoint)
+        held.append(channel)
+        return hello
+
+    def talk_extra():
+        try:
+            connect(endpoint)
+        except OSError:
+            return "refused"
+        return "answered"
+
+    assert finish(qtbot, in_thread(talk_held))["hello"]["ok"] is True
+    assert finish(qtbot, in_thread(talk_held))["hello"]["ok"] is True
+    assert finish(qtbot, in_thread(talk_extra)) == "refused"
+    assert server.connection_count == 2
+
+
+def test_requests_beyond_the_waiting_limit_are_refused_after_the_earlier_ones(
+    qtbot, make_server, monkeypatch
+):
+    monkeypatch.setattr(agent_server, "MAX_WAITING", 2)
+    handler = StandIn()
+    make_server(handler)
+    endpoint = read_endpoint()
+
+    def talk():
+        channel, _hello = connect(endpoint)
+        send_raw(
+            channel.stream,
+            encode(protocol.request(1, "later", {}))
+            + encode(protocol.request(2, "echo", {}))
+            + encode(protocol.request(3, "echo", {})),
+        )
+        replies = [channel.receive(), channel.receive(), channel.receive()]
+        closed = ends(channel)
+        return replies, closed
+
+    outcome = in_thread(talk)
+    qtbot.waitUntil(lambda: len(handler.pending) > 0, timeout=5000)
+    handler.pending[0].resolve("late")
+    replies, closed = finish(qtbot, outcome)
+    assert [reply.get("id") for reply in replies[:2]] == [1, 2]
+    assert replies[2]["id"] is None and "waiting" in replies[2]["error"]["message"]
+    assert closed
+    assert [method for method, _ in handler.calls] == ["later", "echo"]
+
+
+def test_a_deferred_settles_once():
+    deferred = Deferred()
+    seen = []
+    deferred.done.connect(lambda ok, payload: seen.append((ok, payload)))
+    deferred.resolve("first")
+    deferred.resolve("second")
+    deferred.reject(BackendError("third"))
+    assert seen == [(True, "first")]
+    assert deferred.outcome == (True, "first")
+
+
+def test_a_deferred_settled_after_the_server_stopped_is_ignored(qtbot, make_server):
+    handler = StandIn()
+    server = make_server(handler)
+    endpoint = read_endpoint()
+
+    def talk():
+        channel, _hello = connect(endpoint)
+        channel.send(protocol.request(1, "later", {}))
+        return channel
+
+    held = finish(qtbot, in_thread(talk))  # the client stays open
+    qtbot.waitUntil(lambda: len(handler.pending) > 0, timeout=5000)
+    server.stop()
+    handler.pending[0].resolve("late")  # nothing is left to answer, and nothing raises
+    assert not server.listening
+    assert [method for method, _ in handler.calls] == ["later"]
+    assert held is not None
+
+
+@posix_only
+def test_a_symlink_at_the_socket_name_is_refused_and_kept(tmp_path, monkeypatch):
+    name = "pysrim2-test-link1"
+    monkeypatch.setattr(agent_server, "new_socket_name", lambda: name)
+    path = os.path.join(QDir.tempPath(), name)
+    target = tmp_path / "elsewhere.sock"
+    target.write_text("not ours to touch")
+    os.symlink(target, path)
+    try:
+        with pytest.raises(AgentSocketError, match="in use"):
+            AgentServer(StandIn()).start()
+        assert os.path.islink(path)
+        assert target.read_text() == "not ours to touch"
+    finally:
+        os.unlink(path)
+
+
+@posix_only
+def test_a_regular_file_at_the_socket_name_is_refused_and_kept(monkeypatch):
+    name = "pysrim2-test-file2"
+    monkeypatch.setattr(agent_server, "new_socket_name", lambda: name)
+    path = os.path.join(QDir.tempPath(), name)
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write("not a socket")
+    try:
+        with pytest.raises(AgentSocketError, match="in use"):
+            AgentServer(StandIn()).start()
+        with open(path, encoding="utf-8") as handle:
+            assert handle.read() == "not a socket"
+    finally:
+        os.unlink(path)
