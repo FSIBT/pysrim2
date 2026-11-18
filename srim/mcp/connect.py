@@ -129,11 +129,7 @@ def _toml_string(text: str) -> str:
 
 def _codex_toml(command: list[str]) -> str:
     args = ", ".join(_toml_string(arg) for arg in command[1:])
-    return (
-        f"[mcp_servers.{SERVER_NAME}]\n"
-        f"command = {_toml_string(command[0])}\n"
-        f"args = [{args}]\n"
-    )
+    return f"[mcp_servers.{SERVER_NAME}]\ncommand = {_toml_string(command[0])}\nargs = [{args}]\n"
 
 
 def _generic_lines(command: list[str]) -> str:

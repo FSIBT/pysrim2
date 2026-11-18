@@ -64,12 +64,18 @@ def test_claude_line_uses_list2cmdline_on_windows(monkeypatch):
 
 def test_a_windows_path_round_trips_in_every_format(monkeypatch):
     monkeypatch.setattr(connect, "_is_windows", lambda: True)
-    assert json.loads(connect.snippet("gemini", command_for(WINDOWS_EXE)))["mcpServers"][
-        "pysrim2"
-    ]["command"] == WINDOWS_EXE
-    assert tomllib.loads(connect.snippet("codex", command_for(WINDOWS_EXE)))["mcp_servers"][
-        "pysrim2"
-    ]["command"] == WINDOWS_EXE
+    assert (
+        json.loads(connect.snippet("gemini", command_for(WINDOWS_EXE)))["mcpServers"]["pysrim2"][
+            "command"
+        ]
+        == WINDOWS_EXE
+    )
+    assert (
+        tomllib.loads(connect.snippet("codex", command_for(WINDOWS_EXE)))["mcp_servers"]["pysrim2"][
+            "command"
+        ]
+        == WINDOWS_EXE
+    )
     generic = connect.snippet("generic", command_for(WINDOWS_EXE))
     assert f"command: {WINDOWS_EXE}" in generic.splitlines()
 
@@ -161,6 +167,8 @@ def test_print_config_works_without_the_sdk_and_does_not_start_the_server():
         "assert cli.main(['mcp', '--print-config', 'vscode']) == 0\n"
         "assert 'srim.mcp.server' not in sys.modules, 'server imported'\n"
     )
-    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120)
+    result = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, timeout=120
+    )
     assert result.returncode == 0, result.stderr
     assert '"servers"' in result.stdout
