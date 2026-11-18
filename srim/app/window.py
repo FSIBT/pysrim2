@@ -18,7 +18,8 @@ from PySide6.QtWidgets import (
 
 import srim
 from srim.app import DOCS_URL
-from srim.app.agent_server import AgentServer, AgentSocketError, UnavailableBackend
+from srim.app.agent_backend import AgentBackend
+from srim.app.agent_server import AgentServer, AgentSocketError
 from srim.app.beam_tab import BeamTab
 from srim.app.document import DocumentModel
 from srim.app.geometry import GeometryTab
@@ -111,12 +112,6 @@ class MainWindow(QMainWindow):
         #: a notebook's start problem or failure; kept until the next start (a setup refresh
         #: replaces the setup messages, not this one)
         self._notebook_message: Guidance | None = None
-        #: the agent socket: listening for agents while it runs (see srim.app.agent_server)
-        self.agent = AgentServer(
-            agent_handler if agent_handler is not None else UnavailableBackend(), parent=self
-        )
-        #: why the agent socket did not start (None when it runs or was never asked to)
-        self._agent_message: Guidance | None = None
         #: True while a PDF export runs (one at a time; its entries are greyed out meanwhile)
         self._pdf_busy = False
         #: the export's problem (None when it can run), kept in a tuple once looked up; see
@@ -125,6 +120,12 @@ class MainWindow(QMainWindow):
         self.document = document if document is not None else DocumentModel(self)
         #: the run of the setup (``run_runner`` replaces SRIM in tests; see srim.app.run_control)
         self.run = RunController(self, runner=run_runner)
+        #: the agent socket: listening for agents while it runs (see srim.app.agent_server); the
+        #: handler answers them from this window (a test may pass another one)
+        handler = agent_handler if agent_handler is not None else AgentBackend(self)
+        self.agent = AgentServer(handler, parent=self)
+        #: why the agent socket did not start (None when it runs or was never asked to)
+        self._agent_message: Guidance | None = None
 
         # Editors are keyed "geometry", "beam", "settings" and "scan".
         self.editors: dict[str, QWidget] = {}
