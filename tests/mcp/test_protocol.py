@@ -10,6 +10,7 @@ import pytest
 
 from srim.mcp.backend import BackendError, NeedsApp
 from srim.mcp.protocol import (
+    HELLO_MAX_LINE,
     MAX_LINE,
     PROTOCOL_VERSION,
     Channel,
@@ -333,3 +334,47 @@ def test_a_receive_with_a_timeout_still_returns_what_is_there():
             pass
 
     assert Channel(Ready(), timeout=0.2).receive() == {"id": 1}
+
+
+def test_before_the_hello_a_line_is_limited_to_4_kib():
+    assert HELLO_MAX_LINE == 4 * 1024
+    reader = LineReader(max_line=HELLO_MAX_LINE)
+    with pytest.raises(ProtocolError):
+        reader.feed(b'{"hello": "' + b"x" * 5000 + b'"}\n')
+
+
+def test_after_the_hello_the_limit_can_be_raised():
+    reader = LineReader(max_line=HELLO_MAX_LINE)
+    reader.set_max_line(MAX_LINE)
+    big = {"id": 1, "method": "set_values", "params": {"text": "x" * 5000}}
+    assert reader.feed(encode(big)) == [big]
+
+
+def test_a_channel_takes_the_raised_limit_after_the_hello():
+    class Pipe:
+        def __init__(self, data):
+            self.data = data
+
+        def read(self, size):
+            chunk, self.data = self.data[:size], self.data[size:]
+            return chunk
+
+        def write(self, data):
+            return len(data)
+
+        def close(self):
+            pass
+
+    line = encode({"id": 2, "method": "m", "params": {"text": "x" * 5000}})
+    channel = Channel(Pipe(line), max_line=HELLO_MAX_LINE)
+    with pytest.raises(ProtocolError):
+        channel.receive()
+    channel = Channel(Pipe(line), max_line=HELLO_MAX_LINE)
+    channel.set_max_line(MAX_LINE)
+    assert channel.receive()["id"] == 2
+
+
+def test_a_token_over_128_characters_is_refused_in_the_hello():
+    check_hello(hello_request("a" * 128, "client"))
+    with pytest.raises(ProtocolError):
+        check_hello(hello_request("a" * 129, "client"))

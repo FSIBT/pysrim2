@@ -28,6 +28,9 @@ from srim.mcp.backend import BackendError, NeedsApp
 
 PROTOCOL_VERSION = 1
 MAX_LINE = 16 * 1024 * 1024
+#: the longest line before the hello: the app reads nothing bigger from a client it has not checked
+HELLO_MAX_LINE = 4 * 1024
+MAX_TOKEN = 128
 #: how much is asked of the socket at a time
 CHUNK = 64 * 1024
 MAX_CLIENT = 200
@@ -68,6 +71,10 @@ class LineReader:
         self.max_line = max_line
         self._buffer = bytearray()
         self._broken: ProtocolError | None = None
+
+    def set_max_line(self, max_line: int) -> None:
+        """Change the longest line accepted from the next :meth:`feed` on."""
+        self.max_line = max_line
 
     def feed(self, data: bytes) -> list[dict]:
         """The messages completed by ``data``, in order. Raises :class:`ProtocolError`."""
@@ -135,8 +142,8 @@ def check_hello(message: dict) -> tuple[str, str]:
     if not isinstance(hello, dict):
         raise ProtocolError("the first message must be a hello")
     token, client = hello.get("token"), hello.get("client")
-    if not isinstance(token, str) or not token:
-        raise ProtocolError("the hello needs a token")
+    if not isinstance(token, str) or not 0 < len(token) <= MAX_TOKEN:
+        raise ProtocolError("the hello needs a token of at most 128 characters")
     if not isinstance(client, str) or len(client) > MAX_CLIENT:
         raise ProtocolError("the hello needs a client name of at most 200 characters")
     if hello.get("protocol") != PROTOCOL_VERSION or type(hello.get("protocol")) is not int:
@@ -270,6 +277,10 @@ class Channel:
             if not sent:
                 raise ConnectionError("the connection closed while sending")
             data = data[sent:]
+
+    def set_max_line(self, max_line: int) -> None:
+        """Change the longest line accepted from now on (a small limit before the hello)."""
+        self._reader.set_max_line(max_line)
 
     def receive(self) -> dict:
         """The next message. Raises ``ConnectionError`` at the end of the stream,

@@ -40,7 +40,12 @@ class AppEndpoint:
     version: str
 
     def to_dict(self) -> dict:
-        return {"socket": self.socket, "token": self.token, "pid": self.pid, "version": self.version}
+        return {
+            "socket": self.socket,
+            "token": self.token,
+            "pid": self.pid,
+            "version": self.version,
+        }
 
 
 def discovery_path() -> Path:
