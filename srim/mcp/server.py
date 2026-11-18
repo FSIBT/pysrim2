@@ -77,13 +77,17 @@ class _State:
             self.approvals,
             self.settings,
             client=_client_name(ctx),
-            ask=_ask_for(ctx),
+            ask=_ask_for(ctx, self._one_at_a_time),
             cores=None,  # the backend's own core count: the limit is the library's
         )
 
         def work() -> Any:
-            with self._one_at_a_time:
+            # one call at a time, except while a question waits for the user (see _ask_for)
+            self._one_at_a_time.acquire()
+            try:
                 return action(tools)
+            finally:
+                self._one_at_a_time.release()
 
         try:
             return await anyio.to_thread.run_sync(work)
@@ -302,16 +306,21 @@ def _client_name(ctx: Context) -> str:
     return f"{info.name} {info.version}".strip()
 
 
-def _ask_for(ctx: Context) -> Ask | None:
+def _ask_for(ctx: Context, one_at_a_time: threading.Lock) -> Ask | None:
     """The question to ask the user through the client, or None when the client cannot answer
     questions (it did not declare elicitation). Called on the event loop; the question itself
-    runs in the worker thread that is making the call."""
+    runs in the worker thread that is making the call. The lock is released while the user
+    answers, so the other tools go on; the caller checks the setup again once the answer is in."""
     capabilities = ctx.client_capabilities
     if capabilities is None or capabilities.elicitation is None:
         return None
 
     def ask(text: str) -> Answer | None:
-        return anyio.from_thread.run(_answer, ctx, text)
+        one_at_a_time.release()
+        try:
+            return anyio.from_thread.run(_answer, ctx, text)
+        finally:
+            one_at_a_time.acquire()
 
     return ask
 

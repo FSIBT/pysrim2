@@ -324,3 +324,28 @@ def test_an_unexpected_error_is_a_short_tool_error_and_the_traceback_goes_to_std
     assert text.endswith("RuntimeError: boom")  # the SDK prefixes the tool's name
     assert "Traceback" not in text
     assert "Traceback" in capsys.readouterr().err
+
+
+def test_a_pending_question_does_not_block_other_calls(tmp_path, fast):
+    """While the user is asked about a run, the other tools (status, stop) still answer."""
+
+    async def scenario():
+        release = asyncio.Event()
+        asked = []
+
+        async def wait_for_the_user(context, params):
+            asked.append(params.message)
+            await release.wait()
+            return ElicitResult(action="decline")
+
+        srv, _ = server_for(tmp_path)
+        async with Client(srv, mode="legacy", elicitation_callback=wait_for_the_user) as client:
+            pending = asyncio.create_task(client.call_tool("start_run", {}))
+            while not asked:
+                await asyncio.sleep(0.05)
+            status = await asyncio.wait_for(client.call_tool("status", {}), 10)
+            release.set()
+            await pending
+        return status
+
+    assert not asyncio.run(scenario()).is_error
