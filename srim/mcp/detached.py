@@ -171,6 +171,11 @@ def send_control(folder, action: str) -> None:
     status = run_state(folder)["status"]
     if status not in ("running", "paused"):
         raise BackendError(f"the run is {status}; there is nothing to {action}")
+    if (_runner_meta(folder) or {}).get("backend") == "app":
+        # the app's run reads its controls from its window, not from control.jsonl
+        raise BackendError(
+            "the run is going in the pysrim2 app: pause, resume or stop it in the app"
+        )
     send_request(folder, action)
 
 

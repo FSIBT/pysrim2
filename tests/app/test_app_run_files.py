@@ -134,3 +134,23 @@ def test_a_run_that_fails_as_a_whole_reads_as_failed_with_its_error(
     state = reader(tmp_path, setup_file).run_status(str(folder))
     assert state["status"] == "failed"
     assert state["errors"] == ["RuntimeError: the scan broke"]
+
+
+def test_a_second_reader_cannot_pause_or_stop_an_app_run(qtbot, make_window, setup_file, tmp_path):
+    from srim.mcp.backend import BackendError
+    from srim.ui.web import CONTROL_FILE
+
+    win = make_window(runner=slow_runner)
+    win.document.open(setup_file)
+    win.start_run_with(ParallelChoice(workers=1))
+    folder = win.run.folder
+    try:
+        qtbot.waitUntil(lambda: (folder / "scan.yaml").is_file(), timeout=RUN_TIMEOUT)
+        with pytest.raises(BackendError, match="in the pysrim2 app"):
+            reader(tmp_path, setup_file).control_run("pause", str(folder))
+        # nothing was written where no run reads it
+        assert not (folder / CONTROL_FILE).exists() or (folder / CONTROL_FILE).read_bytes() == b""
+        assert reader(tmp_path, setup_file).run_status(str(folder))["status"] == "running"
+    finally:
+        win.run.stop()
+        qtbot.waitUntil(lambda: not win.run.running, timeout=STOP_TIMEOUT)
