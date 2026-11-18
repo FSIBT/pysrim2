@@ -149,3 +149,54 @@ def test_deep_nesting_in_the_file_reads_as_none(home):
     discovery_path().write_text("[" * 100000, encoding="utf-8")
     assert read_endpoint() is None
     remove_endpoint("a" * 64)  # a broken file is not a crash here either
+
+
+posix_only = pytest.mark.skipif(os.name != "posix", reason="POSIX modes, links and FIFOs")
+
+
+@posix_only
+def test_a_symlinked_file_reads_as_none(home, tmp_path):
+    write_endpoint(endpoint())
+    real = tmp_path / "elsewhere.json"
+    real.write_bytes(discovery_path().read_bytes())
+    discovery_path().unlink()
+    discovery_path().symlink_to(real)
+    assert read_endpoint() is None
+
+
+@posix_only
+def test_a_fifo_reads_as_none_and_does_not_block(home):
+    discovery_path().parent.mkdir(parents=True)
+    os.mkfifo(discovery_path())
+    assert read_endpoint() is None
+
+
+@posix_only
+@pytest.mark.parametrize("mode", [0o640, 0o604, 0o660])
+def test_a_file_others_can_read_reads_as_none(home, mode):
+    write_endpoint(endpoint())
+    os.chmod(discovery_path(), mode)
+    assert read_endpoint() is None
+
+
+@posix_only
+def test_a_file_of_another_user_reads_as_none(home, monkeypatch):
+    write_endpoint(endpoint())
+    other = os.getuid() + 1  # the real uid is read before it is patched
+    monkeypatch.setattr(discovery.os, "getuid", lambda: other)
+    assert read_endpoint() is None
+
+
+@posix_only
+def test_folders_we_create_are_private(home):
+    write_endpoint(endpoint())
+    assert discovery_path().parent.stat().st_mode & 0o077 == 0
+    assert home.stat().st_mode & 0o077 == 0
+
+
+@posix_only
+def test_an_existing_folder_is_left_as_it_is(home):
+    discovery_path().parent.mkdir(parents=True)
+    os.chmod(discovery_path().parent, 0o755)
+    write_endpoint(endpoint())
+    assert discovery_path().parent.stat().st_mode & 0o777 == 0o755

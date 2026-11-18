@@ -14,6 +14,7 @@ import hmac
 import json
 import os
 import secrets
+import stat
 import tempfile
 import time
 from dataclasses import dataclass, field
@@ -88,10 +89,39 @@ def _from_dict(data) -> AppEndpoint | None:
     return AppEndpoint(socket_name, token, pid, version)
 
 
+#: opened without following a link and without waiting for a writer (a FIFO), where the OS has them
+_READ_FLAGS = (
+    os.O_RDONLY
+    | getattr(os, "O_NOFOLLOW", 0)
+    | getattr(os, "O_NONBLOCK", 0)
+    | getattr(os, "O_BINARY", 0)
+)
+
+
+def _private(status: os.stat_result) -> bool:
+    """True for a regular file that only its owner can read, on POSIX (any file on Windows).
+
+    On Windows the mode bits do nothing: the file is protected by its folder's ACL, the user's
+    profile, and the token in the hello is the real gate (see the agent section of AGENTS.md).
+    """
+    if not stat.S_ISREG(status.st_mode):
+        return False
+    if os.name != "posix":
+        return True
+    return status.st_uid == os.getuid() and not status.st_mode & 0o077
+
+
 def _read_data(path: Path):
-    """The parsed JSON of ``path``, or None when it is missing, too big or not JSON."""
+    """The parsed JSON of ``path``, or None when it is missing, not a private regular file,
+    too big, or not JSON."""
     try:
-        with path.open("rb") as handle:
+        fd = os.open(path, _READ_FLAGS)
+    except OSError:
+        return None
+    try:
+        with os.fdopen(fd, "rb") as handle:
+            if not _private(os.fstat(handle.fileno())):
+                return None
             raw = handle.read(MAX_BYTES + 1)
     except OSError:
         return None
@@ -121,7 +151,7 @@ def write_endpoint(endpoint: AppEndpoint, path: Path | None = None) -> None:
     path = path if path is not None else discovery_path()
     if _from_dict(endpoint.to_dict()) is None:
         raise ValueError("the endpoint is not valid: a reader would not accept the file")
-    path.parent.mkdir(parents=True, exist_ok=True)
+    _make_folders(path.parent)
     fd, temporary = tempfile.mkstemp(dir=path.parent, prefix=".agent-", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
@@ -132,6 +162,21 @@ def write_endpoint(endpoint: AppEndpoint, path: Path | None = None) -> None:
     except BaseException:
         Path(temporary).unlink(missing_ok=True)
         raise
+
+
+def _make_folders(folder: Path) -> None:
+    """Create ``folder`` and any missing parents. A folder created here is private (0o700);
+    one that already exists is not touched."""
+    missing = []
+    current = folder
+    while not current.exists() and current != current.parent:
+        missing.append(current)
+        current = current.parent
+    for made in reversed(missing):
+        try:
+            made.mkdir(mode=0o700)
+        except FileExistsError:
+            pass
 
 
 def _replace(source: str, target: Path) -> None:
