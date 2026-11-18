@@ -15,7 +15,9 @@ stream, and logging goes to stderr.
 """
 
 import json
+import sys
 import threading
+import traceback
 from collections.abc import Callable
 from importlib import resources
 from pathlib import Path
@@ -24,7 +26,7 @@ from typing import Any
 import anyio
 from mcp.server.mcpserver import AcceptedElicitation, Context, Image, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
-from mcp.shared.exceptions import NoBackChannelError
+from mcp.shared.exceptions import MCPError, NoBackChannelError
 from mcp.types import CallToolResult, TextContent
 from pydantic import BaseModel, Field
 
@@ -87,6 +89,9 @@ class _State:
             return await anyio.to_thread.run_sync(work)
         except BackendError as error:
             raise ToolError(str(error)) from error
+        except Exception as error:  # a bug: the agent gets a short message, the log the traceback
+            traceback.print_exception(error, file=sys.stderr)
+            raise ToolError(f"{type(error).__name__}: {error}") from error
 
 
 def build_server(cwd: Path | None = None, *, headless: HeadlessBackend | None = None) -> MCPServer:
@@ -323,7 +328,7 @@ async def _answer(ctx: Context, text: str) -> Answer | None:
             )
         except NoBackChannelError:
             return None
-        except ValueError:  # the client's answer does not match the form: it is not a yes
+        except (MCPError, ValueError):  # the client refused the form, or answered badly: no
             return "denied"
         if isinstance(result, AcceptedElicitation) and result.data.allow:
             return "allowed"

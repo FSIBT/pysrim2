@@ -24,7 +24,7 @@ pytest.importorskip("mcp")  # the MCP SDK is an extra: the file is skipped witho
 
 from mcp import Client  # noqa: E402
 from mcp.client.stdio import StdioServerParameters  # noqa: E402
-from mcp.types import ElicitResult, Implementation  # noqa: E402
+from mcp.types import ElicitResult, ErrorData, Implementation  # noqa: E402
 from test_headless_status import fake_checks, n15_backend  # noqa: E402
 from test_results import run_folder  # noqa: E402
 
@@ -300,3 +300,27 @@ def test_the_stdio_server_exits_with_0_when_stdin_closes(tmp_path):
     )
     assert done.returncode == 0, done.stderr
     assert done.stdout == b""
+
+
+def test_a_client_error_on_the_question_is_a_refusal(tmp_path, fast):
+    async def broken(context, params):
+        return ErrorData(code=-32603, message="the form is not available")
+
+    srv, backend = server_for(tmp_path)
+    text = error_text(call(srv, "start_run", {}, mode="legacy", elicitation_callback=broken))
+    assert "did not allow" in text
+    assert backend.list_runs("n15.yaml") == []
+
+
+def test_an_unexpected_error_is_a_short_tool_error_and_the_traceback_goes_to_stderr(
+    tmp_path, capsys
+):
+    class Broken(HeadlessBackend):
+        def status(self):
+            raise RuntimeError("boom")
+
+    srv = server.build_server(tmp_path, headless=Broken(tmp_path, checks=READY))
+    text = error_text(call(srv, "status", {}))
+    assert text.endswith("RuntimeError: boom")  # the SDK prefixes the tool's name
+    assert "Traceback" not in text
+    assert "Traceback" in capsys.readouterr().err
