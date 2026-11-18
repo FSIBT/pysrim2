@@ -385,3 +385,17 @@ def test_a_dangling_link_is_a_replacement(tmp_path):
     make_link(tmp_path / "dangling.yaml", "nowhere.yaml")
     assert backend.would_replace(str(tmp_path / "dangling.yaml")) is True
     assert not (tmp_path / "nowhere.yaml").exists()
+
+
+def test_a_stale_agent_skill_alone_does_not_make_srim_not_ready(tmp_path):
+    backend = HeadlessBackend(
+        tmp_path,
+        checks=fake_checks(
+            check("pysrim2", True),
+            check("trim-exe", True),
+            check("agent-skill", False, "out of date", "run: pysrim2 install skill"),
+        ),
+    )
+    status = backend.status()
+    assert status["srim_ready"] is True
+    assert status["srim_problem"] is None
