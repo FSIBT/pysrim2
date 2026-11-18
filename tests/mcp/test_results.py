@@ -4,6 +4,7 @@ per-ion RANGE_3D.txt) or test_files/2 (no per-ion output). PNG files are checked
 """
 
 import json
+import shutil
 import sys
 from copy import deepcopy
 from pathlib import Path
@@ -17,7 +18,8 @@ from srim.app.plots import CATALOGUE
 from srim.mcp import results
 from srim.mcp.backend import BackendError
 from srim.mcp.headless import HeadlessBackend
-from srim.output import Range3D
+from srim.output import EXYZ, Backscat, Collision, Range3D, Sputter, Transmit
+from srim.output.tables import Results
 from srim.scan import Scan
 from srim.spec import RunSpec
 
@@ -272,3 +274,40 @@ def test_the_headless_backend_exports_relative_to_its_folder(tmp_path):
 def test_the_headless_results_need_a_run(tmp_path):
     with pytest.raises(BackendError, match="no run"):
         HeadlessBackend(tmp_path).summary(None)
+
+
+def test_the_collision_export_lists_the_tables_without_parsing_them(tmp_path, monkeypatch):
+    """The include list of an export with collision events is built from the files on disk:
+    no per-ion output is parsed to learn that it is there. The export's writer is faked, so
+    only the list (and the parsers it would call) is under test."""
+    folder = run_folder(tmp_path)  # test_files/1: RANGE_3D.txt, no EXYZ, BACKSCAT, ...
+    point = next((folder / "points").iterdir())
+    shutil.copy(ROOT / "test_files" / "SiC-C" / "COLLISON.txt", point / "COLLISON.txt")
+    parsed = []
+
+    def refuse(self, *args, **kwargs):
+        parsed.append(type(self).__name__)
+        raise AssertionError(f"{type(self).__name__} was parsed")
+
+    for parser in (Range3D, EXYZ, Backscat, Transmit, Sputter, Collision):
+        monkeypatch.setattr(parser, "__init__", refuse)
+    seen = {}
+
+    def fake_to_csv(self, directory, spec=None, include=None, chunk_rows=100_000):
+        seen["include"] = include
+        return {}
+
+    monkeypatch.setattr(Results, "to_csv", fake_to_csv)
+    out = results.export(folder, "csv", tmp_path / "out", include_collision=True)
+    assert parsed == []
+    assert seen["include"] == [
+        "ioniz",
+        "vacancy",
+        "novac",
+        "e2recoil",
+        "phonon",
+        "range",
+        "range3d",
+        "collision",
+    ]
+    assert out == {"written": [str(tmp_path / "out" / "metadata.yaml")]}

@@ -19,6 +19,7 @@ from srim.analysis import implant_summary
 from srim.app.plots import CATALOGUE, PlotDef, missing_reason, plot_data
 from srim.mcp.backend import BackendError
 from srim.notebook import load_run
+from srim.output._common import _find_output
 from srim.spec import RunSpec
 
 #: the folder of a run folder that holds the plots the agent asked for
@@ -64,6 +65,16 @@ _TABLE_NAMES = {
     "collision": "collision",
 }
 
+#: the per-ion tables, and their files: :class:`~srim.output.Results` parses one on its first
+#: access, so its presence is checked on disk instead (the same names as its lazy registry)
+_PER_ION_FILES = {
+    "range3d": "RANGE_3D.txt",
+    "exyz": "EXYZ.txt",
+    "backscat": "BACKSCAT.txt",
+    "transmit": "TRANSMIT.txt",
+    "sputter": "SPUTTER.txt",
+    "collision": "COLLISON.txt",
+}
 _BY_KEY = {plot.key: plot for plot in CATALOGUE}
 
 
@@ -168,6 +179,21 @@ def _limit(max_rows: Any) -> int:
     return min(max_rows, MAX_TABLE_ROWS)
 
 
+def _present(results, name: str) -> bool:
+    """Whether the table ``name`` is in ``results``, without parsing a per-ion file.
+
+    A single run's per-ion output (:data:`_PER_ION_FILES`) is looked for on disk, as
+    :class:`~srim.output.Results` looks for it, so no file is parsed. A merged run builds its
+    tables on first access, so asking for one parses nothing; the other tables are read when
+    the results are opened.
+    """
+    attribute = _TABLE_NAMES[name]
+    filename = _PER_ION_FILES.get(name)
+    if filename is None or hasattr(results, "batches"):
+        return getattr(results, attribute, None) is not None
+    return _find_output(results.directory, filename) is not None
+
+
 # --- the functions the backend calls -----------------------------------------------------------
 
 
@@ -266,9 +292,7 @@ def export(
     results = opened.results
     include = None
     if include_collision:
-        include = [
-            name for name in _TABLE_NAMES if getattr(results, _TABLE_NAMES[name], None) is not None
-        ]
+        include = [name for name in _TABLE_NAMES if _present(results, name)]
         if "collision" not in include:
             raise BackendError("this run has no collision events (COLLISON.txt) to export")
     spec = _point_spec(opened.point_dir)
