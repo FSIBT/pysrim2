@@ -24,6 +24,7 @@ from srim.app.agent_server import AgentServer, AgentSocketError
 from srim.app.agent_settings_dialog import AgentSettingsDialog
 from srim.app.approval_dialog import ApprovalQueue
 from srim.app.beam_tab import BeamTab
+from srim.app.connect_dialog import ConnectDialog
 from srim.app.document import DocumentModel
 from srim.app.geometry import GeometryTab
 from srim.app.guidance import Guidance, setup_guidance
@@ -140,6 +141,8 @@ class MainWindow(QMainWindow):
         self.agent_panel.load_recent(ActivityLog())
         self._agent_panel_shown = False
         self.agent.client_connected.connect(self._on_agent_connected)
+        #: the Connect an agent dialog, made the first time it is asked for
+        self.connect_dialog: ConnectDialog | None = None
 
         # Editors are keyed "geometry", "beam", "settings" and "scan".
         self.editors: dict[str, QWidget] = {}
@@ -261,6 +264,11 @@ class MainWindow(QMainWindow):
         self.stop_notebook_action.triggered.connect(self._stop_notebook)
 
         agent_menu = menus.addMenu("&Agent")
+        self.connect_agent_action = agent_menu.addAction("&Connect an agent…")
+        self.connect_agent_action.triggered.connect(
+            lambda _checked=False: self.open_connect_dialog()
+        )
+        agent_menu.addSeparator()
         self.agent_activity_action = self.agent_panel.toggleViewAction()
         agent_menu.addAction(self.agent_activity_action)
         self.agent_settings_action = agent_menu.addAction("Agent &settings…")
@@ -316,6 +324,16 @@ class MainWindow(QMainWindow):
             return
         self._agent_panel_shown = True
         self.agent_panel.show()
+
+    def open_connect_dialog(self) -> None:
+        """Show the Connect an agent dialog without blocking the window (it is kept for later)."""
+        if self._closing:
+            return
+        if self.connect_dialog is None:
+            self.connect_dialog = ConnectDialog(self)
+        self.connect_dialog.show()
+        self.connect_dialog.raise_()
+        self.connect_dialog.activateWindow()
 
     def open_agent_settings(self) -> None:
         if self._closing:
