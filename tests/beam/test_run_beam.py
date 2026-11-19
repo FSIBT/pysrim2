@@ -321,3 +321,26 @@ def test_the_live_bins_of_a_binned_point_are_read_with_their_units(tmp_path):
     with open_results(point, live=True) as merged:
         assert merged.beam_bins is not None
         assert merged.n_ions == 10
+
+
+def test_open_results_live_reads_the_spec_after_the_units(tmp_path, monkeypatch):
+    # the writer replaces the spec before the units; a reader that reads the units first
+    # never gets a spec older than them, so a spec written while it reads is the one it gets
+    import pandas as pd
+
+    from srim.beam import open_results
+    from srim.scan.batches import write_point_record
+
+    point = _live_point(tmp_path, units=[0])
+    newer = RunSpec.from_yaml(point / "run.live.yaml").with_overrides(["number_ions=30"])
+    real_read_csv = pd.read_csv
+
+    def writer_moves_on(path, *args, **kwargs):
+        frame = real_read_csv(path, *args, **kwargs)
+        if Path(path).name == "units.live.csv":
+            write_point_record(point, newer, [(0, 0, None, 10, 100)], live=True)
+        return frame
+
+    monkeypatch.setattr(pd, "read_csv", writer_moves_on)
+    with open_results(point, live=True) as merged:
+        assert merged.spec["number_ions"] == 30

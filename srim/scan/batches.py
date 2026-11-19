@@ -103,7 +103,9 @@ def write_point_record(folder, spec, units, beam_bins=None, provenance=None, liv
 
     With ``live``, the same records are written under the names in :data:`LIVE_FILES` (the
     live record of a point that is still running). Every file is replaced atomically, so a
-    reader sees the previous record or the new one. The final record is written without
+    reader sees the previous version of a file or the new one. The files are written in the
+    order spec, bins, units, so a reader that reads the units first, then the spec and bins,
+    never has units newer than the spec and bins it reads. The final record is written without
     ``live``; the caller removes the live files then (:func:`remove_live_files`).
     """
     folder = Path(folder)
@@ -114,11 +116,13 @@ def write_point_record(folder, spec, units, beam_bins=None, provenance=None, liv
         else (RUN_FILE, UNITS_FILE, BINS_FILE)
     )
     _write_atomic(folder / run_name, lambda path: spec.to_yaml(path, provenance=provenance))
-    frame = pd.DataFrame(list(units), columns=list(UNIT_COLUMNS))
-    frame = frame.astype("Int64")
-    _write_atomic(folder / units_name, lambda path: frame.to_csv(path, index=False))
     if beam_bins is not None:
         _write_atomic(folder / bins_name, lambda path: beam_bins.to_csv(path, index=False))
+    frame = pd.DataFrame(list(units), columns=list(UNIT_COLUMNS))
+    frame = frame.astype("Int64")
+    # the units are written last: a reader that reads them first never sees them newer than
+    # the spec and bins it reads after (see :func:`srim.beam.open_results`)
+    _write_atomic(folder / units_name, lambda path: frame.to_csv(path, index=False))
 
 
 def has_live_record(folder) -> bool:

@@ -1,6 +1,7 @@
 """run_batches: seeds, batch sizes and merging (mocked runner, no SRIM)."""
 
 import warnings
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -267,3 +268,31 @@ def test_bin_columns_follow_the_batch_column_in_per_ion_tables():
     plain = MergedResults([FakeResults(SPEC, 1.0)], [BatchInfo(0, 1, 10)], spec=SPEC.to_dict())
     assert list(plain.range3d.df.columns)[:3] == ["ion", "batch", "depth_A"]
     assert plain.beam_bins is None
+
+
+class _SpecStub:
+    """Stands in for a RunSpec: write_point_record only calls ``to_yaml``."""
+
+    def to_yaml(self, path, provenance=None):
+        Path(path).write_text("spec\n", encoding="utf-8")
+
+
+def test_a_live_record_is_written_spec_then_bins_then_units(tmp_path, monkeypatch):
+    # a reader reads the units first and the spec and bins after, so the spec and the bins
+    # are never older than the units: the units are the last file of the record to be replaced
+    from srim.scan import batches
+
+    written = []
+    real = batches._write_atomic
+
+    def recording(path, write):
+        written.append(Path(path).name)
+        return real(path, write)
+
+    monkeypatch.setattr(batches, "_write_atomic", recording)
+    bins = pd.DataFrame({"bin": [0], "energy_keV": [10.0], "angle_deg": [7.0]})
+    batches.write_point_record(tmp_path, _SpecStub(), [(0, 0, 0, 10, 1)], bins, live=True)
+    assert written == ["run.live.yaml", "beam_bins.live.csv", "units.live.csv"]
+    written.clear()
+    batches.write_point_record(tmp_path, _SpecStub(), [(0, 0, 0, 10, 1)], bins)
+    assert written == ["run.yaml", "beam_bins.csv", "units.csv"]

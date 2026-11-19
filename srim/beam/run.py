@@ -53,6 +53,10 @@ def open_results(point_dir, cleanup=None, live=False) -> MergedResults:
         read the live record of a point that is still running instead (its finished units so
         far, see :func:`~srim.scan.batches.write_point_record`). A point that is finished or
         stopped has no live record: its final record is the one to read. Default False.
+        The live files are replaced one after another, not as a set: they are read units
+        first, then spec and bins, so the spec and the bins are never older than the units
+        (a spec or bins newer than the units just list more than the units read). A file
+        replaced while it is read is read whole, as the old or the new version.
 
     Returns
     -------
@@ -81,8 +85,10 @@ def open_results(point_dir, cleanup=None, live=False) -> MergedResults:
         if not (folder / name).is_file():
             what = "a live record" if live else "a finished batched point"
             raise FileNotFoundError(f"{folder} has no {name}: not {what}")
-    spec = RunSpec.from_yaml(folder / run_name)
+    # the units are read first, then the spec and the bins (the writer replaces them in the
+    # order spec, bins, units): the spec and bins read are never older than the units
     units = pd.read_csv(folder / units_name)
+    spec = RunSpec.from_yaml(folder / run_name)
     bins = None
     if (folder / bins_name).is_file():
         bins = pd.read_csv(folder / bins_name)
