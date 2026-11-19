@@ -292,3 +292,37 @@ def test_the_allow_agents_action_follows_the_setting(qtbot, tmp_path, monkeypatc
     win = MainWindow(AppSettings(route="wine", agent_socket=False), checks_fn=lambda route: [])
     qtbot.addWidget(win)
     assert not win.agent_socket_action.isChecked()
+
+
+def test_a_socket_that_did_not_start_is_shown_on_the_action(window, monkeypatch):
+    from srim.app.agent_server import AgentSocketError
+
+    def refuse():
+        raise AgentSocketError("the socket name is taken")
+
+    action = window.agent_socket_action
+    action.setChecked(False)  # stop: nothing listens yet
+    monkeypatch.setattr(window.agent, "start", refuse)
+    action.setChecked(True)  # the choice is kept, the start fails
+    assert load_settings().agent_socket is True
+    assert "not listening" in action.text()
+    assert action.toolTip() == "Agents cannot connect: the socket name is taken"
+
+
+def test_a_socket_that_starts_clears_the_note(window, monkeypatch):
+    from srim.app.agent_server import AgentSocketError
+
+    def refuse():
+        raise AgentSocketError("x")
+
+    action = window.agent_socket_action
+    action.setChecked(False)
+    monkeypatch.setattr(window.agent, "start", refuse)
+    action.setChecked(True)
+    assert "not listening" in action.text()
+    monkeypatch.undo()
+    action.setChecked(False)
+    action.setChecked(True)
+    assert window.agent.listening
+    assert "not listening" not in action.text()
+    assert "Agents cannot connect" not in action.toolTip()  # Qt shows the text when no tip is set

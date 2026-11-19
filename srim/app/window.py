@@ -133,6 +133,8 @@ class MainWindow(QMainWindow):
         self.agent = AgentServer(handler, parent=self)
         #: why the agent socket did not start (None when it runs or was never asked to)
         self._agent_message: Guidance | None = None
+        #: the same reason as text, for the "Allow agents to connect" action (None when listening)
+        self._agent_failure: str | None = None
         #: the Agent activity panel: hidden until the first agent connects (see
         #: _on_agent_connected); it shows the log's newest entries from before this start
         self.agent_panel = AgentPanel(self)
@@ -876,9 +878,12 @@ class MainWindow(QMainWindow):
         try:
             self.agent.start()
         except AgentSocketError as error:
-            self._agent_message = Guidance(f"Agents cannot connect: {error}")
+            self._agent_failure = f"Agents cannot connect: {error}"
+            self._agent_message = Guidance(self._agent_failure)
         else:
+            self._agent_failure = None
             self._agent_message = None
+        self._show_agent_socket_state()
         self._show_status()
 
     def stop_agent_socket(self) -> None:
@@ -888,7 +893,22 @@ class MainWindow(QMainWindow):
         """
         self.agent.stop()
         self._agent_message = None
+        self._agent_failure = None
+        self._show_agent_socket_state()
         self._show_status()
+
+    def _show_agent_socket_state(self) -> None:
+        """The action says when the choice is on but nothing listens, with the reason as its tip.
+
+        The text is the app's own (no agent text reaches it), and the tip is cleared once listening.
+        """
+        action = self.agent_socket_action
+        if self._agent_failure is None:
+            action.setText("&Allow agents to connect")
+            action.setToolTip("")
+        else:
+            action.setText("&Allow agents to connect (not listening)")
+            action.setToolTip(self._agent_failure)
 
     def refresh_checks(self) -> None:
         """Run the installation checks in a thread and show what is not ready."""
