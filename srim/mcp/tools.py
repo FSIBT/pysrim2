@@ -7,8 +7,9 @@ log, errors included, with what was asked and answered.
 
 The ask-first rules are the ones of the spec: a run estimated over the time limit or wanting more
 than the core limit, replacing a file this session did not write, discarding unsaved changes,
-and every installer step need the user's OK. The client's elicitation (``ask``) answers when it
-can. When it cannot (``ask`` is None or answers None), the call is refused with
+and every installer step need the user's OK. The question (``ask``) is the app's dialog in app
+mode, else the client's elicitation, and it answers when it can. When it cannot (``ask`` is None or
+answers None), the call is refused with
 :class:`ApprovalNeeded`, which carries a one-time code bound to exactly that action; the agent
 asks the user in the chat and repeats the call with the code.
 """

@@ -4,10 +4,11 @@ This is the only module that imports the MCP SDK (``mcp``, version 2.x). ``srim.
 lazily, once :func:`srim.mcp.mcp_available` says the SDK is installed.
 
 Each MCP tool calls one method of :class:`srim.mcp.tools.Tools` on a worker thread (so a slow run
-check never blocks the protocol). The client's name goes into the activity log, and the client's
-elicitation answers the ask-first questions; a client without elicitation gets the one-time code
-flow instead (see :mod:`srim.mcp.tools`). A :class:`BackendError` becomes a tool error with its
-message, which the agent shows to the user.
+check never blocks the protocol). The client's name goes into the activity log. With the open
+app, the ask-first questions go to the app's dialog and each log entry is sent to its panel (see
+:mod:`srim.mcp.app_client`); otherwise the client's elicitation answers them, and a client without
+elicitation gets the one-time code flow instead (see :mod:`srim.mcp.tools`). A
+:class:`BackendError` becomes a tool error with its message, which the agent shows to the user.
 
 Standard output is the protocol's channel while the server runs: nothing here prints. The SDK's
 stdio transport moves descriptor 1 to stderr while it serves, so stray output cannot corrupt the
