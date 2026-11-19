@@ -398,8 +398,10 @@ def _app_client_name(ctx: Context) -> str:
 
 def _app_ask(backend: Backend, abandoned: threading.Event, one_at_a_time: threading.Lock) -> Ask:
     """The question asked in the app's dialog. The server's lock is released while the user
-    answers, so other tools go on (as with :func:`_ask_for`). A call that was cancelled is refused,
-    and an allowance that comes after the cancel does not count."""
+    answers, but the app's connection is held for the answer (see ``AppClient``), so the agent's
+    other requests that reach the app wait for it. The dialog gives up after 120 s, so that wait is
+    at most about two minutes. A call that was cancelled is refused, and an allowance that comes
+    after the cancel does not count."""
 
     def ask(text: str) -> Answer | None:
         if abandoned.is_set():
@@ -427,7 +429,8 @@ def _ask_for(ctx: Context, one_at_a_time: threading.Lock, abandoned: threading.E
     """The question to ask the user through the client, or None when the client cannot answer
     questions (it did not declare elicitation). Called on the event loop; the question itself
     runs in the worker thread that is making the call. The lock is released while the user
-    answers, so the other tools go on; the caller checks the setup again once the answer is in."""
+    answers, so the other tools go on; the caller checks the setup again once the answer is in.
+    This is the headless path only: in app mode the other calls wait (see :func:`_app_ask`)."""
     capabilities = ctx.client_capabilities
     if capabilities is None or capabilities.elicitation is None:
         return None

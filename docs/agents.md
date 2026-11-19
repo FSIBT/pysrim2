@@ -255,7 +255,9 @@ Other rules of the questions:
 - A refusal is final. The agent must not retry the call, split it, or find another way to do
   the same thing; it reports the refusal to you.
 - If the call is cancelled while the question is open, nothing is started.
-- Other tools keep working while a question is open.
+- In headless mode other tools keep working while a question is open. In app mode the question
+  is the window's dialog, and the agent's other requests wait for its answer. The dialog gives up
+  after two minutes, so the wait is at most that long.
 - Two `start_run` calls each ask, and each one that you allow can start its own run.
 
 Every request and answer goes into the activity log.
