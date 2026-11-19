@@ -285,3 +285,21 @@ def test_an_unreadable_runner_json_refuses_to_start(tmp_path):
     (folder / PID_FILE).write_text("not json", encoding="utf-8")
     with pytest.raises(BackendError, match="runner.json"):
         start_detached(folder, workers=1, env=fake_runner_env())
+
+
+def test_runner_backend_says_which_runner_wrote_the_run_file(tmp_path):
+    from srim.mcp.detached import runner_backend, start_runner_file
+
+    folder = scan_folder_with_one_point(tmp_path)
+    assert runner_backend(folder) is None  # no run file: the run never started
+    start_runner_file(folder, workers=1, backend="app")
+    assert runner_backend(folder) == "app"
+
+
+def test_runner_backend_refuses_a_run_file_it_cannot_read(tmp_path):
+    from srim.mcp.detached import PID_FILE, runner_backend
+
+    folder = scan_folder_with_one_point(tmp_path)
+    (folder / PID_FILE).write_text("not json", encoding="utf-8")
+    with pytest.raises(BackendError, match="not a run file"):
+        runner_backend(folder)

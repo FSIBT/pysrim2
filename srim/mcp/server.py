@@ -33,7 +33,8 @@ from pydantic import BaseModel, Field
 import srim
 from srim.app.settings import AppSettings, load_settings
 from srim.installer.skill import skill_text
-from srim.mcp.activity import ActivityLog
+from srim.mcp.activity import ActivityEntry, ActivityLog
+from srim.mcp.app_client import DEFAULT_CLIENT, AppGone, AppLink
 from srim.mcp.approval import ApprovalCodes
 from srim.mcp.backend import Backend, BackendError
 from srim.mcp.headless import HeadlessBackend
@@ -51,37 +52,61 @@ class Allow(BaseModel):
     allow: bool = Field(description="True to allow the action")
 
 
-def choose_backend(cwd: Path, headless: HeadlessBackend) -> Backend:
-    """The backend that answers a call. Only the headless one exists so far."""
-    del cwd  # the app backend will look for a running app from here
-    return headless
+def choose_backend(link: AppLink, client: str, headless: Backend) -> Backend:
+    """The backend that answers a call: the open app while it answers, else ``headless`` (see
+    :class:`srim.mcp.app_client.AppLink`). ``client`` is the name the app shows."""
+    return link.backend(client, headless)
+
+
+class _Relay:
+    """The activity log, with each entry also sent to the app's panel while the app answers."""
+
+    def __init__(self, log: ActivityLog, send: Callable[[ActivityEntry], None] | None):
+        self._log = log
+        self._send = send
+
+    def append(self, entry: ActivityEntry) -> None:
+        self._log.append(entry)
+        if self._send is not None:
+            try:
+                self._send(entry)
+            except BackendError:
+                # not fatal: a lost connection is handled by the next call (see AppLink)
+                pass
 
 
 class _State:
-    """What one server keeps between calls: the backend, the log, the codes, one call at a time."""
+    """What one server keeps between calls: the backend link, the log, the codes, one call at a
+    time."""
 
-    def __init__(self, cwd: Path, headless: HeadlessBackend, settings: Callable[[], AppSettings]):
+    def __init__(
+        self,
+        cwd: Path,
+        headless: HeadlessBackend,
+        settings: Callable[[], AppSettings],
+        link: AppLink,
+    ):
         self.cwd = cwd
         self.headless = headless
         #: the reader of the saved settings: each run request reads the limits again
         self.settings = settings
+        #: the app's connection, kept between calls (one client while the app answers)
+        self.link = link
         self.log = ActivityLog()
         self.approvals = ApprovalCodes()
         self._one_at_a_time = threading.Lock()
 
-    async def run(self, ctx: Context, action: Callable[[Tools], Any]) -> Any:
+    async def run(self, ctx: Context, action: Callable[[Tools], Any], *, read_only: bool = False):
         """``action`` on a worker thread, with this call's tools. A :class:`BackendError` is
-        returned to the agent as a tool error with its message."""
+        returned to the agent as a tool error with its message.
+
+        ``read_only`` tools are answered again by the headless backend when the app closes during
+        the call; the others report that the app closed, as an edit may have been made.
+        """
         abandoned = threading.Event()  # set when the client cancels this call
-        tools = Tools(
-            choose_backend(self.cwd, self.headless),
-            self.log,
-            self.approvals,
-            self.settings,
-            client=_client_name(ctx),
-            ask=_ask_for(ctx, self._one_at_a_time, abandoned),
-            cores=None,  # the backend's own core count: the limit is the library's
-        )
+        client = _client_name(ctx)
+        hello = _app_client_name(ctx)
+        elicit = _ask_for(ctx, self._one_at_a_time, abandoned)
 
         def work() -> Any:
             # one call at a time, except while a question waits for the user (see _ask_for)
@@ -89,7 +114,7 @@ class _State:
             try:
                 if abandoned.is_set():
                     raise BackendError("the call was cancelled, so nothing was done")
-                return action(tools)
+                return self._attempt(action, client, hello, elicit, abandoned, read_only)
             finally:
                 self._one_at_a_time.release()
 
@@ -105,18 +130,73 @@ class _State:
             traceback.print_exception(error, file=sys.stderr)
             raise ToolError(f"{type(error).__name__}: {error}") from error
 
+    def _attempt(
+        self,
+        action: Callable[[Tools], Any],
+        client: str,
+        hello: str,
+        elicit: Ask | None,
+        abandoned: threading.Event,
+        read_only: bool,
+    ) -> Any:
+        backend = choose_backend(self.link, hello, self.headless)
+        try:
+            result = action(self._tools(backend, client, elicit, abandoned))
+        except AppGone:
+            self.link.lost()
+            if not read_only:
+                raise
+            backend = choose_backend(self.link, hello, self.headless)
+            result = action(self._tools(backend, client, elicit, abandoned))
+        notice = self.link.take_notice()
+        if notice is not None and isinstance(result, dict):
+            result = {**result, "note": notice}
+        return result
 
-def build_server(cwd: Path | None = None, *, headless: HeadlessBackend | None = None) -> MCPServer:
+    def _tools(
+        self,
+        backend: Backend,
+        client: str,
+        elicit: Ask | None,
+        abandoned: threading.Event,
+    ) -> Tools:
+        """This call's tools. In app mode the questions and the log go to the app; otherwise the
+        client's elicitation answers the questions and the log stays in the file."""
+        if backend.mode == "app":
+            ask = _app_ask(backend, abandoned)
+            send: Callable[[ActivityEntry], None] | None = backend.log
+        else:
+            ask, send = elicit, None
+        return Tools(
+            backend,
+            _Relay(self.log, send),
+            self.approvals,
+            self.settings,
+            client=client,
+            ask=ask,
+            cores=None,  # the backend's own core count: the limit is the library's
+        )
+
+
+def build_server(
+    cwd: Path | None = None,
+    *,
+    headless: HeadlessBackend | None = None,
+    link: AppLink | None = None,
+) -> MCPServer:
     """The pysrim2 MCP server, with its tools, the instructions and the skill resource.
 
     ``cwd`` is the working directory that relative paths are resolved from (the current one
-    when None). ``headless`` replaces the backend, so tests can pass fake checks.
+    when None). ``headless`` replaces the headless backend, and ``link`` the connection to the
+    app (tests pass their own), so tests can pass fake checks and a fake app.
     """
     cwd = Path(cwd) if cwd is not None else Path.cwd()
     settings = load_settings()
     if headless is None:
         headless = HeadlessBackend(cwd, settings=settings)
-    state = _State(cwd, headless, load_settings)
+    if link is None:
+        link = AppLink(cwd=cwd)
+    state = _State(cwd, headless, load_settings, link)
     server = MCPServer(
         "pysrim2",
         instructions=resources.files("srim.mcp")
@@ -128,29 +208,29 @@ def build_server(cwd: Path | None = None, *, headless: HeadlessBackend | None = 
     @server.tool()
     async def status(ctx: Context) -> dict:
         """Whether SRIM is ready, the doctor's checks, the setup's file and the latest run."""
-        return await state.run(ctx, lambda t: t.status())
+        return await state.run(ctx, lambda t: t.status(), read_only=True)
 
     @server.tool()
     async def get_setup(ctx: Context) -> dict:
         """The current run setup (the run.yaml layout), its file and what it still needs."""
-        return await state.run(ctx, lambda t: t.get_setup())
+        return await state.run(ctx, lambda t: t.get_setup(), read_only=True)
 
     @server.tool()
     async def lookup_element(ctx: Context, text: str) -> dict:
         """Look up an element or isotope by its symbol or name (e.g. "N", "N15")."""
-        return await state.run(ctx, lambda t: t.lookup_element(text))
+        return await state.run(ctx, lambda t: t.lookup_element(text), read_only=True)
 
     @server.tool()
     async def find_material(ctx: Context, text: str) -> dict:
         """Look up a compound or material with its formula and density (e.g. "SiO2")."""
-        return await state.run(ctx, lambda t: t.find_material(text))
+        return await state.run(ctx, lambda t: t.find_material(text), read_only=True)
 
     @server.tool()
     async def estimate(
         ctx: Context, workers: int | None = None, batch_ions: int | None = None
     ) -> dict:
         """The time, workers and cores a run of the setup would take. Changes nothing."""
-        return await state.run(ctx, lambda t: t.estimate(workers, batch_ions))
+        return await state.run(ctx, lambda t: t.estimate(workers, batch_ions), read_only=True)
 
     @server.tool()
     async def set_values(ctx: Context, assignments: list[str]) -> dict:
@@ -196,7 +276,7 @@ def build_server(cwd: Path | None = None, *, headless: HeadlessBackend | None = 
     @server.tool()
     async def run_status(ctx: Context, folder: str | None = None) -> dict:
         """The state of a run (its progress and points). Default: the latest run."""
-        return await state.run(ctx, lambda t: t.run_status(folder))
+        return await state.run(ctx, lambda t: t.run_status(folder), read_only=True)
 
     @server.tool()
     async def control_run(ctx: Context, action: str, folder: str | None = None) -> dict:
@@ -206,7 +286,7 @@ def build_server(cwd: Path | None = None, *, headless: HeadlessBackend | None = 
     @server.tool()
     async def list_runs(ctx: Context, setup_path: str | None = None) -> dict:
         """The run folders of a setup, newest first, with their status."""
-        return await state.run(ctx, lambda t: t.list_runs(setup_path))
+        return await state.run(ctx, lambda t: t.list_runs(setup_path), read_only=True)
 
     @server.tool()
     async def open_run(ctx: Context, folder: str, confirm_code: str | None = None) -> dict:
@@ -222,14 +302,14 @@ def build_server(cwd: Path | None = None, *, headless: HeadlessBackend | None = 
     @server.tool()
     async def summary(ctx: Context, folder: str | None = None, point: int | None = None) -> dict:
         """The implant summary of a run, one row: mean depth and straggle. A scan needs a point."""
-        return await state.run(ctx, lambda t: t.summary(folder, point))
+        return await state.run(ctx, lambda t: t.summary(folder, point), read_only=True)
 
     @server.tool()
     async def available_plots(
         ctx: Context, folder: str | None = None, point: int | None = None
     ) -> dict:
         """The plots of a run, with their keys, and whether each one is available."""
-        return await state.run(ctx, lambda t: t.available_plots(folder, point))
+        return await state.run(ctx, lambda t: t.available_plots(folder, point), read_only=True)
 
     @server.tool()
     async def table(
@@ -240,14 +320,14 @@ def build_server(cwd: Path | None = None, *, headless: HeadlessBackend | None = 
         max_rows: int = 500,
     ) -> dict:
         """The data behind a plot key, at most max_rows rows (5000 at most)."""
-        return await state.run(ctx, lambda t: t.table(folder, point, key, max_rows))
+        return await state.run(ctx, lambda t: t.table(folder, point, key, max_rows), read_only=True)
 
     @server.tool(structured_output=False)
     async def plot(
         ctx: Context, folder: str | None = None, point: int | None = None, key: str = ""
     ) -> CallToolResult:
         """Draw a plot of a run. Returns the picture and its details (the saved file's path)."""
-        details = await state.run(ctx, lambda t: t.plot(folder, point, key))
+        details = await state.run(ctx, lambda t: t.plot(folder, point, key), read_only=True)
         png = await anyio.to_thread.run_sync(Path(details["path"]).read_bytes)
         return CallToolResult(
             content=[
@@ -277,7 +357,7 @@ def build_server(cwd: Path | None = None, *, headless: HeadlessBackend | None = 
     async def install_plan(ctx: Context, components: list[str] | None = None) -> dict:
         """The installer steps still to do for the components (the default ones when none),
         with their commands. Admin steps are listed, never run."""
-        return await state.run(ctx, lambda t: t.install_plan(components))
+        return await state.run(ctx, lambda t: t.install_plan(components), read_only=True)
 
     @server.tool()
     async def install_step(ctx: Context, component: str, confirm_code: str | None = None) -> dict:
@@ -305,6 +385,27 @@ def build_server(cwd: Path | None = None, *, headless: HeadlessBackend | None = 
         return skill_text()
 
     return server
+
+
+def _app_client_name(ctx: Context) -> str:
+    """The name the app shows for this client: the MCP client's own name, or "an agent"."""
+    params = ctx.session.client_params
+    info = params.client_info if params is not None else None
+    name = info.name.strip() if info is not None else ""
+    return name or DEFAULT_CLIENT
+
+
+def _app_ask(backend: Backend, abandoned: threading.Event) -> Ask:
+    """The question asked in the app's dialog. A call that was cancelled is refused, and an
+    allowance that comes after the cancel does not count (see :func:`_ask_for`)."""
+
+    def ask(text: str) -> Answer | None:
+        if abandoned.is_set():
+            return "denied"
+        answer = backend.ask(text)
+        return "denied" if abandoned.is_set() and answer == "allowed" else answer
+
+    return ask
 
 
 def _client_name(ctx: Context) -> str:

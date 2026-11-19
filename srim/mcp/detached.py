@@ -343,6 +343,16 @@ def _runner_meta(folder: Path) -> dict | None:
     return meta
 
 
+def runner_backend(folder) -> str | None:
+    """The backend a run's runner was started with (``"local"`` for a detached run, ``"app"`` for
+    a run the app started), or None when the folder has no run file yet. Raises
+    :class:`~srim.mcp.backend.BackendError` when the run file cannot be read."""
+    meta = _runner_meta(Path(folder))
+    if meta is None:
+        return None
+    return meta.get("backend")
+
+
 def _write_meta(folder: Path, meta: dict) -> None:
     """Write ``runner.json`` whole or not at all: a temporary file, then ``os.replace``."""
     target = folder / PID_FILE
