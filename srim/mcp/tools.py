@@ -59,7 +59,7 @@ class Tools:
         backend: Backend,
         log: ActivityLog,
         approvals: ApprovalCodes,
-        settings: AppSettings,
+        settings: "AppSettings | Callable[[], AppSettings]",
         client: str,
         ask: Ask | None = None,
         cores: int | None = None,
@@ -67,10 +67,16 @@ class Tools:
         self.backend = backend
         self.log = log
         self.approvals = approvals
-        self.settings = settings
+        # a reader (the server passes load_settings) is asked at each check, so a limit saved
+        # while the server runs counts for the next run; an object is used as it is
+        self._settings = settings
         self.client = client
         self._ask = ask
         self._cores = cores  # None: the cores the backend estimates with
+
+    def _limits(self) -> AppSettings:
+        """The ask-first limits as they are saved now."""
+        return self._settings() if callable(self._settings) else self._settings
 
     # --- status and reading -------------------------------------------------------------------
 
@@ -280,7 +286,7 @@ class Tools:
             cores=cores,
             units=estimate["units"],
         )
-        reasons = reasons_to_ask(request, self.settings)
+        reasons = reasons_to_ask(request, self._limits())
         # starting saves unsaved changes into the setup's own file: that is a replacement when
         # this session did not create the file, so it is one of the reasons to ask
         if self.backend.has_unsaved_changes() and self.backend.would_replace(setup_path):

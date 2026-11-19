@@ -638,3 +638,22 @@ def test_opening_a_run_without_unsaved_changes_does_not_ask(tmp_path):
 
 def test_the_headless_backend_keeps_the_setup_when_it_opens_a_run():
     assert HeadlessBackend.open_run_replaces_setup is False
+
+
+def test_the_limits_are_read_at_each_start_so_a_saved_change_counts(tmp_path):
+    # the server passes a reader, not a snapshot: a limit saved after the server started counts
+    # for the next run (the first start asks under the default limit, the second does not)
+    saved = {"settings": AppSettings()}
+    tools = Tools(
+        FakeBackend(seconds=LONG),
+        ActivityLog(tmp_path / "activity.jsonl"),
+        ApprovalCodes(),
+        lambda: saved["settings"],
+        "test client 1.0",
+        ask=Asker("denied"),
+    )
+    with pytest.raises(BackendError, match="did not allow"):
+        tools.start_run()
+    saved["settings"] = AppSettings(agent_max_minutes=600)  # ten hours: a three-hour run is fine
+    tools.start_run()
+    assert tools.backend.started == [(2, None)]

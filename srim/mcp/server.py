@@ -60,9 +60,10 @@ def choose_backend(cwd: Path, headless: HeadlessBackend) -> Backend:
 class _State:
     """What one server keeps between calls: the backend, the log, the codes, one call at a time."""
 
-    def __init__(self, cwd: Path, headless: HeadlessBackend, settings: AppSettings):
+    def __init__(self, cwd: Path, headless: HeadlessBackend, settings: Callable[[], AppSettings]):
         self.cwd = cwd
         self.headless = headless
+        #: the reader of the saved settings: each run request reads the limits again
         self.settings = settings
         self.log = ActivityLog()
         self.approvals = ApprovalCodes()
@@ -115,7 +116,7 @@ def build_server(cwd: Path | None = None, *, headless: HeadlessBackend | None = 
     settings = load_settings()
     if headless is None:
         headless = HeadlessBackend(cwd, settings=settings)
-    state = _State(cwd, headless, settings)
+    state = _State(cwd, headless, load_settings)
     server = MCPServer(
         "pysrim2",
         instructions=resources.files("srim.mcp")
