@@ -283,7 +283,7 @@ The flow: `status` (is SRIM ready?), `get_setup` (what the setup still needs), `
   is open). Find it again with `list_runs(setup_path)` and
   `run_status`; `control_run` pauses, resumes or stops it.
 - A run the user wants to watch build up: `set_section("run", {"live": true})` before `start_run`. It
-  splits the run into ten batches, so its results agree statistically with an unbatched run but are
+  splits the run into ten batches (more above 999 990 ions), so its results agree statistically with an unbatched run but are
   not identical. It is refused for a scan. Turn it on only when the user asks.
 - Report which mode answered: each result has a `mode` field, `app` when the pysrim2 window answered
   and `headless` otherwise. Report where the plot file is.
