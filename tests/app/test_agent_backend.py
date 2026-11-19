@@ -804,3 +804,28 @@ def test_the_live_option_is_refused_for_a_scan_like_the_headless_backend(backend
     )
     with pytest.raises(BackendError, match="scan"):
         backend.handle("set_section", {"name": "run", "value": {"live": True}})
+
+
+# --- the run folders in use (a delete waits for the window) --------------------------------
+
+
+def test_folder_in_use_is_true_for_the_open_run_and_false_for_another(
+    qtbot, win, backend, tmp_path
+):
+    folder = run_once(qtbot, win)
+    assert backend.handle("folder_in_use", {"folder": str(folder)}) is True
+    assert backend.handle("folder_in_use", {"folder": str(tmp_path / "elsewhere")}) is False
+
+
+def test_folder_in_use_is_true_while_the_run_goes(qtbot, make_window, setup_file):
+    win = make_window(runner=slow_runner)
+    win.document.open(setup_file)
+    backend = AgentBackend(win)
+    with qtbot.waitSignal(win.run.started, timeout=RUN_TIMEOUT):
+        win.start_run_with(ParallelChoice())
+    folder = win.run.folder
+    try:
+        assert backend.handle("folder_in_use", {"folder": str(folder)}) is True
+    finally:
+        win.run.stop()
+        run_to_end(qtbot, win, timeout=STOP_TIMEOUT)

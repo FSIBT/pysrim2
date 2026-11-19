@@ -213,6 +213,8 @@ def setup_answer(path: Path):
     def answer(number, method, params):
         if method == "get_setup":
             return ("result", {"path": str(path), "setup": {}, "problems": [], "modified": False})
+        if method == "folder_in_use":
+            return ("result", False)  # no folder is open in this app
         return refuse_all(number, method, params)
 
     return answer
@@ -967,3 +969,29 @@ def test_the_app_coming_back_without_a_headless_call_in_between_is_not_said(tmp_
     fake_app()
     assert link.backend("codex", headless).mode == "app"
     assert link.take_notice() is None
+
+
+def test_delete_run_is_refused_for_a_run_folder_the_app_has_open_or_runs(tmp_path, fake_app):
+    from srim.app.runs import RUNS_SUFFIX
+
+    setup = tmp_path / "n15.yaml"
+    n15_backend(tmp_path).save_setup(str(setup))
+    runs = tmp_path / f"n15{RUNS_SUFFIX}"
+    folder = runs / "20260101-000000Z"
+    finished_scan(folder, Scan(spec(), seed=7), [DONE], source=ONE)
+    in_use = {"answer": True}
+
+    def answer(number, method, params):
+        if method == "folder_in_use":
+            return ("result", in_use["answer"])
+        return setup_answer(setup)(number, method, params)
+
+    fake_app(answer=answer)
+    client = connect_app("test", cwd=tmp_path)
+    with pytest.raises(BackendError, match="open or running in the pysrim2 app"):
+        client.delete_run(str(folder))
+    assert folder.exists()
+    in_use["answer"] = False
+    assert client.delete_run(str(folder))["deleted"] is True
+    assert not folder.exists()
+    client.close()

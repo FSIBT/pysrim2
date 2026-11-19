@@ -371,3 +371,35 @@ def test_a_live_setup_runs_in_ten_batches_in_its_run_folder(tmp_path, fast):
     units = pd.read_csv(folder / "points" / point.id[:16] / "units.csv")
     assert len(units) == 10 and int(units["n_ions"].sum()) == 10
     assert not (folder / "points" / point.id[:16] / "units.live.csv").exists()
+
+
+def test_a_run_the_app_started_and_still_runs_is_not_deleted_from_here(tmp_path):
+    # a run folder whose runner is the app's, and whose app process is alive, belongs to the app
+    from srim.mcp.detached import PID_FILE, start_runner_file
+    from srim.mcp.headless import delete_run_folder
+
+    from test_results import spec
+
+    from srim.scan import Scan
+    from srim.scan.events import ScanFinished
+
+    runs = tmp_path / "n15-runs"
+    folder = runs / "20260101-000000Z"
+    folder.mkdir(parents=True)
+    Scan(spec(), seed=7).to_yaml(folder / "scan.yaml")
+    start_runner_file(folder, workers=1, backend="app")  # this process: alive
+    # the run has ended, and the app is still open on it: still the app's
+    (folder / "events.jsonl").write_text(
+        ScanFinished(n_done=1, n_failed=0, seconds=1.0, stopped=False).to_json() + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(BackendError, match="pysrim2 app"):
+        delete_run_folder(folder, runs)
+    assert folder.exists()
+    # the app is gone: its folder can be deleted
+    (folder / PID_FILE).write_text(
+        json.dumps({"pid": 2**22 + 1, "started": 0, "workers": 1, "backend": "app"}),
+        encoding="utf-8",
+    )
+    delete_run_folder(folder, runs)
+    assert not folder.exists()

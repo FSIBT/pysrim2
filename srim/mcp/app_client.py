@@ -353,6 +353,12 @@ class AppClient:
         if setup is None:
             raise BackendError("the setup has no file yet: its run folders are next to its file")
         target = self._resolve(folder)
+        # the app's answer: only an exact False says the folder is not open or running there
+        if self._call("folder_in_use", {"folder": str(target)}) is not False:
+            raise BackendError(
+                f"the run folder {target} is open or running in the pysrim2 app: open another "
+                "run in the app first, then delete it"
+            )
         delete_run_folder(target, runs_folder(Path(setup)))
         return {"folder": str(target), "deleted": True}
 

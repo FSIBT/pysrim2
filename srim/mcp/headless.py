@@ -42,7 +42,14 @@ from srim.installer import steps as installer_steps
 from srim.installer.steps import ComponentUnavailable, Step
 from srim.mcp import results as results_lib
 from srim.mcp.backend import BackendError, NeedsApp
-from srim.mcp.detached import PID_FILE, run_state, send_control, start_detached
+from srim.mcp.detached import (
+    PID_FILE,
+    run_state,
+    runner_alive,
+    runner_backend,
+    send_control,
+    start_detached,
+)
 from srim.mcp.install_child import run_install
 from srim.mcp.limits import default_workers
 from srim.notebook import read_run_folder
@@ -412,6 +419,11 @@ def delete_run_folder(target: Path, runs: Path) -> None:
         raise BackendError(f"{target} is a symbolic link: only a run folder is deleted")
     if target.resolve().parent != runs.resolve() or not (target / "scan.yaml").is_file():
         raise BackendError(f"{target} is not a run folder of this setup (its runs are in {runs})")
+    # a run the pysrim2 app started, while the app runs, is the app's: it is not deleted from here
+    if runner_backend(target) == "app" and runner_alive(target):
+        raise BackendError(
+            f"the run in {target} belongs to the pysrim2 app, which is open: delete it in the app"
+        )
     # Known gap, no fix: between start_run writing scan.yaml and start_detached writing
     # runner.json, a starting run reads as "not started" and could be deleted (a moment).
     if (target / PID_FILE).is_file():

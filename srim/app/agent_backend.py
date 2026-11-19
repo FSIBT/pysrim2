@@ -67,6 +67,7 @@ SERVED = frozenset(
         "control_run",
         "list_runs",
         "open_run",
+        "folder_in_use",
         "show_plot",
         "ask",
         "log",
@@ -311,6 +312,20 @@ class AgentBackend:
         return deferred
 
     # --- the Results tab ----------------------------------------------------------------
+
+    def folder_in_use(self, folder: str) -> bool:
+        """True when the window has the run folder open, or runs it, or is reading it. A folder is
+        refused for deleting while this is True. While a run folder is being read, which one is not
+        known here, so every folder counts as in use."""
+        target = self._resolve(folder)
+        run = self.window.run
+        if run.loading:
+            return True
+        return (
+            run.folder is not None
+            and _same(run.folder, target)
+            and (run.running or run.state is not None)
+        )
 
     def show_plot(self, folder: str | None, point: int | None, key: str) -> Deferred:
         """Show a plot of a run the window holds in the Results tab. The folder is found in a

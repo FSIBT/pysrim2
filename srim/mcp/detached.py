@@ -343,6 +343,14 @@ def _runner_meta(folder: Path) -> dict | None:
     return meta
 
 
+def runner_alive(folder) -> bool:
+    """True when the runner of ``folder`` is still a process here (its pid is alive). False when
+    the folder has no run file. Raises :class:`~srim.mcp.backend.BackendError` when the run file
+    cannot be read."""
+    meta = _runner_meta(Path(folder))
+    return meta is not None and _pid_alive(meta.get("pid"))
+
+
 def runner_backend(folder) -> str | None:
     """The backend a run's runner was started with (``"local"`` for a detached run, ``"app"`` for
     a run the app started), or None when the folder has no run file yet. Raises
