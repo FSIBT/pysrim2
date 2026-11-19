@@ -149,13 +149,6 @@ class Deferred(QObject):
                 logger.exception("a cancel callback of an agent answer failed")
 
 
-class UnavailableBackend:
-    """The handler while the app has no agent backend: every request is refused."""
-
-    def handle(self, method: str, params: dict):
-        raise BackendError("the app is not ready for agents yet")
-
-
 def new_socket_name() -> str:
     """A socket name for this start: ``pysrim2-<user>-<8 random hex digits>``.
 
