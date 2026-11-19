@@ -776,3 +776,31 @@ def test_a_deferred_read_that_fails_unexpectedly_still_settles(
     assert ok is False
     assert isinstance(error, BackendError)
     assert "disk is gone" not in str(error)  # the agent gets the internal text, not the detail
+
+
+# --- the live option: the same shapes as the headless backend ----------------------------
+
+
+def test_the_live_option_is_in_get_setup_and_set_section_turns_it_on(qtbot, win, backend):
+    assert backend.handle("get_setup", {})["setup"]["live"] is False
+    backend.handle("set_section", {"name": "run", "value": {"live": True}})
+    assert backend.handle("get_setup", {})["setup"]["live"] is True
+    assert win.document.undo_label == "agent: set run"
+    assert win.editors["settings"].live_box.isChecked()
+
+
+def test_the_live_option_matches_the_headless_backend(backend, setup_file, tmp_path):
+    headless = HeadlessBackend(tmp_path, settings=AppSettings(route="wine"))
+    headless.open_setup(str(setup_file))
+    headless.set_section("run", {"live": True})
+    backend.handle("set_section", {"name": "run", "value": {"live": True}})
+    assert backend.handle("get_setup", {}) == headless.get_setup()
+
+
+def test_the_live_option_is_refused_for_a_scan_like_the_headless_backend(backend, setup_file):
+    backend.handle(
+        "set_section",
+        {"name": "scan", "value": {"grid": {"ion.energy_keV": [10, 20]}, "ions": 50}},
+    )
+    with pytest.raises(BackendError, match="scan"):
+        backend.handle("set_section", {"name": "run", "value": {"live": True}})

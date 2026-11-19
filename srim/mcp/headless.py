@@ -36,7 +36,7 @@ from srim.app.runs import (
     run_folder,
     scan_units,
 )
-from srim.app.scan_model import new_scan, scan_from_section, to_scan
+from srim.app.scan_model import is_live, new_scan, scan_from_section, to_scan
 from srim.app.settings import AppSettings
 from srim.installer import steps as installer_steps
 from srim.installer.steps import ComponentUnavailable, Step
@@ -52,7 +52,8 @@ from srim.scan.spec import normalise_key
 from srim.spec import SpecError, apply_overrides
 
 #: the run settings of ``set_section("run", ...)``: the spec's keys other than ion and target
-RUN_KEYS = ("number_ions", "calculation", "seed", "settings", "beam")
+#: ``live`` is the live-update option (see :func:`_set_live`), not a key of the spec
+RUN_KEYS = ("number_ions", "calculation", "seed", "settings", "beam", "live")
 #: the scan keys of ``scan.<key>=value``; ``grid.<key>`` takes a list of values
 SCAN_KEYS = ("grid", "ions", "batch_ions", "seed", "keep_seed", "extract")
 SECTIONS = ("ion", "target", "run", "scan")
@@ -110,6 +111,7 @@ class HeadlessBackend:
     def get_setup(self) -> dict:
         setup = clean(self._doc)
         setup["scan"] = deepcopy(self._doc.get("_scan"))
+        setup["live"] = is_live(self._doc)
         found = problems(self._doc, self._base_dir())
         return {
             "path": str(self._path) if self._path is not None else None,
@@ -601,9 +603,12 @@ def _set_units(layers: list[dict]) -> None:
 
 
 def _keep_app_keys(new: dict, old: dict) -> dict:
-    """``new`` (a plain spec) with the app's keys of ``old``: the scan, and each layer's unit."""
+    """``new`` (a plain spec) with the app's keys of ``old``: the scan, the live option, and each
+    layer's unit."""
     if "_scan" in old:
         new["_scan"] = old["_scan"]
+    if "_live" in old:
+        new["_live"] = old["_live"]
     old_layers = old.get("target") or []
     for index, layer in enumerate(new.get("target") or []):
         if index < len(old_layers) and "_unit" in old_layers[index]:
@@ -618,10 +623,28 @@ def _set_run(doc: dict, value: dict) -> None:
         if key not in RUN_KEYS:
             raise BackendError(f"unknown run setting {key!r} (allowed: {', '.join(RUN_KEYS)})")
     for key, item in value.items():
-        if item is None and key == "beam":
+        if key == "live":
+            _set_live(doc, item)
+        elif item is None and key == "beam":
             doc.pop("beam", None)  # no beam options: a plain beam
         else:
             doc[key] = deepcopy(item)
+
+
+def _set_live(doc: dict, value: Any) -> None:
+    """Turn the live-update option on or off (``_live``). It is not for a scan: a scan already
+    shows each point as it finishes, so it is refused while the setup has one."""
+    if not isinstance(value, bool):
+        raise BackendError("run.live must be true or false")
+    if value and "_scan" in doc:
+        raise BackendError(
+            "the live option does not apply to a scan (a scan already shows each point as it "
+            "finishes): remove the scan first, with set_section scan to null"
+        )
+    if value:
+        doc["_live"] = True
+    else:
+        doc.pop("_live", None)
 
 
 def _set_scan_section(doc: dict, value: Any) -> None:

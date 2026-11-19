@@ -209,3 +209,45 @@ def test_a_saved_setup_is_the_scripted_one(tmp_path):
         }
     )
     assert trim_in(saved, tmp_path / "from_file") == trim_in(scripted, tmp_path / "scripted")
+
+
+# --- the live option: set_section("run", {"live": bool}) and get_setup's "live" --------------
+
+
+def test_the_live_option_is_off_in_get_setup_and_set_section_turns_it_on_and_off(tmp_path):
+    b = valid_setup(HeadlessBackend(tmp_path))
+    assert b.get_setup()["setup"]["live"] is False
+    assert b.set_section("run", {"live": True})["setup"]["live"] is True
+    assert b.get_setup()["setup"]["live"] is True
+    assert b.set_section("run", {"live": False})["setup"]["live"] is False
+
+
+def test_the_live_option_is_a_run_setting_that_must_be_a_bool(tmp_path):
+    b = valid_setup(HeadlessBackend(tmp_path))
+    with pytest.raises(BackendError, match="live"):
+        b.set_section("run", {"live": "yes"})
+    assert b.get_setup()["setup"]["live"] is False
+
+
+def test_the_live_option_is_refused_for_a_scan_and_says_why(tmp_path):
+    b = valid_setup(HeadlessBackend(tmp_path))
+    b.set_section("scan", {"grid": {"ion.energy_keV": [10, 20]}, "ions": 50})
+    with pytest.raises(BackendError, match="scan"):
+        b.set_section("run", {"live": True})
+    assert b.get_setup()["setup"]["live"] is False
+
+
+def test_a_saved_live_setup_is_reopened_with_the_option_on(tmp_path):
+    b = valid_setup(HeadlessBackend(tmp_path))
+    b.set_section("run", {"number_ions": 200, "live": True})
+    b.save_setup("live.yaml")
+    reopened = HeadlessBackend(tmp_path / "again")
+    reopened.open_setup(str(tmp_path / "live.yaml"))
+    assert reopened.get_setup()["setup"]["live"] is True
+
+
+def test_an_edit_of_a_value_keeps_the_live_option(tmp_path):
+    b = valid_setup(HeadlessBackend(tmp_path))
+    b.set_section("run", {"live": True})
+    b.set_values(["number_ions=150"])
+    assert b.get_setup()["setup"]["live"] is True

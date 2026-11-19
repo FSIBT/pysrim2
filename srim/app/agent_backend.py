@@ -35,6 +35,7 @@ from srim.app.agent_server import INTERNAL_ERROR_TEXT, Deferred, current_client
 from srim.app.document import LOCKED_TEXT
 from srim.app.model import clean, problems
 from srim.app.runs import RUNS_SUFFIX, ParallelChoice
+from srim.app.scan_model import is_live
 from srim.app.workers import run_in_thread
 from srim.mcp import headless as rules
 from srim.mcp.activity import entry_from_untrusted
@@ -128,6 +129,7 @@ class AgentBackend:
         document = self.window.document
         setup = clean(document.doc)
         setup["scan"] = deepcopy(document.doc.get("_scan"))
+        setup["live"] = is_live(document.doc)
         found = problems(document.doc, self._base_dir())
         return {
             "path": str(document.path) if document.path is not None else None,

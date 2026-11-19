@@ -160,7 +160,8 @@ def build_server(cwd: Path | None = None, *, headless: HeadlessBackend | None = 
     @server.tool()
     async def set_section(ctx: Context, name: str, value: Any) -> dict:
         """Replace a whole section: "ion", "target" (a list of layers), "run" or "scan"
-        (None makes it a single run). All or nothing."""
+        (None makes it a single run). {"live": true} in "run" shows the results of a single run
+        while it goes (ten batches; not identical to a run without it). All or nothing."""
         return await state.run(ctx, lambda t: t.set_section(name, value))
 
     @server.tool()

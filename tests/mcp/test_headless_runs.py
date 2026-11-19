@@ -355,3 +355,19 @@ def test_delete_refuses_a_paused_run(tmp_path, slow):
     finally:
         b.control_run("stop")
         wait_until(lambda: b.run_status()["status"] == "stopped")
+
+
+def test_a_live_setup_runs_in_ten_batches_in_its_run_folder(tmp_path, fast):
+    import pandas as pd
+
+    b = boron_setup(HeadlessBackend(tmp_path), seed=7, ions=10)
+    b.set_section("run", {"live": True})
+    b.save_setup("boron.yaml")
+    folder = Path(b.start_run()["folder"])
+    wait_until(finished(b))
+    scan = Scan.from_yaml(folder / "scan.yaml")
+    (point,) = scan.points()
+    assert scan.keep_seed is False and scan.batch_ions == 1  # 10 ions in ten batches of one
+    units = pd.read_csv(folder / "points" / point.id[:16] / "units.csv")
+    assert len(units) == 10 and int(units["n_ions"].sum()) == 10
+    assert not (folder / "points" / point.id[:16] / "units.live.csv").exists()
