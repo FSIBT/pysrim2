@@ -231,7 +231,11 @@ def test_redo_with_nothing_to_redo_says_so(backend):
 
 
 def test_would_replace_is_false_for_the_own_path_and_for_saved_paths(backend, setup_file, tmp_path):
+    # the file the user opened is asked about, clean or edited, until this session saved it
+    assert backend.handle("would_replace", {"path": str(setup_file)}) is True
+    backend.handle("save_setup", {"path": str(setup_file)})
     assert backend.handle("would_replace", {"path": str(setup_file)}) is False
+    fresh = tmp_path / "fresh.yaml"
     fresh = tmp_path / "fresh.yaml"
     assert backend.handle("would_replace", {"path": str(fresh)}) is False
     fresh.write_text("made by someone else\n")
@@ -649,11 +653,20 @@ def test_the_app_backend_declares_that_opening_a_run_replaces_the_setup(win):
 # --- would_replace for the setup's own file ----------------------------------------------------
 
 
-def test_would_replace_is_false_for_a_clean_setup_and_true_once_it_is_edited(win, backend):
+def test_would_replace_is_true_for_the_opened_file_clean_or_edited(win, backend):
+    # a clean file is replaced too: saving a hand-written run.yaml rewrites it (comments are lost)
     own = str(win.document.path)
-    assert backend.would_replace(own) is False
+    assert backend.would_replace(own) is True
     win.document.edit(lambda doc: doc.__setitem__("number_ions", 300))
     assert backend.would_replace(own) is True
+
+
+def test_would_replace_is_false_for_the_opened_file_once_the_agent_saved_it(win, backend):
+    own = str(win.document.path)
+    backend.save_setup(own)
+    assert backend.would_replace(own) is False
+    win.document.edit(lambda doc: doc.__setitem__("number_ions", 300))
+    assert backend.would_replace(own) is False  # this session wrote it, edited or not
 
 
 def test_would_replace_is_false_for_an_own_path_that_is_not_there_yet(win, backend, tmp_path):

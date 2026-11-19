@@ -194,13 +194,8 @@ class AgentBackend:
         # a link is never trusted: see HeadlessBackend.would_replace
         if os.path.islink(target):
             return True
-        document = self.window.document
-        if document.path is not None and rules._key(target) == rules._key(document.path):
-            # the file the user opened: replacing it loses its unsaved edits, so it is asked
-            # about while the document has them, until this backend has saved it once
-            return (
-                target.exists() and document.is_modified and rules._key(target) not in self._written
-            )
+        # the same rule as HeadlessBackend: the file the user opened counts like any other, clean or
+        # edited, since saving a hand-written run.yaml rewrites it in canonical form
         return target.exists() and rules._key(target) not in self._written
 
     # --- undo and redo (the agent's own steps only) -------------------------------------
