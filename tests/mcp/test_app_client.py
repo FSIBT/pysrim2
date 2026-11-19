@@ -805,3 +805,76 @@ def test_a_failed_app_connection_is_not_repeated_at_every_call(tmp_path, monkeyp
     for _ in range(3):
         assert payload(call_tool(srv, "get_setup"))["mode"] == "headless"
     assert len(attempts) == 1
+
+
+def test_a_cancelled_app_ask_starts_nothing_and_later_calls_go_on_when_the_user_answers(
+    tmp_path, fake_app
+):
+    # the call is cancelled while the question is open: its late "allowed" starts nothing, and
+    # later calls are answered once the app has its answer (the app answers one request at a time)
+    setup = tmp_path / "n15.yaml"
+    n15_backend(tmp_path).save_setup(str(setup))
+    gate = threading.Event()
+    asked = threading.Event()
+
+    def answer(number, method, params):
+        if method == "status":
+            return ("result", READY_STATUS)
+        if method == "get_setup":
+            return ("result", {"path": str(setup), "setup": {}, "problems": [], "modified": False})
+        if method == "has_unsaved_changes":
+            return ("result", False)
+        if method == "estimate":
+            return ("result", {"seconds": 7200.0, "workers": 1, "cores": 4, "units": 1, "ions": 10})
+        if method == "ask":
+            asked.set()
+            gate.wait(20)  # the user answers when the test says so
+            return ("result", "allowed")
+        if method == "start_run":
+            return ("error", "BackendError", "nothing should start")
+        return default_answer(number, method, params)
+
+    app = fake_app(answer=answer)
+    srv = server_for(tmp_path, n15_backend(tmp_path))
+
+    async def scenario():
+        async with Client(srv) as client:
+            pending = asyncio.create_task(client.call_tool("start_run", {}))
+            while not asked.is_set():
+                await asyncio.sleep(0.01)
+            pending.cancel()  # the agent gives up on the start while the question is open
+            try:
+                await pending
+            except asyncio.CancelledError:
+                pass
+            gate.set()  # the user answers "allowed", too late for the cancelled call
+            return await asyncio.wait_for(client.call_tool("get_setup", {}), 20)
+
+    later = asyncio.run(scenario())
+    assert payload(later)["path"] == str(setup)
+    assert app.calls("start_run") == []  # the cancelled start was not sent
+
+
+def test_the_server_lock_is_free_while_the_app_is_asked(tmp_path):
+    # the MCP server's lock is released around the question: other calls of the server are not
+    # held up by the user's answer
+    from srim.mcp import server
+
+    lock = threading.Lock()
+    seen = {}
+
+    class Backend:
+        mode = "app"
+
+        def ask(self, text):
+            seen["locked"] = lock.locked()
+            return "allowed"
+
+    lock.acquire()  # the worker holds it, as _State.run does
+    try:
+        ask = server._app_ask(Backend(), threading.Event(), lock)
+        assert ask("start a run") == "allowed"
+        assert lock.locked()  # taken back once the answer is in
+    finally:
+        lock.release()
+    assert seen["locked"] is False

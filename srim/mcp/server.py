@@ -164,7 +164,7 @@ class _State:
         """This call's tools. In app mode the questions and the log go to the app; otherwise the
         client's elicitation answers the questions and the log stays in the file."""
         if backend.mode == "app":
-            ask = _app_ask(backend, abandoned)
+            ask = _app_ask(backend, abandoned, self._one_at_a_time)
             send: Callable[[ActivityEntry], None] | None = backend.log
         else:
             ask, send = elicit, None
@@ -396,14 +396,19 @@ def _app_client_name(ctx: Context) -> str:
     return name or DEFAULT_CLIENT
 
 
-def _app_ask(backend: Backend, abandoned: threading.Event) -> Ask:
-    """The question asked in the app's dialog. A call that was cancelled is refused, and an
-    allowance that comes after the cancel does not count (see :func:`_ask_for`)."""
+def _app_ask(backend: Backend, abandoned: threading.Event, one_at_a_time: threading.Lock) -> Ask:
+    """The question asked in the app's dialog. The server's lock is released while the user
+    answers, so other tools go on (as with :func:`_ask_for`). A call that was cancelled is refused,
+    and an allowance that comes after the cancel does not count."""
 
     def ask(text: str) -> Answer | None:
         if abandoned.is_set():
             return "denied"
-        answer = backend.ask(text)
+        one_at_a_time.release()
+        try:
+            answer = backend.ask(text)
+        finally:
+            one_at_a_time.acquire()
         return "denied" if abandoned.is_set() and answer == "allowed" else answer
 
     return ask
