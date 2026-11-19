@@ -918,3 +918,52 @@ def test_the_link_serves_one_caller_at_a_time_so_the_app_is_connected_once(tmp_p
     second.join(5)
     assert results == [fake, fake]
     assert len(connects) == 1
+
+
+def test_the_app_coming_back_after_a_headless_fall_back_is_said_in_the_next_result(
+    tmp_path, fake_app
+):
+    headless = n15_backend(tmp_path)
+    saved = tmp_path / "n15.yaml"
+    headless.save_setup(str(saved))
+    first = fake_app(
+        answer=lambda n, m, p: (
+            "result",
+            {"path": str(saved), "setup": {}, "problems": [], "modified": False},
+        )
+    )
+    link = AppLink(cwd=tmp_path, retry_seconds=0.0)
+    client = link.backend("codex", headless)
+    first.stop()
+    remove_endpoint(first.token)
+    with pytest.raises(AppGone):
+        client.get_setup()  # the call finds the app gone
+    link.backend("codex", headless)  # headless now, and the closing is said
+    assert "closed" in link.take_notice()
+    assert link.backend("codex", headless) is headless  # still no app
+    assert link.take_notice() is None  # nothing new while it stays away
+
+    fake_app()  # the app is open again
+    client = link.backend("codex", headless)
+    assert client.mode == "app"
+    notice = link.take_notice()
+    assert notice is not None and "open again" in notice
+    assert "not from the headless edits" in notice
+    assert link.take_notice() is None  # once
+    client.close()
+
+
+def test_the_app_coming_back_without_a_headless_call_in_between_is_not_said(tmp_path, fake_app):
+    headless = n15_backend(tmp_path)
+    first = fake_app()
+    link = AppLink(cwd=tmp_path, retry_seconds=0.0)
+    link.backend("codex", headless)
+    first.stop()
+    remove_endpoint(first.token)
+    with pytest.raises(AppGone):
+        link.backend(
+            "codex", headless
+        ).get_setup()  # the client noticed the loss: no headless call yet
+    fake_app()
+    assert link.backend("codex", headless).mode == "app"
+    assert link.take_notice() is None

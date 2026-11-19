@@ -48,6 +48,11 @@ from srim.mcp.protocol import (
 APP_CLOSED_TEXT = "the pysrim2 app closed; call again to continue headless"
 #: what the agent is told when the app did not answer in time (it may still have acted)
 APP_SILENT_TEXT = "the pysrim2 app did not answer in time; call again to continue headless"
+#: what the agent is told when the app is open again after a headless call was answered
+REOPENED_TEXT = (
+    "The pysrim2 app is open again. The setup now comes from the app, not from the headless "
+    "edits made while it was closed."
+)
 #: the seconds a quick request (a read or an edit of the window) may take to be answered
 QUICK_SECONDS = 10.0
 #: the seconds the app may take to take a request's bytes (a stalled app must not hold the client)
@@ -453,6 +458,8 @@ class AppLink:
         self._next_try = 0.0
         #: the app's setup when it was lost: (known, path), None while no app was lost
         self._lost_setup: tuple[bool, str | None] | None = None
+        #: True once a headless call was answered after the app closed (see REOPENED_TEXT)
+        self._fell_back = False
         self._notice: str | None = None
 
     def backend(self, client: str, headless: Backend) -> Backend:
@@ -468,6 +475,9 @@ class AppLink:
             if app is not None:
                 self._app = app
                 self._lost_setup = None  # the app's setup is the setup now
+                if self._fell_back:  # a headless call was answered since the app closed
+                    self._notice = REOPENED_TEXT
+                    self._fell_back = False
                 return app
             self._next_try = self._clock() + self._retry_seconds
         if self._app is not None:
@@ -503,6 +513,7 @@ class AppLink:
             return headless
         known_path = self._lost_setup
         self._lost_setup = None
+        self._fell_back = True
         self._notice = _reopen(headless, known_path)
         return headless
 
