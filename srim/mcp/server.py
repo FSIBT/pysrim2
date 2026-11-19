@@ -243,7 +243,7 @@ def build_server(
     async def set_section(ctx: Context, name: str, value: Any) -> dict:
         """Replace a whole section: "ion", "target" (a list of layers), "run" or "scan"
         (None makes it a single run). {"live": true} in "run" shows the results of a single run
-        while it goes (ten batches; not identical to a run without it). All or nothing."""
+        while it goes (normally ten batches; not identical to a run without it). All or nothing."""
         return await state.run(ctx, lambda t: t.set_section(name, value))
 
     @server.tool()
@@ -367,12 +367,12 @@ def build_server(
 
     @server.tool()
     async def undo(ctx: Context) -> dict:
-        """Undo the last change to the setup. Needs the pysrim2 app."""
+        """Undo the agent's last change in the pysrim2 window. Needs the app open."""
         return await state.run(ctx, lambda t: t.undo())
 
     @server.tool()
     async def redo(ctx: Context) -> dict:
-        """Redo the last undone change to the setup. Needs the pysrim2 app."""
+        """Redo the agent's last undone change in the pysrim2 window. Needs the app open."""
         return await state.run(ctx, lambda t: t.redo())
 
     @server.resource(
