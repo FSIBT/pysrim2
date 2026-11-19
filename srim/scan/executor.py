@@ -1254,8 +1254,9 @@ class _ScanRun:
         total ions and the point seed, and for a binned beam the bins with their ions.
 
         ``live`` writes the live record of a point that is still running instead. The final
-        record (not ``live``) removes the live files, whether or not it could be written: a
-        point with no final record must not keep a live record that reads as partial results.
+        record (not ``live``) removes the live files once it is written. If it cannot be
+        written, the live files stay: the finished units are kept, and nothing else reads them
+        as a finished point.
         """
         units = self._units_of(index, beams)
         rows = []
@@ -1286,6 +1287,7 @@ class _ScanRun:
             )
         except Exception as exc:  # a record is kept for the user, never worth the scan
             log.warning("scan point %d: its record could not be written (%s)", index, exc)
+            return  # the live record (if any) stays with the finished units
         if not live:
             self._drop_live(index)
 

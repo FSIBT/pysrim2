@@ -1,5 +1,6 @@
 """run_batches: seeds, batch sizes and merging (mocked runner, no SRIM)."""
 
+import os
 import warnings
 from pathlib import Path
 from types import SimpleNamespace
@@ -296,3 +297,46 @@ def test_a_live_record_is_written_spec_then_bins_then_units(tmp_path, monkeypatc
     written.clear()
     batches.write_point_record(tmp_path, _SpecStub(), [(0, 0, 0, 10, 1)], bins)
     assert written == ["run.yaml", "beam_bins.csv", "units.csv"]
+
+
+def test_write_atomic_retries_a_permission_error_while_a_reader_has_the_file(tmp_path, monkeypatch):
+    # Windows refuses os.replace while a reader has the file open: the replace is retried
+    from srim.scan import batches
+
+    target = tmp_path / "units.live.csv"
+    target.write_text("old\n", encoding="utf-8")
+    real_replace = os.replace
+    attempts = []
+
+    def busy(source, destination):
+        attempts.append(1)
+        if len(attempts) <= 3:
+            raise PermissionError("the file is open in a reader")
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(batches.os, "replace", busy)
+    batches._write_atomic(target, lambda path: Path(path).write_text("new\n", encoding="utf-8"))
+    assert len(attempts) == 4
+    assert target.read_text(encoding="utf-8") == "new\n"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["units.live.csv"]
+
+
+def test_write_atomic_gives_up_after_its_retries_and_removes_its_temporary_file(
+    tmp_path, monkeypatch
+):
+    from srim.scan import batches
+
+    target = tmp_path / "units.live.csv"
+    target.write_text("old\n", encoding="utf-8")
+    attempts = []
+
+    def always_busy(source, destination):
+        attempts.append(1)
+        raise PermissionError("the file is open in a reader")
+
+    monkeypatch.setattr(batches.os, "replace", always_busy)
+    with pytest.raises(PermissionError):
+        batches._write_atomic(target, lambda path: Path(path).write_text("new\n"))
+    assert len(attempts) == 4  # the first try and three retries
+    assert target.read_text(encoding="utf-8") == "old\n"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["units.live.csv"]

@@ -12,6 +12,7 @@ import os
 import random
 import shutil
 import tempfile
+import time
 from concurrent.futures import (
     FIRST_EXCEPTION,
     ProcessPoolExecutor,
@@ -78,6 +79,12 @@ class BatchInfo:
     columns: dict | None = field(default=None, repr=False)
 
 
+#: Windows refuses :func:`os.replace` while a reader has the file open: the replace is tried
+#: again this many times, :data:`_REPLACE_DELAY` seconds apart, before the write fails
+_REPLACE_RETRIES = 3
+_REPLACE_DELAY = 0.05
+
+
 def _write_atomic(path, write):
     """Write ``path`` as a whole: ``write(temporary)`` writes a file in the same folder, which
     then replaces ``path`` in one step (:func:`os.replace`), so a reader never sees half of it.
@@ -86,7 +93,14 @@ def _write_atomic(path, write):
     temporary = path.with_name(f"{path.name}.{os.getpid()}.tmp")
     try:
         write(temporary)
-        os.replace(temporary, path)
+        for attempt in range(_REPLACE_RETRIES + 1):
+            try:
+                os.replace(temporary, path)
+                break
+            except PermissionError:
+                if attempt == _REPLACE_RETRIES:
+                    raise
+                time.sleep(_REPLACE_DELAY)
     except BaseException:
         temporary.unlink(missing_ok=True)
         raise

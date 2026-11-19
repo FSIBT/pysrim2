@@ -375,3 +375,23 @@ def test_the_live_record_follows_every_unit_with_no_interval(tmp_path, state_dir
         cache=False,
     )
     assert sizes == [1, 2, 3, 4, 5]
+
+
+def test_a_point_whose_final_record_cannot_be_written_keeps_its_live_record(
+    tmp_path, state_dir, monkeypatch
+):
+    # the finished units must not vanish with the live record when the final record fails
+    scan = batched_scan(ions=25, batch_ions=10)
+    point_dir = tmp_path / "s" / "points" / scan.points()[0].id[:16]
+    real = executor.write_point_record
+
+    def refuse_final(folder, spec, units, beam_bins=None, provenance=None, live=False):
+        if not live:
+            raise PermissionError("the final record is refused")
+        return real(folder, spec, units, beam_bins, provenance=provenance, live=live)
+
+    monkeypatch.setattr(executor, "write_point_record", refuse_final)
+    run_scan(scan, workers=1, runner=seeded_runner, scan_dir=tmp_path / "s", cache=False)
+    assert (point_dir / "run.live.yaml").is_file()
+    assert len(pd.read_csv(point_dir / "units.live.csv")) == 3
+    assert not (point_dir / "units.csv").exists()
