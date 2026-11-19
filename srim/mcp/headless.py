@@ -238,26 +238,7 @@ class HeadlessBackend:
 
     def delete_run(self, folder: str) -> dict:
         target = self._resolve(folder)
-        runs = self._runs_dir(None)
-        if target.is_symlink():  # checked before resolving: a link is never followed
-            raise BackendError(f"{target} is a symbolic link: only a run folder is deleted")
-        if target.resolve().parent != runs.resolve() or not (target / "scan.yaml").is_file():
-            raise BackendError(
-                f"{target} is not a run folder of this setup (its runs are in {runs})"
-            )
-        # Known gap, no fix: between start_run writing scan.yaml and start_detached writing
-        # runner.json, a starting run reads as "not started" and could be deleted (a moment).
-        if (target / PID_FILE).is_file():
-            try:
-                status = run_state(target)["status"]
-            except Exception as error:  # a run that cannot be read may still be going: refused
-                raise BackendError(f"cannot tell whether {target} is going: {error}") from error
-            if status in LIVE_STATUSES:
-                raise BackendError(f"the run in {target} is {status}: stop it first (control_run)")
-        try:
-            shutil.rmtree(target)
-        except OSError as error:
-            raise BackendError(f"cannot delete {target}: {error}") from error
+        delete_run_folder(target, self._runs_dir(None))
         if self._started == target:
             self._started = None
         return {"folder": str(target), "deleted": True}
@@ -374,7 +355,7 @@ class HeadlessBackend:
         setup = self._resolve(setup_path) if setup_path is not None else self._path
         if setup is None:
             raise BackendError("the setup has no file yet: save it, or give its setup_path")
-        return setup.parent / f"{setup.stem}{RUNS_SUFFIX}"
+        return runs_folder(setup)
 
     def _run_folder(self, folder: str | None) -> Path:
         """``folder`` as a path; None is the latest run this backend started, else the newest
@@ -414,6 +395,36 @@ class HeadlessBackend:
 
 
 # --- helpers ---------------------------------------------------------------------------
+
+
+def runs_folder(setup: Path) -> Path:
+    """The run folder of the setup file ``setup``: ``<stem>-runs`` next to it."""
+    return setup.parent / f"{setup.stem}{RUNS_SUFFIX}"
+
+
+def delete_run_folder(target: Path, runs: Path) -> None:
+    """Delete the run folder ``target``, which must be one of the run folders in ``runs``.
+
+    Refused (with :class:`BackendError`): a symbolic link, a folder that is not a run folder of
+    ``runs``, and a run that is going (it is stopped first). Nothing is deleted then.
+    """
+    if target.is_symlink():  # checked before resolving: a link is never followed
+        raise BackendError(f"{target} is a symbolic link: only a run folder is deleted")
+    if target.resolve().parent != runs.resolve() or not (target / "scan.yaml").is_file():
+        raise BackendError(f"{target} is not a run folder of this setup (its runs are in {runs})")
+    # Known gap, no fix: between start_run writing scan.yaml and start_detached writing
+    # runner.json, a starting run reads as "not started" and could be deleted (a moment).
+    if (target / PID_FILE).is_file():
+        try:
+            status = run_state(target)["status"]
+        except Exception as error:  # a run that cannot be read may still be going: refused
+            raise BackendError(f"cannot tell whether {target} is going: {error}") from error
+        if status in LIVE_STATUSES:
+            raise BackendError(f"the run in {target} is {status}: stop it first (control_run)")
+    try:
+        shutil.rmtree(target)
+    except OSError as error:
+        raise BackendError(f"cannot delete {target}: {error}") from error
 
 
 def _doctor_checks() -> list[dict]:
