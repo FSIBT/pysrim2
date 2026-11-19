@@ -226,6 +226,17 @@ A `run.yaml` with a `scan:` section (next to `spec:`) is a scan, read with
 | `seed` | base seed of the scan (recorded in `scan.yaml`) |
 | `keep_seed` | `true`: a one-point scan runs that point with `seed` itself (no derived seed); written only when set |
 
+### The live option of a single run
+
+The desktop app's **Show results while the run goes** option (see {doc}`app`) is saved as the
+scan section of a single run: `batch_ions` is a tenth of the ions (rounded up, at least 1, at most
+99 999), `extract: []`, and nothing else (no `grid`, `points`, `precision` or `keep_seed`). The
+app reads a section of exactly that shape back as the option, and `Scan.from_yaml` reads it as the
+same batched scan, so a hand-written section of that shape gives the same numbers. Running the file
+with `pysrim2 scan run run.yaml` runs the batches; a plain `pysrim2 run run.yaml` ignores the
+`scan:` section and runs one TRIM run. The batches use seeds derived from `seed`, so the results
+agree statistically with one run, not point for point.
+
 ## Command line
 
 See {doc}`cli`.

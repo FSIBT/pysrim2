@@ -279,16 +279,24 @@ The flow: `status` (is SRIM ready?), `get_setup` (what the setup still needs), `
 - Never guess a density or a composition: use `find_material`, or ask the user.
 - Tables are capped (`max_rows`, 5000 at most). Ask for a `plot` when the user wants a picture; it comes
   back as an image and as a PNG file in the run folder's `plots/`.
-- A run keeps going after the conversation ends. Find it again with `list_runs(setup_path)` and
+- A run keeps going after the conversation ends (a run started in the window goes on while the window
+  is open). Find it again with `list_runs(setup_path)` and
   `run_status`; `control_run` pauses, resumes or stops it.
-- Report which mode answered (each result has a `mode` field; this build answers headless), and where
-  the plot file is.
+- A run the user wants to watch build up: `set_section("run", {"live": true})` before `start_run`. It
+  splits the run into ten batches, so its results agree statistically with an unbatched run but are
+  not identical. It is refused for a scan. Turn it on only when the user asks.
+- Report which mode answered: each result has a `mode` field, `app` when the pysrim2 window answered
+  and `headless` otherwise. Report where the plot file is.
+- A result may carry a `note`: the window closed or opened during the call, so the setup now comes
+  from another place. Tell the user what it says, because changes made only in the window are not in
+  the saved file.
 
 Ask first. Some actions need the user's OK: a run estimated over the time limit (30 minutes by
 default) or using more than the core limit (half the cores by default), saving a setup or exporting
 over a file this session did not write, discarding unsaved changes, deleting a run and any installer
-step. The server asks the user through the client when the client can do that. Otherwise the call
-returns "needs the user's OK" with a `confirm_code`. Then ask the user in the chat, describing the
+step. With the pysrim2 window open, the question is the window's dialog, and no code is issued. Without
+the window, the server asks the user through the client when the client can do that. Otherwise the
+call returns "needs the user's OK" with a `confirm_code`. Then ask the user in the chat, describing the
 exact action. Only when the user agrees, repeat the same call with the same arguments and that code.
 A code works once, for those arguments, for five minutes. Never make up a code, and never tell the
 user the code is their approval.
@@ -297,4 +305,5 @@ A refusal is final: when a tool says the user did not allow it, or the user says
 the request or look for another way to do the same thing. Report it.
 
 Admin installer steps are never run by the server: `install_plan` lists their commands for the user to
-run in a terminal. `undo` and `redo` need the pysrim2 app; from the server they return an error.
+run in a terminal. `undo` and `redo` work on the pysrim2 window's history, and only for the agent's own
+steps (a step of the user's on top is refused); without the window they return an error.

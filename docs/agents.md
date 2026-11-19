@@ -73,7 +73,8 @@ Any MCP client (Claude Code, Codex, Gemini CLI, Cursor, VS Code, or another clie
 starts a stdio server) can start it and then set up, run and read pysrim2 runs in the
 conversation you already have. The server runs under your own account, needs no API key,
 no account and no network access, and listens on no port: it talks over stdin and stdout
-with the client that started it.
+with the client that started it. The one other connection is the local socket of the pysrim2
+window, when it is open (see [With the pysrim2 window open](#with-the-pysrim2-window-open)).
 
 ### Install
 
@@ -123,6 +124,34 @@ Relative paths in the tools (a `run.yaml`, an export folder) are resolved from t
 directory the server was started in, which your client chooses. Use absolute paths when
 in doubt.
 
+### With the pysrim2 window open
+
+When the pysrim2 window is open and **Allow agents to connect** is on (the **Agent** menu, on by
+default), the same server works through the window, and the agent's session goes on as before. An
+edit appears in the window as one undo step labelled `agent: …`, a run in **Progress**, a plot in
+**Results**, and every call in the **Agent activity** panel. Results and plots are read from the run
+folder in both modes, and each result has a `mode` (`app` or `headless`), so the agent can say which
+one answered. The window's side is described in {doc}`app` (The agent).
+
+Two things change while the window is open:
+
+- **Closing the window.** The agent carries on without it. A read-only call is answered without the
+  window. An edit or a run reports that the app closed, and the agent calls again to continue
+  headless; the first answer after that says the setup now comes from the last saved file, so
+  changes made only in the window are not in it. Opening the window again switches back to it, and
+  the next answer says the setup now comes from the app.
+- **Asking.** A question is a dialog in the window rather than a prompt in the chat. **Deny** is the
+  default button, and a request with no answer in two minutes is denied. No confirm code is issued
+  in this mode.
+
+#### Security
+
+The window listens on a local socket that only your user account can reach, and it has no network
+port. Its discovery file, `<data dir>/app/agent.json`, is private to you (mode 0600) and holds a
+random token. `pysrim2 mcp` connects only when it reads that file and presents the token; the token
+never goes on a command line or into a log. On Windows the file is protected by your profile folder,
+and the named pipe by Qt's user-access option.
+
 ### What the agent can do
 
 The server has 25 tools and one resource. The agent sees their names and descriptions;
@@ -141,8 +170,9 @@ these are the groups:
 - **Results:** `summary` (the implant summary, which needs the range output, `settings.ranges=1`),
   `available_plots`, `table` and `plot` (see below), and `export` (CSV, Parquet or HDF5).
 - **Install:** `install_plan` and `install_step`.
-- **Undo and redo:** `undo` and `redo` exist, but they need the pysrim2 app; from the server
-  they return an error that says so.
+- **Undo and redo:** `undo` and `redo` step back and forward through the window's history, and only
+  through the agent's own steps: when your own edit is on top, the agent is refused. Without the
+  window they return an error that says so.
 
 `start_run` takes optional `workers` and `batch_ions`. With `batch_ions`, each point is split
 into batches that run in parallel, as with a scan's `batch_ions` (see {doc}`scans`); the
@@ -203,6 +233,8 @@ process, not in the server. The limits are settings in `<data dir>/app/settings.
 
 #### How you answer
 
+- **The pysrim2 window** (when it is open): the question is the window's dialog, as described
+  above. Deny is the default; the client's own prompt is not used.
 - **A client that supports elicitation** (on the 2025-11-25 protocol version) shows you the
   question in its own prompt: allow or deny.
 - **A client on the 2026-07-28 protocol version, or one without elicitation,** cannot be asked
@@ -210,7 +242,7 @@ process, not in the server. The limits are settings in `<data dir>/app/settings.
   `confirm_code`. The agent then asks you in the chat, and only if you agree, repeats the call
   with the same arguments and the code.
 
-The code path **trusts the agent to really ask you**. The server cannot see the chat, so a
+In headless mode, the code path **trusts the agent to really ask you**. The server cannot see the chat, so a
 code can only be as good as the agent's question; read what it asks before you agree. A code is
 single use, works only for that action (the tool, its arguments, the setup's file and content,
 and the number of workers), expires after 5 minutes, and lives in memory: a restarted server
@@ -241,6 +273,12 @@ process went away without finishing).
 
 A run in progress cannot be deleted; stop it first.
 
+A run started while the window is open belongs to the window: it stops when the window quits (the
+window asks first), and the agent pauses or stops it through the window. Its folder has the same
+files, and `runner.json` says `"backend": "app"`, so `run_status` and `summary` still read it after
+the window has moved on. A run folder that the window has open or is running cannot be deleted
+either; open another run in the window first.
+
 ### The activity log
 
 Every tool call adds one line to `activity.jsonl` in `<data dir>/agent/`. The data directory
@@ -262,14 +300,16 @@ keeps its settings in):
   `0.5`; a number above 0 and at most 1.
 
 The estimate uses the ions-per-second rate remembered for the calculation type
-(`ions_per_s` in the same file), or a built-in default for that type.
+(`ions_per_s` in the same file), or a built-in default for that type. The same file holds
+`agent_socket`, the **Allow agents to connect** switch (on by default); with it off, no window
+is reached and the server works headless.
 
 What the server does not do:
 
 - It does not listen on a network port. An agent on another machine cannot reach it; run
   `pysrim2 mcp` on the machine where pysrim2 and SRIM are.
 - It does not run admin installer steps.
-- It does not undo or redo, because the undo history lives in the desktop app.
+- It does not undo or redo without the window, because the undo history lives in the desktop app.
 
 If `status` says SRIM is not ready, it returns the problem, and `install_plan` lists what is
 missing.

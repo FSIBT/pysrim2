@@ -4,7 +4,8 @@
 SRIM runs on your machine, installs what is still missing, and checks the result. It also edits
 a run setup: the target (Geometry tab), the beam (Beam tab), the run settings (Run settings tab)
 and an optional scan (Scan tab). It runs the setup, shows the run as it goes (Progress tab), and
-shows and saves the results (Results tab).
+shows and saves the results (Results tab). An AI agent can drive the same window (see
+[The agent](#the-agent)).
 
 ![The Geometry tab of the boron reference setup: the layers, and the target drawn to scale](gallery/images/app_setup.png)
 
@@ -242,6 +243,18 @@ The tab has no field for `plot_mode`, `plot_xmin`, `plot_xmax`, `reminders` or `
 are kept as they are and are edited in `run.yaml`, so a status bar line about one of them opens
 the tab but has no field to focus.
 
+### Show results while the run goes
+
+**Show results while the run goes** (below the settings) splits a single run into batches: ten by
+default, each a tenth of the ions (at least one, at most 99 999). The Results tab redraws the point
+as its batches finish, and a point with no finished batch yet is not shown. The results agree
+statistically with one run, but they are not identical to it. The option is not offered for a scan,
+which already shows each point as it finishes.
+
+The option is saved in the setup's `run.yaml` as a `scan:` section, so `pysrim2 scan run run.yaml`
+runs the same batches again (a plain `pysrim2 run` ignores the section and runs one TRIM run). The
+section is described in [run.yaml](run-spec.md#scan-section).
+
 ## Undo, open and save
 
 The window edits one run setup at a time, kept in a `run.yaml` file (the same file the library
@@ -265,6 +278,9 @@ setup stays as it was.
 the edits since the setup was opened or created (the last 200). Each change to a field is
 one edit, so a typed number is one step once you press Enter or leave the field. Opening another
 file starts a new history, so Undo never returns to the setup that was open before.
+
+An edit that an agent makes through the window is one step labelled `agent: …`; **Edit > Undo**
+then reads "Undo agent: …". The agent can undo and redo only its own steps (see [The agent](#the-agent)).
 
 New, Open, Open recent, Open run folder and Quit ask **Discard the changes to this setup?** when the
 setup has edits that are not saved. Choosing No keeps the setup and the window open.
@@ -501,6 +517,54 @@ never saved in place: **Save setup**, **Save setup as…** and Start ask for a f
 The file dialog proposes a name beside the run folders: for `run-runs/<stamp>/scan.yaml` it
 proposes `run.yaml` in the same folder as `run-runs`.
 
+## The agent
+
+An AI agent can drive the window. `pysrim2 mcp` is the MCP server that the agent starts (see
+{doc}`agents`). When the window is open and **Allow agents to connect** is on (the **Agent** menu,
+on by default), the server works through the window instead of on its own:
+
+- an edit the agent makes is one undo step, in the same history as your edits, labelled `agent: …`;
+- a run goes to the **Progress** tab, and a plot the agent asks for is shown in **Results**;
+- every call is listed in the **Agent activity** panel. The panel is hidden until the first agent
+  connects; **Agent > Agent activity** shows or hides it.
+
+The agent's undo and redo reverse only its own steps. When your own edit is the last step, the
+agent's undo is refused, so your edit stays. Results (summaries, tables, exported files and plot
+pictures) are read from the run folder in either mode. Each result says whether the window answered
+(`"mode": "app"`) or the agent worked without it (`"mode": "headless"`).
+
+**Agent > Connect an agent…** shows the setup for each AI client, with a **Copy** button. It also
+shows whether the pysrim2 skill is installed; **Install the pysrim2 skill** installs it for your user
+account, and never runs an admin step.
+
+**Questions.** An agent asks before a long run, an overwrite or a discard (the list is in
+{doc}`agents`). The window shows a dialog that says what the agent wants and which client asks, with
+**Allow** and **Deny**. **Deny** is the default button; Esc and closing the dialog also deny. **Allow**
+is available one second after the dialog appears. With no answer in two minutes, the request is
+denied. The dialog is window-modal: the window takes no input while it is up, and the agent's
+connection and the rest of the app keep going. Requests that come while one is up wait their turn.
+The two limits behind the questions are in **Agent > Agent settings…**; each run request reads them
+again.
+
+**Closing and reopening.** When the window closes, the agent goes on without it. A read-only call
+(a status, a summary, a plot of a finished run) is answered without the window. An edit or a run
+reports that the app closed, and the agent calls again to carry on headless. The first answer after
+that says the setup now comes from the last saved file, so changes made only in the window are not in
+it. When you open the window again, the next answer says the setup now comes from the app, not from
+the headless edits. The server looks for the window at the next call, and then at most every three
+seconds while it is not there.
+
+A run the agent starts in the window belongs to the window: it goes on while the window is open, and
+**Quit** stops it (after asking). Its run folder is like any other, and the agent can read it
+afterwards.
+
+**Connection.** The window listens on a local socket that only your user account can reach; it has
+no network port. Its discovery file, `<data dir>/app/agent.json`, is private to you (mode 0600) and
+holds a random token, and only a `pysrim2 mcp` of your account can connect with that token. On
+Windows the file is protected by your profile folder and the pipe by Qt's user-access option. Turning
+**Allow agents to connect** off stops listening and removes the file. When the socket cannot start,
+the item reads "(not listening)", and its tooltip says why.
+
 ## Themes
 
 **View > Theme** chooses **System** (the default: follow the operating system), **Light** or
@@ -515,6 +579,7 @@ proposes `run.yaml` in the same folder as `run-runs`.
 - **Run > Start** (Ctrl+R), **Pause** and **Stop** (also on the toolbar)
 - **View > Theme > System, Light, Dark**
 - **Notebook > Start marimo notebook**, **Start Jupyter notebook**, **Export PDF…** and **Stop notebook**
+- **Agent > Connect an agent…**, **Agent activity**, **Agent settings…** and **Allow agents to connect**
 - **Help > Documentation** (opens this documentation) and **About pysrim2**
 
 The window has these tabs: **Geometry**, **Beam**, **Run settings**, **Scan**, **Progress**,
@@ -527,6 +592,8 @@ The app's choices are stored in `<data dir>/app/settings.json`, where `<data dir
 pysrim2 data directory (see {doc}`installation`). It holds the `route` (`native`, `wine`,
 `container`, or `null` before a choice), the `theme` (`system`, `light` or `dark`), the
 `ions_per_s` of each calculation (the latest measured rate, used for the parallel estimate) and
-the `refresh_seconds` of the Results tab (5 by default; the window has no field for it). The
-recent setups and runs are in `<data dir>/app/recent.json`. A missing or broken file gives the
+the `refresh_seconds` of the Results tab (5 by default; the window has no field for it). It also
+holds the agent's choices: `agent_socket` (on by default; the **Allow agents to connect** switch),
+and the two ask-first limits `agent_max_minutes` (30 by default) and `agent_max_core_fraction` (0.5),
+which **Agent > Agent settings…** sets. The recent setups and runs are in `<data dir>/app/recent.json`. A missing or broken file gives the
 defaults, so the app always starts. You can delete a file to start from its defaults again.
