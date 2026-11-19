@@ -192,6 +192,16 @@ class Stream:
         """Write some of ``data``; the count written (the caller writes the rest)."""
         return self._handle.write(data)
 
+    def set_write_timeout(self, seconds: float | None) -> None:
+        """Limit how long one write may wait for the peer to take its bytes (None: no limit).
+
+        POSIX sets the socket's timeout, so a write that makes no progress for ``seconds`` raises
+        ``TimeoutError`` instead of blocking. Windows named pipes are not limited here (the write
+        goes through the file object), so a stalled pipe can still block a write.
+        """
+        if self._sock is not None:
+            self._sock.settimeout(seconds)
+
     def wait_readable(self, seconds: float | None) -> bool:
         """True when a read will not wait: data, or the end of the stream, is there.
 
@@ -301,15 +311,27 @@ class Channel:
         self._error: ProtocolError | None = None
         #: seconds a :meth:`receive` may wait for the next message (None waits for ever)
         self.timeout = timeout
+        #: seconds a :meth:`send` may wait for the peer to take the bytes (None waits for ever)
+        self.send_timeout: float | None = None
 
     def send(self, message: dict) -> None:
-        """Send ``message``. Raises :class:`ProtocolError` (not sent) or ``ConnectionError``."""
+        """Send ``message``. Raises :class:`ProtocolError` (not sent), ``ConnectionError``, or
+        ``TimeoutError`` when the peer takes no bytes for ``send_timeout`` seconds (what was sent
+        before is not taken back, so the caller closes the connection)."""
         data = encode(message, self._reader.max_line)
-        while data:
-            sent = self.stream.write(data)
-            if not sent:
-                raise ConnectionError("the connection closed while sending")
-            data = data[sent:]
+        # a stream with no write limit (a plain file object) is written as it is
+        limit = getattr(self.stream, "set_write_timeout", None)
+        if limit is not None:
+            limit(self.send_timeout)
+        try:
+            while data:
+                sent = self.stream.write(data)
+                if not sent:
+                    raise ConnectionError("the connection closed while sending")
+                data = data[sent:]
+        finally:
+            if limit is not None:
+                limit(None)
 
     def set_max_line(self, max_line: int) -> None:
         """Change the longest line accepted from now on (a small limit before the hello)."""

@@ -14,6 +14,7 @@ import shutil
 import socket
 import tempfile
 import threading
+import time
 from pathlib import Path
 
 import install_fakes
@@ -79,9 +80,11 @@ class FakeApp:
     with no answer) or ``"silent"`` (no answer until the test ends). ``number`` counts the
     connections from 1, and ``requests`` records ``(number, method, params)`` of each request."""
 
-    def __init__(self, folder: Path, token: str, answer=None):
+    def __init__(self, folder: Path, token: str, answer=None, reads: bool = True):
         self.token = token
         self.answer = answer or default_answer
+        #: False: the app takes the hello and then never reads again (a stalled peer)
+        self.reads = reads
         self.path = str(folder / "app.sock")
         self.requests: list[tuple[int, str, dict]] = []
         self.hellos: list[str] = []
@@ -143,6 +146,9 @@ class FakeApp:
                 return
             channel.send({"hello": {"ok": True, "version": "test"}})
             channel.set_max_line(protocol.MAX_LINE)
+            if not self.reads:
+                self._stop.wait()
+                return
             while True:
                 request_id, method, params = protocol.parse_request(channel.receive())
                 self.requests.append((number, method, params))
@@ -186,11 +192,11 @@ def fake_app(folder):
     """Start fake apps; each is stopped at the end of the test."""
     apps: list[FakeApp] = []
 
-    def make(answer=None, token=None, publish=True):
+    def make(answer=None, token=None, publish=True, reads=True):
         number = len(apps) + 1
         where = folder / f"app{number}"
         where.mkdir()
-        app = FakeApp(where, token or new_token(), answer)
+        app = FakeApp(where, token or new_token(), answer, reads=reads)
         apps.append(app)
         if publish:
             app.publish()
@@ -285,6 +291,23 @@ def test_a_large_request_goes_after_the_hello(tmp_path, fake_app):
     assert answer["setup"]["size"] > 2_000_000
     assert app.calls("set_values") == [{"assignments": [big]}]
     client.close()
+
+
+def test_a_stalled_app_that_stops_reading_is_a_silent_app_not_a_hang(
+    tmp_path, fake_app, monkeypatch
+):
+    # the app takes the hello and then reads nothing: a request too big for the socket's buffers
+    # must not block the client while it holds its locks
+    monkeypatch.setattr(app_client, "SEND_SECONDS", 0.5)
+    fake_app(answer=setup_echo, reads=False)
+    client = connect_app("test", cwd=tmp_path)
+    started = time.monotonic()
+    with pytest.raises(AppGone) as info:
+        client.set_values(["x=" + "1" * (protocol.MAX_LINE - 100)])
+    assert str(info.value) == APP_SILENT_TEXT
+    assert time.monotonic() - started < 20
+    assert client.closed
+    assert client.ask("start a run") == "denied"  # the lock is free: the closed client answers
 
 
 def test_a_request_too_large_for_the_protocol_is_refused_and_the_connection_stays(

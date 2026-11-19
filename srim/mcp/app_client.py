@@ -50,6 +50,8 @@ APP_CLOSED_TEXT = "the pysrim2 app closed; call again to continue headless"
 APP_SILENT_TEXT = "the pysrim2 app did not answer in time; call again to continue headless"
 #: the seconds a quick request (a read or an edit of the window) may take to be answered
 QUICK_SECONDS = 10.0
+#: the seconds the app may take to take a request's bytes (a stalled app must not hold the client)
+SEND_SECONDS = 10.0
 #: the seconds a request may take when it reads a run folder, checks the installation or starts
 SLOW_SECONDS = 60.0
 #: the seconds an ask-first question may wait for the user: the dialog gives up after 120 s, and a
@@ -122,6 +124,7 @@ def connect_app(
     except Exception:  # no socket, a refused one, one that is not this user's: no app
         return None
     channel = Channel(stream, max_line=HELLO_MAX_LINE, timeout=timeout)
+    channel.send_timeout = timeout
     try:
         channel.send(hello_request(endpoint.token, _client_text(client)))
         reply = channel.receive()
@@ -216,10 +219,13 @@ class AppClient:
                 raise AppGone(APP_CLOSED_TEXT)
             self._ids += 1
             request_id = self._ids
+            self._channel.send_timeout = SEND_SECONDS
             try:
                 self._channel.send(request(request_id, method, params))
             except ProtocolError as error:
                 raise BackendError(f"{method}: the request cannot be sent: {error}") from None
+            except TimeoutError:
+                raise self._gone(APP_SILENT_TEXT, silent=True) from None
             except OSError:
                 raise self._gone(APP_CLOSED_TEXT) from None
             self._channel.timeout = _seconds(method)
