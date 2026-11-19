@@ -61,6 +61,13 @@ def default_answer(number, method, params):
     return ("result", {"method": method, "size": len(json.dumps(params))})
 
 
+def setup_echo(number, method, params):
+    """Answers a setup request (set_values and the like) with a setup that says how big the
+    request was: the app's setup answer, so it passes the client's check."""
+    size = len(json.dumps(params))
+    return ("result", {"path": None, "setup": {"size": size}, "problems": [], "modified": True})
+
+
 def refuse_all(number, method, params):
     """A stand-in that refuses every request: a test that uses it sees a request as an error."""
     return ("error", "BackendError", f"the app was asked for {method}")
@@ -199,7 +206,7 @@ def setup_answer(path: Path):
 
     def answer(number, method, params):
         if method == "get_setup":
-            return ("result", {"path": str(path), "setup": {}, "modified": False})
+            return ("result", {"path": str(path), "setup": {}, "problems": [], "modified": False})
         return refuse_all(number, method, params)
 
     return answer
@@ -259,23 +266,23 @@ def test_the_hello_names_the_client_and_is_clipped(tmp_path, fake_app):
 
 
 def test_a_request_goes_to_the_app_and_its_answer_comes_back(tmp_path, fake_app):
-    app = fake_app()
+    app = fake_app(answer=setup_echo)
     client = connect_app("test", cwd=tmp_path)
     assert client.mode == "app"
     assert client.open_run_replaces_setup is True
     answer = client.set_values(["ion.energy_keV=40"])
-    assert answer["method"] == "set_values"
+    assert answer["setup"]["size"] == len(json.dumps({"assignments": ["ion.energy_keV=40"]}))
     assert app.calls("set_values") == [{"assignments": ["ion.energy_keV=40"]}]
     client.close()
 
 
 def test_a_large_request_goes_after_the_hello(tmp_path, fake_app):
     # the hello is small; a request after it may be as long as the protocol allows
-    app = fake_app()
+    app = fake_app(answer=setup_echo)
     client = connect_app("test", cwd=tmp_path)
     big = "x=" + "1" * 2_000_000
     answer = client.set_values([big])
-    assert answer["size"] > 2_000_000
+    assert answer["setup"]["size"] > 2_000_000
     assert app.calls("set_values") == [{"assignments": [big]}]
     client.close()
 
@@ -283,12 +290,12 @@ def test_a_large_request_goes_after_the_hello(tmp_path, fake_app):
 def test_a_request_too_large_for_the_protocol_is_refused_and_the_connection_stays(
     tmp_path, fake_app
 ):
-    app = fake_app()
+    app = fake_app(answer=setup_echo)
     client = connect_app("test", cwd=tmp_path)
     with pytest.raises(BackendError, match="too long"):
         client.set_values(["x=" + "1" * (protocol.MAX_LINE + 10)])
     assert not client.closed
-    assert client.get_setup()["method"] == "get_setup"
+    assert client.get_setup()["path"] is None
     assert app.calls("set_values") == []
     client.close()
 
@@ -346,12 +353,75 @@ def test_an_ask_that_times_out_in_the_app_is_timed_out(tmp_path, fake_app, monke
     assert client.ask("start a run") == "timed out"
 
 
-def test_an_ask_that_cannot_be_asked_is_none(tmp_path, fake_app):
-    # the app went away while the question was open: nobody was asked, so the code flow runs
+def test_an_ask_whose_app_went_away_is_denied(tmp_path, fake_app):
+    # the app closed while the question was open: no allowance was given, so it is a refusal
     fake_app(answer=lambda n, m, p: "drop")
     client = connect_app("test", cwd=tmp_path)
-    assert client.ask("start a run") is None
+    assert client.ask("start a run") == "denied"
     assert client.closed
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        ("result", "maybe"),
+        ("result", None),
+        ("result", True),
+        ("result", ["allowed"]),
+        ("error", "BackendError", "the window is busy"),
+    ],
+)
+def test_an_ask_answer_that_is_not_one_of_the_three_is_denied(tmp_path, fake_app, reply):
+    fake_app(answer=lambda n, m, p: reply)
+    client = connect_app("test", cwd=tmp_path)
+    assert client.ask("start a run") == "denied"
+    assert not client.closed  # an answer, even a bad one, keeps the connection
+    client.close()
+
+
+def test_only_exactly_false_says_a_file_is_no_replacement(tmp_path, fake_app):
+    # anything else the app says is a replacement: a malformed answer must not allow an overwrite
+    answers = iter([("result", 0), ("result", None), ("result", "no"), ("result", False)])
+    fake_app(answer=lambda n, m, p: next(answers))
+    client = connect_app("test", cwd=tmp_path)
+    other = tmp_path / "other.yaml"
+    other.write_text("x", encoding="utf-8")
+    assert client.would_replace(str(other)) is True
+    assert client.would_replace(str(other)) is True
+    assert client.would_replace(str(other)) is True
+    assert client.would_replace(str(other)) is False
+    client.close()
+
+
+def test_only_exactly_false_says_nothing_is_unsaved(tmp_path, fake_app):
+    answers = iter([("result", 0), ("result", None), ("result", False)])
+    fake_app(answer=lambda n, m, p: next(answers))
+    client = connect_app("test", cwd=tmp_path)
+    assert client.has_unsaved_changes() is True
+    assert client.has_unsaved_changes() is True
+    assert client.has_unsaved_changes() is False
+    client.close()
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        ("result", "not a setup"),
+        ("result", None),
+        ("result", {"path": None, "setup": {}, "problems": []}),  # no "modified"
+        ("result", {"path": 3, "setup": {}, "problems": [], "modified": False}),
+        ("result", {"path": None, "setup": [], "problems": [], "modified": False}),
+        ("result", {"path": None, "setup": {}, "problems": {}, "modified": False}),
+        ("result", {"path": None, "setup": {}, "problems": [], "modified": "no"}),
+    ],
+)
+def test_a_setup_answer_of_the_wrong_shape_is_a_backend_error(tmp_path, fake_app, reply):
+    fake_app(answer=lambda n, m, p: reply)
+    client = connect_app("test", cwd=tmp_path)
+    with pytest.raises(BackendError, match="setup"):
+        client.get_setup()
+    assert client.setup_seen is False  # nothing is remembered from a bad answer
+    client.close()
 
 
 def test_the_log_sends_the_whole_entry(tmp_path, fake_app):
@@ -520,7 +590,10 @@ def test_the_setup_comes_from_the_saved_file_when_the_app_closes(tmp_path, fake_
     saved_ions = headless.get_setup()["setup"]["number_ions"]
     headless.set_values(["number_ions=99"])  # the headless setup differs from the saved file
     app = fake_app(
-        answer=lambda n, m, p: ("result", {"path": str(saved), "setup": {}, "modified": True})
+        answer=lambda n, m, p: (
+            "result",
+            {"path": str(saved), "setup": {}, "problems": [], "modified": True},
+        )
     )
     link = AppLink(cwd=tmp_path, retry_seconds=0.0)
     client = link.backend("codex", headless)
@@ -540,7 +613,12 @@ def test_the_setup_comes_from_the_saved_file_when_the_app_closes(tmp_path, fake_
 
 def test_a_new_setup_in_the_app_is_an_empty_setup_after_it_closes(tmp_path, fake_app):
     headless = n15_backend(tmp_path)
-    app = fake_app(answer=lambda n, m, p: ("result", {"path": None, "setup": {}, "modified": True}))
+    app = fake_app(
+        answer=lambda n, m, p: (
+            "result",
+            {"path": None, "setup": {}, "problems": [], "modified": True},
+        )
+    )
     link = AppLink(cwd=tmp_path, retry_seconds=0.0)
     client = link.backend("codex", headless)
     client.get_setup()
@@ -631,18 +709,18 @@ def test_an_edit_the_app_drops_is_reported_and_not_retried(tmp_path, fake_app):
 
 
 def test_the_app_answers_while_it_is_open(tmp_path, fake_app):
-    fake_app()
+    fake_app(answer=setup_echo)
     headless = n15_backend(tmp_path)
     srv = server_for(tmp_path, headless)
     result = payload(call_tool(srv, "get_setup"))
-    assert result["mode"] == "app"
-    assert result["method"] == "get_setup"  # the app's answer, with the mode added
+    assert result["mode"] == "app"  # the app's answer, with the mode added
+    assert result["setup"] == {"size": 2}  # the echo of an empty request: {} is 2 characters
 
 
 def test_each_call_is_logged_to_the_app_with_its_whole_entry(tmp_path, fake_app):
     app = fake_app(
         answer=lambda n, m, p: (
-            ("result", {"path": None, "setup": {}, "modified": False})
+            ("result", {"path": None, "setup": {}, "problems": [], "modified": False})
             if m == "get_setup"
             else default_answer(n, m, p)
         )
@@ -663,7 +741,7 @@ def test_an_ask_about_a_start_goes_to_the_app_dialog(tmp_path, fake_app):
         if method == "status":
             return ("result", READY_STATUS)
         if method == "get_setup":
-            return ("result", {"path": str(setup), "setup": {}, "modified": False})
+            return ("result", {"path": str(setup), "setup": {}, "problems": [], "modified": False})
         if method == "has_unsaved_changes":
             return ("result", False)
         if method == "estimate":

@@ -69,8 +69,21 @@ SLOW_METHODS = frozenset(
         "save_setup",
     }
 )
-#: the requests that answer with the setup's file
-SETUP_METHODS = frozenset({"get_setup", "open_setup", "save_setup", "new_setup"})
+#: the requests whose answer is the setup (the app's ``get_setup`` shape), and so are checked
+SETUP_METHODS = frozenset(
+    {
+        "get_setup",
+        "set_values",
+        "set_section",
+        "new_setup",
+        "open_setup",
+        "save_setup",
+        "undo",
+        "redo",
+    }
+)
+#: the keys of the app's setup answer
+SETUP_KEYS = frozenset({"path", "setup", "problems", "modified"})
 #: how long a missing app is not looked for again (seconds)
 RETRY_SECONDS = 3.0
 #: the name of a client that gave none
@@ -120,6 +133,23 @@ def connect_app(
         channel.close()
         return None
     return AppClient(channel, Path(cwd) if cwd is not None else Path.cwd(), local=local)
+
+
+def _checked_setup(result) -> dict:
+    """The app's setup answer, checked: a dict with the setup's keys and their kinds. Raises
+    :class:`BackendError` for anything else (the answer is not trusted then)."""
+    if not isinstance(result, dict) or not SETUP_KEYS <= result.keys():
+        raise BackendError("the app's answer about the setup is not a setup")
+    path = result["path"]
+    if path is not None and not isinstance(path, str):
+        raise BackendError("the app's answer about the setup has a path that is not text")
+    if (
+        not isinstance(result["setup"], dict)
+        or not isinstance(result["problems"], list)
+        or not isinstance(result["modified"], bool)
+    ):
+        raise BackendError("the app's answer about the setup has a wrong part")
+    return result
 
 
 def _client_text(client: str) -> str:
@@ -208,7 +238,8 @@ class AppClient:
                 raise BackendError("the app reported an error")
             raise exception_for(error)
         result = reply.get("result")
-        if method in SETUP_METHODS and isinstance(result, dict) and "path" in result:
+        if method in SETUP_METHODS:
+            result = _checked_setup(result)
             self.setup_seen = True
             self.last_setup_path = result["path"]
         return result
@@ -242,13 +273,15 @@ class AppClient:
         return self._call("get_setup")
 
     def has_unsaved_changes(self) -> bool:
-        return self._call("has_unsaved_changes")
+        # only an answer of exactly False says there is nothing unsaved (see would_replace)
+        return self._call("has_unsaved_changes") is not False
 
     def would_replace(self, path: str) -> bool:
         target = self._resolve(path)
         if not os.path.islink(target) and os.path.realpath(target) in self._written:
             return False  # a file this client wrote is this session's
-        return self._call("would_replace", {"path": str(target)})
+        # only an answer of exactly False says the file is not replaced: anything else is a yes
+        return self._call("would_replace", {"path": str(target)}) is not False
 
     def set_values(self, assignments: list[str]) -> dict:
         return self._call("set_values", {"assignments": assignments})
@@ -370,16 +403,16 @@ class AppClient:
 
     # --- the agent's questions and log ------------------------------------------------
 
-    def ask(self, text: str) -> Answer | None:
-        """The user's answer: "allowed", "denied" or "timed out". None when nobody could be asked
-        (the app closed), so the caller issues a code instead."""
+    def ask(self, text: str) -> Answer:
+        """The user's answer: "allowed", "denied" or "timed out". Anything that is not a clear
+        allowance is a refusal: an app that closed, an error or a malformed answer included."""
         try:
             answer = self._call("ask", {"text": text})
         except AppGone as error:
-            return "timed out" if error.silent else None
+            return "timed out" if error.silent else "denied"
         except BackendError:
-            return None
-        return answer if answer in ANSWERS else None
+            return "denied"
+        return answer if answer in ANSWERS else "denied"
 
     def log(self, entry: ActivityEntry | dict) -> None:
         """Show an entry in the app's Agent activity panel: its whole wire form, eight keys."""
