@@ -10,6 +10,7 @@ import pytest
 pytest.importorskip("PySide6")
 pytest.importorskip("pytestqt")
 
+import shutil  # noqa: E402
 from copy import deepcopy  # noqa: E402
 
 from PySide6.QtCore import QObject, Qt, Signal  # noqa: E402
@@ -473,3 +474,76 @@ def test_show_plot_switches_the_window_to_the_results_tab(qtbot, run, document, 
     with qtbot.waitSignal(widget.canvas.drawn, timeout=10000):
         widget.show_plot(None, "ionization")
     assert holder.tabs.currentWidget() is widget
+
+
+# --- a single run with the live option: the point's live record while it goes ------------
+
+
+def live_single_run(run, document, folder, units, record=True):
+    """A single run with the live option, going: its one point is running, and its finished
+    ``units`` are in the point's live record (test_files/2 copies as the units' outputs). With
+    ``record=False`` the point has no live record yet."""
+    from run_folders import FIXTURE
+
+    from srim.scan.batches import write_point_record
+
+    doc = {**deepcopy(document.doc), "_live": True}
+    scan = plan_run(doc, document.base_dir, ParallelChoice())
+    state = ScanState(scan)
+    point = scan.points()[0]
+    point_dir = folder / "points" / point.id[:16]
+    point_dir.mkdir(parents=True)
+    if record:
+        rows = []
+        for unit in units:
+            shutil.copytree(FIXTURE, point_dir / "batches" / str(unit))
+            rows.append((unit, unit, None, 10, 100 + unit))
+        write_point_record(point_dir, point.spec, rows, live=True)
+    state.points[0].status = "running"
+    run.result = None
+    run.state = state
+    run.folder = folder
+    run.running = True
+    return state
+
+
+def test_a_running_live_point_is_listed_and_shown_from_its_live_record(
+    qtbot, tab, run, document, folder
+):
+    live_single_run(run, document, folder, units=[0, 1])
+    tab.show()
+    with qtbot.waitSignal(tab.canvas.drawn, timeout=10000):
+        run.started.emit()
+    assert tab.point_combo.count() == 1
+    assert tab._results is not None
+    assert tab._results.n_ions == 20
+
+
+def test_a_running_point_without_a_live_record_yet_is_not_listed(qtbot, tab, run, document, folder):
+    live_single_run(run, document, folder, units=[], record=False)
+    run.started.emit()
+    assert tab.point_combo.count() == 0
+    assert tab._results is None
+
+
+def test_the_refresh_tick_shows_the_units_that_finished_since(qtbot, tab, run, document, folder):
+    from run_folders import FIXTURE
+
+    from srim.scan.batches import write_point_record
+
+    state = live_single_run(run, document, folder, units=[0])
+    tab.show()
+    with qtbot.waitSignal(tab.canvas.drawn, timeout=10000):
+        run.started.emit()
+    assert tab._results.n_ions == 10
+    point_dir = folder / "points" / state.points[0].id[:16]
+    shutil.copytree(FIXTURE, point_dir / "batches" / "1")
+    point = plan_run({**deepcopy(document.doc), "_live": True}, document.base_dir, ParallelChoice())
+    write_point_record(
+        point_dir,
+        point.points()[0].spec,
+        [(0, 0, None, 10, 100), (1, 1, None, 10, 101)],
+        live=True,
+    )
+    tab._on_tick()
+    assert tab._results.n_ions == 20

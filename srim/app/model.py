@@ -108,10 +108,13 @@ def _without_app_keys(value: Any) -> Any:
 
 
 def _state(doc: dict) -> dict:
-    """What undo and "modified" compare: the spec as :func:`clean` gives it, and the scan."""
+    """What undo and "modified" compare: the spec as :func:`clean` gives it, the scan and the
+    live option."""
     out = clean(doc)
     if "_scan" in doc:
         out["_scan"] = deepcopy(doc["_scan"])
+    if "_live" in doc:
+        out["_live"] = doc["_live"]
     return out
 
 
@@ -431,7 +434,9 @@ def prepare_for_save(doc: dict, folder: Path) -> tuple[dict, list[tuple[Path, Pa
 
 def read_setup(path: Path) -> dict:
     """The document of the ``run.yaml`` at ``path``: its spec in the document layout, and its
-    ``scan:`` section as ``_scan`` when the file has a scan (not a single run's wrapper).
+    ``scan:`` section as ``_scan`` when the file has a scan (not a single run's wrapper). A file
+    whose ``scan:`` is a single run with the live option (:func:`scan_model.live_scan`) gives
+    ``_live`` instead.
 
     Raises :class:`~srim.spec.SpecError` for a file that cannot be read or is not a setup.
     """
@@ -446,7 +451,9 @@ def read_setup(path: Path) -> dict:
     except UnicodeDecodeError as error:
         raise SpecError(f"{path} is not a text file: {error}") from error
     doc = from_spec(spec)
-    if section is not None and not scan_model.is_single_run_section(
+    if section is not None and scan_model.is_live_run_section(section, spec.seed, spec.number_ions):
+        doc["_live"] = True
+    elif section is not None and not scan_model.is_single_run_section(
         section, spec.seed, spec.number_ions
     ):
         doc["_scan"] = scan_model.scan_from_section(section)
@@ -480,6 +487,10 @@ def write_setup(doc: dict, path: Path, base_dir: Path | None) -> dict:
     provenance = {"app": f"pysrim2 {srim.__version__}"}
     if "_scan" in prepared:
         scan = scan_model.to_scan(prepared, folder)
+        _relative_histograms(scan.base, folder)
+        scan.to_yaml(path, provenance=provenance)
+    elif scan_model.is_live(prepared):
+        scan = scan_model.live_scan(to_spec(prepared, folder))
         _relative_histograms(scan.base, folder)
         scan.to_yaml(path, provenance=provenance)
     else:

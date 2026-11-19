@@ -28,10 +28,13 @@ RELOAD_FILE = "reload"
 LOADED_FILE = "loaded.json"
 
 
-def open_point(folder: Path, rel_path: str):
+def open_point(folder: Path, rel_path: str, live: bool = False):
     """The results of a point of a scan folder: merged when the point was batched (it has a
-    ``units.csv``), else the plain :class:`~srim.output.Results` of its folder."""
+    ``units.csv``), else the plain :class:`~srim.output.Results` of its folder. With ``live``, the
+    merged results of the point's live record instead (a point that is still running)."""
     point = Path(folder) / rel_path
+    if live:
+        return open_results(point, live=True)
     if (point / "units.csv").is_file():
         return open_results(point)
     return Results(point)

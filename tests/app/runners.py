@@ -55,3 +55,23 @@ def one_second_runner(spec):
     """Takes 1 s, then returns the fixture: a run that is still going for a while."""
     time.sleep(1.0)
     return fixture_runner(spec)
+
+
+#: the folder whose first ``mkdir`` marks the first run (see :func:`gated_after_first_runner`)
+COUNT_VAR = "PYSRIM2_TEST_COUNT"
+
+
+def gated_after_first_runner(spec):
+    """The first run returns at once; every later run waits for the gate file (as
+    :func:`gated_runner`). With one worker, the batches of a run go in turn: the first batch is
+    finished while the rest wait, so a test can see the live record of a run that is going."""
+    counter = Path(os.environ[COUNT_VAR])
+    counter.mkdir(parents=True, exist_ok=True)
+    try:
+        (counter / "first").mkdir()
+    except FileExistsError:
+        gate = Path(os.environ[GATE_VAR])
+        deadline = time.monotonic() + SLOW_SECONDS
+        while not gate.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+    return fixture_runner(spec)

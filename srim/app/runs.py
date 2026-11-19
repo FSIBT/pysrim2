@@ -21,7 +21,7 @@ import pandas as pd
 
 from srim.app.model import to_spec
 from srim.app.plots import PLOT_ROW_CAP
-from srim.app.scan_model import to_scan
+from srim.app.scan_model import is_live, live_scan, to_scan
 from srim.app.settings import RATE_KEYS, AppSettings
 from srim.beam import beam_scan, sampled_ions
 from srim.beam.binned import make_bins
@@ -119,9 +119,13 @@ def plan_run(doc: dict, base_dir: Any, choice: ParallelChoice) -> Scan:
 
     The batch size of ``choice`` applies only where the scan has fixed ions and no batch size or
     precision target of its own, and is not a one-point scan that keeps its seed (the library
-    refuses to split that). Raises :class:`~srim.spec.SpecError` for a value the library refuses.
+    refuses to split that). A setup with the live option runs in its own batches
+    (:func:`~srim.app.scan_model.live_scan`), whatever the choice says. Raises
+    :class:`~srim.spec.SpecError` for a value the library refuses.
     """
     scan = doc.get("_scan")
+    if scan is None and is_live(doc):
+        return live_scan(to_spec(doc, base_dir))  # its batch size is the option's, not the choice's
     if scan is None:
         return beam_scan(to_spec(doc, base_dir), batch_ions=choice.batch_ions)
     if (

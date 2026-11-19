@@ -9,6 +9,7 @@ Nothing here imports Qt. :mod:`srim.app.model` calls :func:`scan_missing` and :f
 from its ``problems``, so this module imports the model's helpers lazily or not at all there.
 """
 
+import math
 from collections.abc import Mapping
 from copy import deepcopy
 from pathlib import Path
@@ -18,9 +19,11 @@ import yaml
 
 from srim.app.guidance import Guidance
 from srim.app.model import layer_label, to_spec
+from srim.beam import beam_scan
+from srim.beam.spec import MAX_TRIM_DAT_IONS
 from srim.scan import Precision, Scan
 from srim.scan.spec import _SECTION_KEYS, DEFAULT_EXTRACT, normalise_key
-from srim.spec import SpecError
+from srim.spec import RunSpec, SpecError
 
 #: the beam parameters the Scan tab offers, with their labels (layer parameters follow)
 SCAN_KEYS = (
@@ -32,6 +35,46 @@ LAYER_SCAN_FIELDS = (
     ("thickness_nm", "thickness (nm)"),
     ("density_g_cm3", "density (g/cm3)"),
 )
+
+
+#: the batches of a single run with the live option (its results are redrawn after each one)
+LIVE_BATCHES = 10
+
+
+def live_batch_ions(number_ions: int) -> int:
+    """The ions of each batch of a single run with the live option: a tenth of its ions, at least
+    one, and at most the TRIM.DAT limit (a run of more than ten times that limit has more batches).
+    """
+    return min(max(1, math.ceil(number_ions / LIVE_BATCHES)), MAX_TRIM_DAT_IONS)
+
+
+def live_scan(spec: RunSpec) -> Scan:
+    """The scan of a single run with the live option: ``spec`` in batches of
+    :func:`live_batch_ions`, with the seeds derived from its seed and no extractor. It is what
+    a setup with the option runs, and what its saved ``run.yaml`` describes in its ``scan:``."""
+    return beam_scan(spec, batch_ions=live_batch_ions(spec.number_ions), extract=[])
+
+
+def is_live(doc: dict) -> bool:
+    """True when the setup ``doc`` runs with the live option: its ``_live`` key, and no scan (a scan
+    already shows each point as it finishes, so the option does not apply to it)."""
+    return bool(doc.get("_live")) and doc.get("_scan") is None
+
+
+def is_live_run_section(section: Mapping, seed, number_ions) -> bool:
+    """True when ``section`` is the ``scan:`` section of a single run with the live option (what
+    :func:`live_scan` writes): ten batches of :func:`live_batch_ions`, no extractor, and no other
+    part of a scan. Its ``ions`` and ``seed`` are absent or the setup's."""
+    return (
+        not section.get("keep_seed")
+        and not section.get("grid")
+        and not section.get("points")
+        and section.get("precision") is None
+        and section.get("extract") == []
+        and section.get("batch_ions") == live_batch_ions(number_ions)
+        and section.get("seed") in (None, seed)
+        and section.get("ions") in (None, number_ions)
+    )
 
 
 def new_scan() -> dict:

@@ -468,3 +468,32 @@ def test_a_run_where_no_point_finished_has_no_outputs_missing(tmp_path, boron_da
     result, _finished = read_run(tmp_path / "run")
     assert not outputs_missing(result, tmp_path / "run")
     assert not outputs_missing(None, tmp_path / "run")
+
+
+# --- the live option of a single run ----------------------------------------------------
+
+
+def test_a_live_setup_is_a_ten_batch_scan_and_ignores_the_parallel_batch_size(tmp_path):
+    doc = document()
+    doc["_live"] = True
+    doc = {**doc, "number_ions": 1000}
+    scan = plan_run(doc, tmp_path, ParallelChoice(batch_ions=7))
+    assert scan.batch_ions == 100
+    assert scan.extract == []
+    assert scan.keep_seed is False
+    assert scan.ions == 1000
+
+
+def test_a_plain_run_keeps_its_seed_and_takes_no_batches(tmp_path):
+    scan = plan_run(document(), tmp_path, ParallelChoice())
+    assert scan.keep_seed is True
+    assert scan.batch_ions is None
+
+
+def test_a_live_setup_with_a_scan_is_planned_as_the_scan(tmp_path):
+    doc = document(scan_from_section({"grid": {"ion.energy_keV": [10.0, 20.0]}, "ions": 50}))
+    doc["_live"] = True
+    scan = plan_run(doc, tmp_path, ParallelChoice())
+    assert scan.keep_seed is False
+    assert len(scan.points()) == 2
+    assert scan.batch_ions is None

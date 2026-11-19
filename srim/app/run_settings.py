@@ -17,12 +17,14 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
     QFormLayout,
+    QLabel,
     QLineEdit,
     QSpinBox,
     QWidget,
 )
 
 from srim.app.document import DocumentModel
+from srim.app.scan_model import is_live
 from srim.spec import SETTINGS_SCHEMA
 
 #: the calculations the tab offers, by number
@@ -47,6 +49,14 @@ OUTPUT_FLAGS = (
 )
 MAX_INT = 2147483647
 OFF_TEXT = "Off"
+#: the live option's label and note (the note says what the option does to the results)
+LIVE_TEXT = "Show results while the run goes"
+LIVE_NOTE = (
+    "Splits the run into 10 batches. Results are statistically equivalent to one run, but not "
+    "identical."
+)
+#: the tooltip of the live option when the setup has a scan (the option does not apply)
+LIVE_SCAN_TEXT = "A scan already shows each point as it finishes"
 
 
 def _setting(doc: dict, key: str):
@@ -131,6 +141,12 @@ class RunSettingsTab(QWidget):
         self.widgets["bragg_correction"] = self.bragg
         self.autosave = self._int_spin("autosave", "")
 
+        self.live_box = QCheckBox(LIVE_TEXT, self)
+        self.live_box.toggled.connect(self._on_live)
+        self.widgets["live"] = self.live_box
+        self.live_note = QLabel(LIVE_NOTE, self)
+        self.live_note.setWordWrap(True)
+
         form = QFormLayout(self)
         form.addRow("Calculation", self.calculation)
         form.addRow("Random seed", self.seed)
@@ -141,6 +157,8 @@ class RunSettingsTab(QWidget):
         form.addRow("EXYZ.txt from", self.exyz)
         form.addRow("Bragg correction", self.bragg)
         form.addRow("Autosave every", self.autosave)
+        form.addRow(self.live_box)
+        form.addRow(self.live_note)
 
         document.changed.connect(self._refresh)
         self._refresh()
@@ -183,6 +201,10 @@ class RunSettingsTab(QWidget):
         bragg = _setting(doc, "bragg_correction")
         if isinstance(bragg, (int, float)) and not isinstance(bragg, bool):
             _quietly(self.bragg, self.bragg.setValue, float(bragg))
+        scan = doc.get("_scan") is not None
+        _quietly(self.live_box, self.live_box.setChecked, is_live(doc))
+        self.live_box.setEnabled(not scan)
+        self.live_box.setToolTip(LIVE_SCAN_TEXT if scan else "")
 
     def _show_calculation(self, calculation) -> None:
         """The offered calculations, plus the loaded one (4 to 7) while the setup has it."""
@@ -229,6 +251,18 @@ class RunSettingsTab(QWidget):
         if value is None or value == _setting(self.document.doc, "collisions"):
             return
         self.document.edit(lambda doc: _store_setting(doc, "collisions", int(value)))
+
+    def _on_live(self, checked: bool) -> None:
+        if is_live(self.document.doc) == checked:
+            return
+
+        def set_live(doc: dict) -> None:
+            if checked:
+                doc["_live"] = True
+            else:
+                doc.pop("_live", None)
+
+        self.document.edit(set_live)
 
     def _on_int(self, key: str, value: int) -> None:
         if _setting(self.document.doc, key) == value:

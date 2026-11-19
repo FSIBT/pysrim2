@@ -161,3 +161,34 @@ def test_a_document_with_plot_mode_keeps_it_across_edits(tab, document, loaded):
     tab.widgets["seed"].setValue(3)
     combo_pick(tab.widgets["collisions"], 1)
     assert document.doc["settings"] == {"plot_mode": 0, "ranges": 1, "collisions": 1}
+
+
+# --- the live option ---------------------------------------------------------------------
+
+
+def test_the_live_option_is_off_by_default_and_ticking_it_stores_live(tab, loaded):
+    assert not tab.live_box.isChecked()
+    tab.live_box.setChecked(True)
+    assert loaded.doc["_live"] is True
+    tab.live_box.setChecked(False)
+    assert "_live" not in loaded.doc
+
+
+def test_the_live_note_says_what_the_option_does(tab):
+    note = tab.live_note.text()
+    assert "Splits the run into 10 batches." in note
+    assert "statistically equivalent to one run, but not identical." in note
+
+
+def test_the_live_option_is_greyed_out_for_a_scan(tab, loaded):
+    from srim.app.scan_model import new_scan
+
+    tab.live_box.setChecked(True)
+    loaded.edit(lambda doc: doc.__setitem__("_scan", new_scan()))
+    assert not tab.live_box.isEnabled()
+    assert not tab.live_box.isChecked()
+    assert "scan" in tab.live_box.toolTip().lower()
+
+
+def test_the_live_option_is_a_status_bar_target(tab):
+    assert tab.widgets["live"] is tab.live_box
