@@ -738,6 +738,8 @@ class _ScanRun:
     def _send(self, worker, index, batch, attempt):
         point = self.points[index]
         out = self._unit_dir(index, batch)
+        if index not in self.started:  # the point is scheduled: a crashed run's record goes
+            self._drop_live(index)
         self.ran.add(index)
         if attempt == 1:  # the unit's folder starts clean (a point's folder was cleared)
             shutil.rmtree(out, ignore_errors=True)

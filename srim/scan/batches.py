@@ -146,9 +146,13 @@ def has_live_record(folder) -> bool:
 
 
 def remove_live_files(folder) -> None:
-    """Remove the live record of a point's folder, if it has one."""
+    """Remove the live record of a point's folder, if it has one, and the temporary files a
+    crashed write left beside it (see :func:`_write_atomic`)."""
+    folder = Path(folder)
     for name in LIVE_FILES:
-        (Path(folder) / name).unlink(missing_ok=True)
+        (folder / name).unlink(missing_ok=True)
+        for leftover in folder.glob(f"{name}.*.tmp"):
+            leftover.unlink(missing_ok=True)
 
 
 def _check_same_bins(frames, name):

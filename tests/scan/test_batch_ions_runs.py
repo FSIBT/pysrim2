@@ -16,6 +16,7 @@ import signal
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pandas as pd
 import pytest
@@ -395,3 +396,28 @@ def test_a_point_whose_final_record_cannot_be_written_keeps_its_live_record(
     assert (point_dir / "run.live.yaml").is_file()
     assert len(pd.read_csv(point_dir / "units.live.csv")) == 3
     assert not (point_dir / "units.csv").exists()
+
+
+def test_a_point_scheduled_in_a_run_drops_the_live_record_a_crash_left(tmp_path, state_dir):
+    # a crashed run leaves its live files and a temporary file of a write behind; a resumed
+    # run that schedules the point must not show them as its progress
+    scan = batched_scan(ions=25, batch_ions=10)
+    run = executor._ScanRun(
+        scan,
+        tmp_path / "s",
+        workers=1,
+        base_seed=7,
+        runner=seeded_runner,
+        retries=0,
+        on_event=lambda event: None,
+        stop=threading.Event(),
+    )
+    point_dir = run.dirs[0]
+    point_dir.mkdir(parents=True)
+    for name in LIVE_NAMES:
+        (point_dir / name).write_text("left by a crashed run\n", encoding="utf-8")
+    (point_dir / "run.live.yaml.4242.tmp").write_text("torn\n", encoding="utf-8")
+    worker = SimpleNamespace(ident=0, tasks=SimpleNamespace(put=lambda item: None), current=None)
+    run._send(worker, 0, 0, 1)
+    assert no_live_record(point_dir)
+    assert not list(point_dir.glob("*.tmp"))
