@@ -446,6 +446,9 @@ class AppLink:
         self._clock = clock
         self._retry_seconds = retry_seconds
         self._cwd = Path(cwd) if cwd is not None else Path.cwd()
+        #: every use of the link is serialised by this lock (the calls of one server may overlap:
+        #: the server's lock is released while the user is asked)
+        self._lock = threading.Lock()
         self._app: AppClient | None = None
         self._next_try = 0.0
         #: the app's setup when it was lost: (known, path), None while no app was lost
@@ -454,6 +457,10 @@ class AppLink:
 
     def backend(self, client: str, headless: Backend) -> Backend:
         """The backend for a call: the app's client, or ``headless`` when there is no app."""
+        with self._lock:
+            return self._backend(client, headless)
+
+    def _backend(self, client: str, headless: Backend) -> Backend:
         if self._app is not None and self._app.closed:
             self._drop()
         if self._app is None and self._clock() >= self._next_try:
@@ -469,17 +476,20 @@ class AppLink:
 
     def lost(self) -> None:
         """The app stopped answering: its connection is dropped, and the next call looks again."""
-        if self._app is not None:
-            self._drop()
+        with self._lock:
+            if self._app is not None:
+                self._drop()
 
     def take_notice(self) -> str | None:
         """The text for the agent about a change of backend, once (None when there is none)."""
-        notice, self._notice = self._notice, None
-        return notice
+        with self._lock:
+            notice, self._notice = self._notice, None
+            return notice
 
     def close(self) -> None:
-        if self._app is not None:
-            self._drop()
+        with self._lock:
+            if self._app is not None:
+                self._drop()
 
     def _drop(self) -> None:
         app, self._app = self._app, None

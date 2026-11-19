@@ -878,3 +878,43 @@ def test_the_server_lock_is_free_while_the_app_is_asked(tmp_path):
     finally:
         lock.release()
     assert seen["locked"] is False
+
+
+def test_the_link_serves_one_caller_at_a_time_so_the_app_is_connected_once(tmp_path):
+    # two calls at once (the server's lock is released while the user is asked): the second waits
+    # for the first one's connection, instead of connecting a second client
+    entered, release = threading.Event(), threading.Event()
+    connects = []
+
+    class Connected:
+        mode = "app"
+        closed = False
+        setup_seen = False
+        last_setup_path = None
+
+        def close(self):
+            self.closed = True
+
+    fake = Connected()
+
+    def connect(client, cwd=None):
+        connects.append(client)
+        entered.set()
+        release.wait(10)
+        return fake
+
+    link = AppLink(connect=connect, cwd=tmp_path)
+    headless = n15_backend(tmp_path)
+    results = []
+    first = threading.Thread(target=lambda: results.append(link.backend("a", headless)))
+    first.start()
+    assert entered.wait(5)
+    second = threading.Thread(target=lambda: results.append(link.backend("b", headless)))
+    second.start()
+    second.join(0.3)
+    assert second.is_alive()  # it waits; it does not connect again
+    release.set()
+    first.join(5)
+    second.join(5)
+    assert results == [fake, fake]
+    assert len(connects) == 1
