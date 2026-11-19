@@ -995,3 +995,28 @@ def test_delete_run_is_refused_for_a_run_folder_the_app_has_open_or_runs(tmp_pat
     assert client.delete_run(str(folder))["deleted"] is True
     assert not folder.exists()
     client.close()
+
+
+def test_a_code_issued_headless_is_not_redeemed_for_another_folder_once_the_app_is_open(
+    tmp_path, fake_app
+):
+    # the code is bound to its action (the tool, its arguments, the setup): after the app opens, a
+    # code for one folder does not allow the delete of another, which the app asks about
+    import re
+
+    headless = n15_backend(tmp_path)
+    srv = server_for(tmp_path, headless)
+    first = call_tool(srv, "delete_run", {"folder": str(tmp_path / "a-run")})
+    text = error_of(first)
+    code = re.search(r'confirm_code="([2346789ABCDEFGHJKMNPQRTUVWXYZ]{6})"', text).group(1)
+
+    app = fake_app(
+        answer=lambda n, m, p: (
+            ("result", "denied") if m == "ask" else setup_answer(tmp_path / "n15.yaml")(n, m, p)
+        )
+    )
+    result = call_tool(srv, "delete_run", {"folder": str(tmp_path / "b-run"), "confirm_code": code})
+    assert "did not allow" in error_of(result)
+    (asked,) = app.calls("ask")
+    assert "b-run" in asked["text"]
+    assert app.calls("delete_run") == []
