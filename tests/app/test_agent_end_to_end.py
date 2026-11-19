@@ -21,6 +21,7 @@ from mcp import Client  # noqa: E402
 from runners import fixture_runner  # noqa: E402
 
 from srim.app.approval_dialog import ApprovalQueue  # noqa: E402
+from srim.app.runs import ParallelChoice  # noqa: E402
 from srim.app.settings import AppSettings  # noqa: E402
 from srim.app.window import MainWindow  # noqa: E402
 from srim.mcp import server  # noqa: E402
@@ -192,6 +193,38 @@ def test_a_long_run_the_user_denies_is_not_started(qtbot, window, srv, tmp_path)
     assert "did not allow" in error_of(outcome.value)
     assert window.run.folder is None  # nothing was started
     assert not window.run.running
+
+
+def test_an_edit_while_the_question_is_open_refuses_allow(qtbot, window, srv, tmp_path):
+    """The window stays usable: the user edits the setup while the dialog is up. Allow then
+    starts nothing, because the setup is no longer the one the user was asked about."""
+    set_the_n15_setup(qtbot, srv, tmp_path / "n15.yaml", ions=LONG)
+    outcome = in_thread(lambda: call_tool(srv, "start_run", {}))
+    qtbot.waitUntil(lambda: window.approvals.shown is not None, timeout=TIMEOUT)
+    window.document.edit(lambda doc: doc.__setitem__("number_ions", 150))  # the user's edit
+    answer_the_dialog(qtbot, window, allow=True)
+    qtbot.waitUntil(lambda: outcome.done, timeout=TIMEOUT)
+    assert "changed while the user was asked" in error_of(outcome.value)
+    assert window.run.folder is None
+    assert not window.run.running
+
+
+def test_a_run_the_user_starts_while_the_question_is_open_withdraws_it(
+    qtbot, window, srv, tmp_path
+):
+    """The user starts a run while the agent's question is open. The question is withdrawn (its
+    dialog closes, denied): the agent's start is refused, and no second run is started."""
+    set_the_n15_setup(qtbot, srv, tmp_path / "n15.yaml", ions=LONG)
+    outcome = in_thread(lambda: call_tool(srv, "start_run", {}))
+    qtbot.waitUntil(lambda: window.approvals.shown is not None, timeout=TIMEOUT)
+    window.start_run_with(ParallelChoice())  # the user's own run
+    qtbot.waitUntil(lambda: not window.run.running, timeout=TIMEOUT)
+    qtbot.waitUntil(lambda: outcome.done, timeout=TIMEOUT)
+    assert window.approvals.shown is None  # the dialog is gone: Allow cannot be pressed
+    assert "did not allow" in error_of(outcome.value)
+    runs = tmp_path / "n15-runs"
+    folders = [p for p in runs.iterdir() if (p / "scan.yaml").is_file()]
+    assert folders == [window.run.folder]  # the user's run only
 
 
 def test_closing_the_app_falls_back_to_headless(qtbot, window, srv, tmp_path):

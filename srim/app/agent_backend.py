@@ -517,6 +517,9 @@ class AgentBackend:
         self._run_ends_pending = True
         self._failure = None
         self._settle_pending_open(BackendError(RUN_STARTED_TEXT))
+        # the window is usable while a question is open, so the user may start a run meanwhile:
+        # the questions then are withdrawn (denied), as they were asked about another state
+        self.window.approvals.withdraw()
 
     def _on_run_finished(self, result) -> None:
         self._run_ends_pending = False

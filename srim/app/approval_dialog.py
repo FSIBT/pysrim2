@@ -5,9 +5,13 @@ When an agent asks for something that needs the user's OK (a long run, an overwr
 with Allow and Deny and a countdown. The answer is ``"allowed"``, ``"denied"`` or ``"timed out"``
 (after ``timeout_s`` seconds without one), which is what :mod:`srim.mcp.tools` expects.
 
-The dialog is shown with ``open()``, never ``exec()``: the GUI and the agent socket keep running
-while it is up. ``open()`` makes it window-modal, so the window itself takes no input meanwhile.
-Requests that come while a dialog is up wait their turn, each with its own answer.
+The dialog is shown with ``show()``, never ``exec()``, and it is not window-modal: the window
+takes input while it is up (Stop, Pause, Save and the rest), and the GUI and the agent socket keep
+running. Because the window stays usable, the state can change while a question is open. The
+answer is then safe in two ways: Allow only starts the action when the setup is still the one the
+user was asked about (the hash re-check in :meth:`srim.mcp.tools.Tools._approve`), and a run the
+user starts withdraws the question (:meth:`ApprovalQueue.withdraw`, denied). Requests that come
+while a dialog is up wait their turn, each with its own answer.
 
 The rules of the answers:
 
@@ -243,6 +247,15 @@ class ApprovalQueue(QObject):
         self._show_next()
         return deferred
 
+    def withdraw(self) -> None:
+        """Every open request is denied and its dialog closes: the window's state moved on (a run
+        started), so an answer would be about another state. New requests still ask."""
+        self._gap.stop()
+        while self._waiting:
+            self._waiting.popleft().deferred.resolve(DENIED)
+        if self._current is not None:
+            self._finish(DENIED)
+
     def close(self) -> None:
         """The window is closing: every open request is denied, and new ones are denied at once."""
         self._closed = True
@@ -270,9 +283,12 @@ class ApprovalQueue(QObject):
         )
         self._dialog = dialog
         self._clock.start()
+        # not window-modal: the window's own buttons (Stop, Pause, Save) stay usable meanwhile
+        dialog.setModal(False)
+        dialog.show()
         self._window.raise_()
         self._window.activateWindow()
-        dialog.open()
+        dialog.raise_()
         dialog.deny_button.setFocus()
 
     def _answered(self, req: _Request, choice: str) -> None:

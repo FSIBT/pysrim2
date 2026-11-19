@@ -12,7 +12,7 @@ pytest.importorskip("PySide6")
 pytest.importorskip("pytestqt")
 
 from PySide6.QtCore import Qt  # noqa: E402
-from PySide6.QtWidgets import QDialog  # noqa: E402
+from PySide6.QtWidgets import QApplication, QDialog  # noqa: E402
 from test_agent_server import connect, finish, in_thread  # noqa: E402
 
 from srim.app import approval_dialog  # noqa: E402
@@ -148,6 +148,29 @@ def test_a_cancel_while_queued_removes_the_request(qtbot, queue):
     assert not second.settled
     queue.shown.allow_button.click()
     assert third.outcome == (True, "allowed")
+
+
+def test_the_dialog_is_not_modal_so_the_window_stays_usable(qtbot, queue, window):
+    """Stop, Pause and Save stay usable while the question is open: no window is blocked."""
+    queue.request("claude", "start a run")
+    dialog = shown(qtbot, queue)
+    assert dialog.isVisible()
+    assert not dialog.isModal()
+    assert dialog.windowModality() == Qt.WindowModality.NonModal
+    assert QApplication.activeModalWidget() is None
+    assert window.isEnabled()
+    assert dialog.parentWidget() is window  # a dialog of the window: it stays on top of it
+
+
+def test_closing_the_window_while_allow_is_enabled_denies(qtbot, window):
+    """The window is usable meanwhile, so it can be closed with the question open: a denial.
+    The window's own queue is the one that is asked (the ``queue`` fixture is another one)."""
+    answer = window.approvals.request("claude", "start a run")
+    dialog = shown(qtbot, window.approvals)
+    qtbot.waitUntil(lambda: dialog.allow_button.isEnabled(), timeout=WAIT)
+    window.close()
+    assert answer.outcome == (True, "denied")
+    assert window.approvals.shown is None
 
 
 def test_the_gui_keeps_answering_while_the_dialog_is_up(qtbot, window):

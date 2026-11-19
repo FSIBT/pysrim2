@@ -258,6 +258,9 @@ Other rules of the questions:
 - In headless mode other tools keep working while a question is open. In app mode the question
   is the window's dialog, and the agent's other requests wait for its answer. The dialog gives up
   after two minutes, so the wait is at most that long.
+- In app mode the window stays usable while the question is open. If the setup changes meanwhile,
+  Allow does not start the action (it says the setup changed, and the action is not done). If the
+  user starts a run meanwhile, the question is withdrawn as denied.
 - Two `start_run` calls each ask, and each one that you allow can start its own run.
 
 Every request and answer goes into the activity log.

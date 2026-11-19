@@ -541,9 +541,11 @@ account, and never runs an admin step.
 {doc}`agents`). The window shows a dialog that says what the agent wants and which client asks, with
 **Allow** and **Deny**. **Deny** is the default button; Esc and closing the dialog also deny. **Allow**
 is available one second after the dialog appears. With no answer in two minutes, the request is
-denied. The dialog is window-modal: the window takes no input while it is up, and the rest of the
-app keeps going; the agent's other requests wait for the answer. Requests that come while one is up
-wait their turn.
+denied. The dialog does not block the window: Stop, Pause, Save and the rest stay usable while it is
+up. The agent's other requests wait for the answer. Requests that come while one is up wait their
+turn. Closing the window denies it. If you change the setup while the dialog is up, Allow does not
+start the action (the agent is told the setup changed). If you start a run while it is up, the
+dialog closes as denied, so no second run starts.
 The two limits behind the questions are in **Agent > Agent settings…**; each run request reads them
 again.
 
