@@ -934,3 +934,21 @@ def test_without_keep_seed_the_point_gets_a_derived_seed(tmp_path, state_dir):
     recorded = [json.loads(p.read_text()) for p in sorted(state_dir.glob("spec-*.json"))]
     point = scan.points()[0]
     assert recorded[0]["seed"] == derive_seed(4711, int(point.id[:15], 16))
+
+
+def test_an_unbatched_point_records_its_run_file_so_a_reader_finds_its_outputs(tmp_path):
+    # a reader finds a point's outputs by its run.yaml (or units.csv): an unbatched point has
+    # its run.yaml too, the spec it ran, as the docs of the scan folder say
+    from srim.notebook import has_outputs, read_run_folder
+
+    folder = tmp_path / "scan"
+    scan = energy_scan(energies=(10.0, 20.0))
+    run_scan(scan, workers=2, runner=fixture_runner, scan_dir=folder)
+    for point in scan.points():
+        point_dir = folder / "points" / point.id[:16]
+        assert has_outputs(point_dir)
+        ran = RunSpec.from_yaml(str(point_dir / "run.yaml"))
+        assert ran.number_ions == 10
+        assert ran.to_dict()["ion"]["energy_keV"] == point.params["ion.energy_keV"]
+    result, finished = read_run_folder(folder)
+    assert finished and result.table["status"].tolist() == ["done", "done"]

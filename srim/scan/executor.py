@@ -107,6 +107,7 @@ from .batches import (
     derive_seed,
     remove_live_files,
     write_point_record,
+    write_run_file,
 )
 from .cache import RunCache, cache_key, cache_root, current_srim_sha, materialise
 from .events import (
@@ -1099,6 +1100,18 @@ class _ScanRun:
 
     # -- outcomes of one attempt -------------------------------------------------------
 
+    def _record_run_file(self, index) -> None:
+        """Record an unbatched point's run file (see :func:`srim.scan.batches.write_run_file`):
+        the spec it ran. A file that cannot be written is logged; the outputs are kept."""
+        try:
+            write_run_file(
+                self.dirs[index],
+                self._unit_spec(index, 0),
+                provenance={"pysrim2_version": __version__},
+            )
+        except Exception as exc:  # a record is kept for the user, never worth the scan
+            log.warning("scan point %d: its run file could not be written (%s)", index, exc)
+
     def _finished(self, worker, index, attempt, seconds):
         """A fixed-count point's run is done: extract its values and record the row.
 
@@ -1118,6 +1131,7 @@ class _ScanRun:
             # the outputs exist, so the ions were run: the requested count is kept
             self._give_up(index, attempt, summary, n_ions=n_ions)
             return
+        self._record_run_file(index)
         self.rows[index] = {
             "index": index,
             "status": self._status(index, "done"),

@@ -106,6 +106,17 @@ def _write_atomic(path, write):
         raise
 
 
+def write_run_file(folder, spec, provenance=None) -> None:
+    """Record a point that is not batched: its ``run.yaml``, the spec it ran, replaced atomically.
+
+    Readers find a point's outputs by this file (or by ``units.csv``, which a batched point has),
+    so an unbatched point has it too.
+    """
+    folder = Path(folder)
+    folder.mkdir(parents=True, exist_ok=True)
+    _write_atomic(folder / RUN_FILE, lambda path: spec.to_yaml(path, provenance=provenance))
+
+
 def write_point_record(folder, spec, units, beam_bins=None, provenance=None, live=False):
     """Record a batched point in its folder, so that :func:`srim.beam.open_results` can merge it.
 
