@@ -91,6 +91,17 @@ SETUP_METHODS = frozenset(
 )
 #: the keys of the app's setup answer
 SETUP_KEYS = frozenset({"path", "setup", "problems", "modified"})
+#: what a silent app may have done, for the requests that act: the agent checks it before it calls
+#: again, as a slow app may have done it already
+SILENT_CHECKS = {
+    "start_run": "it may have started a run: check list_runs or run_status first",
+    "control_run": "it may have acted on the run: check run_status first",
+    "open_run": "it may have opened the run: check run_status first",
+    **{
+        method: "it may have changed the setup: check get_setup first"
+        for method in SETUP_METHODS - {"get_setup"}
+    },
+}
 #: how long a missing app is not looked for again (seconds)
 RETRY_SECONDS = 3.0
 #: the name of a client that gave none
@@ -165,6 +176,15 @@ def _client_text(client: str) -> str:
     return text if text.strip() else DEFAULT_CLIENT
 
 
+def silent_text(method: str) -> str:
+    """What the agent is told when the app did not answer ``method`` in time: the text of
+    :data:`APP_SILENT_TEXT`, with what to check first for a request that may have acted."""
+    check = SILENT_CHECKS.get(method)
+    if check is None:
+        return APP_SILENT_TEXT
+    return f"the pysrim2 app did not answer in time; {check}, then call again to continue headless"
+
+
 def _seconds(method: str) -> float:
     """How long the app may take to answer ``method``. Read when called, so tests can shorten it."""
     if method == "ask":
@@ -230,14 +250,14 @@ class AppClient:
             except ProtocolError as error:
                 raise BackendError(f"{method}: the request cannot be sent: {error}") from None
             except TimeoutError:
-                raise self._gone(APP_SILENT_TEXT, silent=True) from None
+                raise self._gone(silent_text(method), silent=True) from None
             except OSError:
                 raise self._gone(APP_CLOSED_TEXT) from None
             self._channel.timeout = _seconds(method)
             try:
                 reply = self._channel.receive()
             except TimeoutError:
-                raise self._gone(APP_SILENT_TEXT, silent=True) from None
+                raise self._gone(silent_text(method), silent=True) from None
             except (OSError, ProtocolError):
                 raise self._gone(APP_CLOSED_TEXT) from None
             if not isinstance(reply, dict) or reply.get("id") != request_id:

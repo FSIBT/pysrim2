@@ -306,7 +306,7 @@ def test_a_stalled_app_that_stops_reading_is_a_silent_app_not_a_hang(
     started = time.monotonic()
     with pytest.raises(AppGone) as info:
         client.set_values(["x=" + "1" * (protocol.MAX_LINE - 100)])
-    assert str(info.value) == APP_SILENT_TEXT
+    assert "get_setup" in str(info.value)  # a setup edit may have been made: check it first
     assert time.monotonic() - started < 20
     assert client.closed
     assert client.ask("start a run") == "denied"  # the lock is free: the closed client answers
@@ -352,6 +352,33 @@ def test_a_dropped_connection_is_app_gone_and_the_client_is_closed(tmp_path, fak
     assert client.closed
     with pytest.raises(AppGone):
         client.get_setup()  # a closed client asks nothing more
+
+
+def test_a_silent_app_on_start_run_tells_the_agent_to_check_the_runs_first(
+    tmp_path, fake_app, monkeypatch
+):
+    # the app may have started the run while it was silent: the agent checks before it calls again
+    monkeypatch.setattr(app_client, "SLOW_SECONDS", 0.3)
+    fake_app(answer=lambda n, m, p: "silent")
+    client = connect_app("test", cwd=tmp_path)
+    with pytest.raises(AppGone) as info:
+        client.start_run()
+    text = str(info.value)
+    assert "list_runs" in text and "run_status" in text
+    assert text.endswith("then call again to continue headless")
+    assert client.closed
+
+
+def test_a_silent_app_on_a_setup_edit_tells_the_agent_to_check_the_setup_first(
+    tmp_path, fake_app, monkeypatch
+):
+    monkeypatch.setattr(app_client, "QUICK_SECONDS", 0.3)
+    fake_app(answer=lambda n, m, p: "silent")
+    client = connect_app("test", cwd=tmp_path)
+    with pytest.raises(AppGone) as info:
+        client.set_values(["number_ions=5"])
+    assert "get_setup" in str(info.value)
+    assert str(info.value).endswith("then call again to continue headless")
 
 
 def test_a_silent_app_times_out_as_app_gone(tmp_path, fake_app, monkeypatch):
