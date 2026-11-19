@@ -164,3 +164,20 @@ def test_the_loaded_file_is_readable_by_others(tmp_path):
     load_run(folder).mark_loaded()
     mode = (folder / NOTEBOOK_DIR / LOADED_FILE).stat().st_mode & 0o777
     assert mode == 0o644
+
+
+def test_a_point_with_only_a_live_record_reads_as_missing_not_done(tmp_path):
+    # a crashed run leaves the live record of a point that never got its final record
+    from srim.notebook import read_run_folder
+    from srim.scan.batches import write_point_record
+
+    folder = tmp_path / "run"
+    scan = _grid()
+    finished_scan(folder, scan, [DONE, "SRIM failed"])
+    point = scan.points()[1]
+    point_dir = folder / "points" / point.id[:16]
+    point_dir.mkdir(parents=True)
+    write_point_record(point_dir, point.spec, [(0, 0, None, 10, 1)], live=True)
+    result, finished = read_run_folder(folder)
+    assert finished is False
+    assert list(result.table["status"]) == ["done", "missing"]

@@ -23,8 +23,11 @@ from ..output import Results
 from ..scan.batches import (
     BATCHES_DIR,
     BINS_FILE,
+    BINS_LIVE_FILE,
     RUN_FILE,
+    RUN_LIVE_FILE,
     UNITS_FILE,
+    UNITS_LIVE_FILE,
     BatchInfo,
     MergedResults,
 )
@@ -36,7 +39,7 @@ from .spec import MAX_TRIM_DAT_IONS
 _RESULT_STATUSES = ("done", "cached", "max_ions")
 
 
-def open_results(point_dir, cleanup=None) -> MergedResults:
+def open_results(point_dir, cleanup=None, live=False) -> MergedResults:
     """The results of a finished batched scan point, merged as one result.
 
     Parameters
@@ -46,6 +49,10 @@ def open_results(point_dir, cleanup=None) -> MergedResults:
     cleanup : path-like, optional
         a folder that :meth:`close` deletes with the results (the temporary scan folder that
         :func:`run_beam` makes); nothing else is deleted. Default: none.
+    live : bool, optional
+        read the live record of a point that is still running instead (its finished units so
+        far, see :func:`~srim.scan.batches.write_point_record`). A point that is finished or
+        stopped has no live record: its final record is the one to read. Default False.
 
     Returns
     -------
@@ -59,19 +66,26 @@ def open_results(point_dir, cleanup=None) -> MergedResults:
     Raises
     ------
     FileNotFoundError
-        when the folder has no ``run.yaml`` or ``units.csv`` (not a finished batched point)
+        when the folder has no ``run.yaml`` and ``units.csv`` (not a finished batched point),
+        or, with ``live``, no live record (``run.live.yaml`` and ``units.live.csv``)
     SpecError
         when ``run.yaml`` is not a valid run file
     """
     folder = Path(point_dir)
-    for name in (RUN_FILE, UNITS_FILE):
+    run_name, units_name, bins_name = (
+        (RUN_LIVE_FILE, UNITS_LIVE_FILE, BINS_LIVE_FILE)
+        if live
+        else (RUN_FILE, UNITS_FILE, BINS_FILE)
+    )
+    for name in (run_name, units_name):
         if not (folder / name).is_file():
-            raise FileNotFoundError(f"{folder} has no {name}: not a finished batched point")
-    spec = RunSpec.from_yaml(folder / RUN_FILE)
-    units = pd.read_csv(folder / UNITS_FILE)
+            what = "a live record" if live else "a finished batched point"
+            raise FileNotFoundError(f"{folder} has no {name}: not {what}")
+    spec = RunSpec.from_yaml(folder / run_name)
+    units = pd.read_csv(folder / units_name)
     bins = None
-    if (folder / BINS_FILE).is_file():
-        bins = pd.read_csv(folder / BINS_FILE)
+    if (folder / bins_name).is_file():
+        bins = pd.read_csv(folder / bins_name)
     parts, infos = [], []
     try:
         for row in units.itertuples(index=False):

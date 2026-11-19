@@ -227,3 +227,97 @@ def test_trim_in_of_a_keep_seed_point_equals_the_plain_run(spec_dir, tmp_path):
         return (directory / "TRIM.IN").read_bytes()
 
     assert trim_in(unit_spec, "unit") == trim_in(spec, "plain")
+
+
+# --- open_results(live=True): the live record of a point that is still running -----------
+
+
+def _live_point(tmp_path, units, bins=None, spec=None):
+    """A point folder with the outputs of ``units`` (test_files/1 copies) and its live record."""
+    from srim.scan.batches import write_point_record
+
+    spec = spec or RunSpec.from_dict(
+        {
+            "ion": {"symbol": "B", "energy_keV": 20.0},
+            "number_ions": 20,
+            "seed": 5,
+            "settings": {"ranges": 1},
+            "target": [
+                {
+                    "name": "Si",
+                    "thickness_nm": 100.0,
+                    "density_g_cm3": 2.33,
+                    "elements": [{"symbol": "Si", "stoich": 1.0}],
+                }
+            ],
+        }
+    )
+    point = tmp_path / "point"
+    for unit in units:
+        shutil.copytree(FIXTURE, point / "batches" / str(unit))
+    if bins is None:
+        rows = [(unit, unit, None, 10, 100 + unit) for unit in units]
+    else:  # a binned point: the unit is the bin's run of the (only) beam batch
+        rows = [(unit, 0, unit, 10, 100 + unit) for unit in units]
+    write_point_record(point, spec, rows, bins, live=True)
+    return point
+
+
+def test_open_results_live_merges_the_finished_units_of_the_live_record(tmp_path):
+    from srim.beam import open_results
+
+    point = _live_point(tmp_path, units=[0, 1])
+    with open_results(point, live=True) as merged:
+        assert merged.n_ions == 20
+        assert [b.index for b in merged.batches] == [0, 1]
+
+
+def test_a_live_record_is_not_read_as_a_finished_point(tmp_path):
+    from srim.beam import open_results
+
+    point = _live_point(tmp_path, units=[0])
+    assert (point / "units.live.csv").is_file()
+    with pytest.raises(FileNotFoundError):
+        open_results(point)
+
+
+def test_open_results_live_without_a_live_record_is_an_error(tmp_path):
+    from srim.beam import open_results
+
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    with pytest.raises(FileNotFoundError):
+        open_results(empty, live=True)
+
+
+def test_the_live_bins_of_a_binned_point_are_read_with_their_units(tmp_path):
+    from srim.beam import open_results
+    from srim.beam.binned import bins_frame, make_bins
+
+    spec = RunSpec.from_dict(
+        {
+            "ion": {
+                "symbol": "B",
+                "energy_keV": {"uniform": {"low": 10, "high": 20}},
+                "angle_deg": 7.0,
+            },
+            "number_ions": 20,
+            "seed": 5,
+            "settings": {"ranges": 1},
+            "beam": {"mode": "binned", "bins": {"energy_keV": 2}},
+            "target": [
+                {
+                    "name": "Si",
+                    "thickness_nm": 100.0,
+                    "density_g_cm3": 2.33,
+                    "elements": [{"symbol": "Si", "stoich": 1.0}],
+                }
+            ],
+        }
+    )
+    bins = make_bins(spec)
+    point = _live_point(tmp_path, units=[0], bins=bins_frame(bins, [10] * len(bins)), spec=spec)
+    assert (point / "beam_bins.live.csv").is_file()
+    with open_results(point, live=True) as merged:
+        assert merged.beam_bins is not None
+        assert merged.n_ions == 10

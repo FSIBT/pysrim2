@@ -30,7 +30,11 @@ its errors and decisions are on the beam batches. Each unit runs
 
 A batched point (binned, or with ``batch_ions`` or a precision target) records its units when it
 finishes: ``run.yaml``, ``units.csv`` and (binned) ``beam_bins.csv``; see
-:func:`srim.beam.open_results`, which merges them back.
+:func:`srim.beam.open_results`, which merges them back. While it runs, its finished units are
+kept in the live record (``run.live.yaml``, ``units.live.csv``, ``beam_bins.live.csv``), rewritten
+atomically after each unit. The final record replaces it: a failed point loses its live record
+(it has no final record), a stopped point keeps its finished units as its final record (as before),
+and a crashed run leaves its live files behind, which no reader takes for a finished point.
 
 Batches (:mod:`srim.scan.precision`): a point with a precision target runs as batches of
 ``batch_ions`` ions, and the unit of work is one batch. A fixed ion count with
@@ -100,6 +104,7 @@ from .batches import (
     BatchInfo,
     MergedResults,
     derive_seed,
+    remove_live_files,
     write_point_record,
 )
 from .cache import RunCache, cache_key, cache_root, current_srim_sha, materialise
@@ -1137,6 +1142,7 @@ class _ScanRun:
             return
         self.batch_values[(index, batch)] = values
         self.finished[index][batch] = seconds
+        self._write_live(index)
         self._emit(PointProgress(index, self._done_ions(index), self._planned_ions(index)))
         if worker is not None:
             self._emit(WorkerStats(worker.ident, size / seconds if seconds > 0 else None))
@@ -1166,6 +1172,7 @@ class _ScanRun:
                 self._give_up(index, attempt, summary, n_ions=self._done_ions(index) or None)
                 return
             self.batch_values[(index, beam)] = values
+            self._write_live(index)
         if len(self.finished[index]) == len(self.plan[index]):
             if self.precision is None:
                 self._finish_batched(index, attempt)
@@ -1233,10 +1240,15 @@ class _ScanRun:
         count = batches_to_add(precision, ions, err, goal, len(beams))
         self._schedule(index, count)
 
-    def _record(self, index, beams):
+    def _record(self, index, beams, live=False):
         """Record the finished beam batches of a batched point in its folder (see
         :func:`srim.scan.batches.write_point_record`): the units, the point's spec with the
-        total ions and the point seed, and for a binned beam the bins with their ions."""
+        total ions and the point seed, and for a binned beam the bins with their ions.
+
+        ``live`` writes the live record of a point that is still running instead. The final
+        record (not ``live``) removes the live files, whether or not it could be written: a
+        point with no final record must not keep a live record that reads as partial results.
+        """
         units = self._units_of(index, beams)
         rows = []
         for unit in units:
@@ -1262,9 +1274,27 @@ class _ScanRun:
                 rows,
                 beam_bins,
                 provenance={"pysrim2_version": __version__},
+                live=live,
             )
         except Exception as exc:  # a record is kept for the user, never worth the scan
             log.warning("scan point %d: its record could not be written (%s)", index, exc)
+        if not live:
+            self._drop_live(index)
+
+    def _write_live(self, index):
+        """The live record of a batched point: its finished beam batches so far (none before the
+        first one is done). Written after each finished unit; the final record replaces it."""
+        beams = self._done_beams(index)
+        if beams:
+            self._record(index, beams, live=True)
+
+    def _drop_live(self, index):
+        """Remove a point's live record (if any): the point has no live record once it is final,
+        failed or stopped."""
+        try:
+            remove_live_files(self.dirs[index])
+        except OSError as exc:
+            log.warning("scan point %d: its live record could not be removed (%s)", index, exc)
 
     def _finish_precision(self, index, status, values, errs):
         """A precision point is done (``done``, or ``max_ions``): its row and event."""
@@ -1343,6 +1373,7 @@ class _ScanRun:
     def _give_up(self, index, attempt, summary, n_ions=None):
         point = self.points[index]
         self._emit(PointFailed(index, point.id, summary, attempt, final=True))
+        self._drop_live(index)
         self.pending = deque(unit for unit in self.pending if unit[0] != index)
         self.waiting = [unit for unit in self.waiting if unit[0] != index]
         self._release_idle(index)

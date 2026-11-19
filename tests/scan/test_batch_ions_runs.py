@@ -17,6 +17,7 @@ import threading
 import time
 from pathlib import Path
 
+import pandas as pd
 import pytest
 
 from srim.output import Results
@@ -228,3 +229,100 @@ def test_a_batch_ions_scan_with_a_precision_target_is_refused():
             ions=Precision(target="seeded_value", rel=0.05),
             batch_ions=10,
         )
+
+
+# --- the live record of a batched point while it runs ---------------------------------------
+
+LIVE_NAMES = ("run.live.yaml", "units.live.csv", "beam_bins.live.csv")
+
+
+def live_units(point_dir):
+    """The live record's units (None while there is no live record)."""
+    path = point_dir / "units.live.csv"
+    return pd.read_csv(path) if path.is_file() else None
+
+
+def no_live_record(point_dir):
+    return not any((point_dir / name).exists() for name in LIVE_NAMES)
+
+
+def failing_last_batch(spec):
+    """Stands in for SRIM: the 5-ion batch of a 25-ion point fails, the others run."""
+    if spec.to_dict()["number_ions"] == 5:
+        raise RuntimeError("the last batch fails")
+    return seeded_runner(spec)
+
+
+def test_a_batched_point_has_a_live_record_that_follows_its_finished_units(tmp_path, state_dir):
+    scan = batched_scan(ions=25, batch_ions=10)
+    point_dir = tmp_path / "s" / "points" / scan.points()[0].id[:16]
+    seen = []
+
+    def on_event(event):
+        if isinstance(event, PointProgress):
+            units = live_units(point_dir)
+            seen.append((event.ions_done, None if units is None else int(units["n_ions"].sum())))
+
+    run_scan(
+        scan,
+        workers=1,
+        runner=seeded_runner,
+        scan_dir=tmp_path / "s",
+        cache=False,
+        on_event=on_event,
+    )
+    # the live record never holds more ions than are finished, and it has the finished ones
+    assert all(live is None or live == done for done, live in seen)
+    assert (10, 10) in seen
+    # the final record replaces it
+    assert no_live_record(point_dir)
+    assert (point_dir / "units.csv").is_file()
+
+
+def test_the_final_record_is_the_same_when_the_batches_come_from_the_cache(tmp_path, state_dir):
+    cache = tmp_path / "cache"
+    run_scan(batched_scan(), workers=1, runner=seeded_runner, scan_dir=tmp_path / "a", cache=cache)
+    run_scan(batched_scan(), workers=1, runner=never_runs, scan_dir=tmp_path / "b", cache=cache)
+    point = batched_scan().points()[0].id[:16]
+    for name in ("run.yaml", "units.csv"):
+        first = (tmp_path / "a" / "points" / point / name).read_bytes()
+        second = (tmp_path / "b" / "points" / point / name).read_bytes()
+        assert first == second
+
+
+def test_a_stopped_point_keeps_no_live_record(tmp_path, state_dir):
+    scan = batched_scan(ions=25, batch_ions=10)
+    point_dir = tmp_path / "s" / "points" / scan.points()[0].id[:16]
+    stop = threading.Event()
+
+    def on_event(event):
+        if isinstance(event, PointProgress) and event.ions_done == 10:
+            stop.set()
+
+    result = run_scan(
+        scan,
+        workers=1,
+        runner=seeded_runner,
+        scan_dir=tmp_path / "s",
+        cache=False,
+        stop_event=stop,
+        on_event=on_event,
+    )
+    assert result.table["status"].tolist() == ["stopped"]
+    assert no_live_record(point_dir)
+    assert len(pd.read_csv(point_dir / "units.csv")) == 1  # the finished unit is kept, as before
+
+
+def test_a_failed_point_keeps_no_live_record(tmp_path, state_dir):
+    scan = batched_scan(ions=25, batch_ions=10)
+    point_dir = tmp_path / "s" / "points" / scan.points()[0].id[:16]
+    result = run_scan(
+        scan,
+        workers=1,
+        runner=failing_last_batch,
+        scan_dir=tmp_path / "s",
+        cache=False,
+        retries=0,
+    )
+    assert result.table["status"].tolist() == ["failed"]
+    assert no_live_record(point_dir)
