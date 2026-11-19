@@ -153,13 +153,18 @@ class ActivityLog:
             with open(path, "rb") as handle:
                 handle.seek(0, os.SEEK_END)
                 start = max(0, handle.tell() - TAIL_BYTES)
+                # the tail begins inside a line unless the byte before it ends one
+                cut = False
+                if start > 0:
+                    handle.seek(start - 1)
+                    cut = handle.read(1) != b"\n"
                 handle.seek(start)
                 data = handle.read()
         except OSError:
             return []
         lines = data.decode("utf-8", errors="replace").split("\n")
-        if start > 0:
-            lines = lines[1:]  # the first line may begin before the tail: it is cut
+        if cut:
+            lines = lines[1:]  # the first line began before the tail: it is cut
         entries = []
         for line in lines:
             try:

@@ -178,3 +178,20 @@ def test_last_reads_a_log_with_bad_bytes(tmp_path):
     log = ActivityLog(path)
     log.append(ActivityEntry(0.0, "app", "c", "t", "after the bad bytes"))
     assert [e.summary for e in log.last(5)] == ["after the bad bytes"]
+
+
+def test_a_tail_that_starts_exactly_on_a_line_keeps_that_line(tmp_path):
+    # the cut falls on a line start: the byte before the tail is a newline, so no line is lost
+    def line(text):
+        return (
+            json.dumps(ActivityEntry(1.0, "app", "c", "t", text).to_dict(), sort_keys=True) + "\n"
+        )
+
+    head = line("head")
+    first = line("first")
+    padding = TAIL_BYTES - len(first) - len(line(""))
+    path = tmp_path / "a.jsonl"
+    path.write_bytes((head + first + line("x" * padding)).encode("utf-8"))
+    assert path.stat().st_size == len(head.encode()) + TAIL_BYTES
+    summaries = [entry.summary for entry in ActivityLog(path).last(2)]
+    assert summaries == ["first", "x" * padding]
