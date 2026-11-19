@@ -296,3 +296,8 @@ def test_live_is_off_for_a_setup_with_a_scan():
     doc["_live"] = True
     assert not is_live(doc)
     assert is_live({**document(), "_live": True})
+
+
+def test_a_live_section_with_no_number_of_ions_is_not_live():
+    section = {"batch_ions": 100, "extract": [], "ions": 1000, "seed": 12345}
+    assert not is_live_run_section(section, 12345, None)

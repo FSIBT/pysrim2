@@ -64,7 +64,10 @@ def is_live(doc: dict) -> bool:
 def is_live_run_section(section: Mapping, seed, number_ions) -> bool:
     """True when ``section`` is the ``scan:`` section of a single run with the live option (what
     :func:`live_scan` writes): ten batches of :func:`live_batch_ions`, no extractor, and no other
-    part of a scan. Its ``ions`` and ``seed`` are absent or the setup's."""
+    part of a scan. Its ``ions`` and ``seed`` are absent or the setup's. Without a number of
+    ions there is no live section (its batch size is not known)."""
+    if number_ions is None:
+        return False
     return (
         not section.get("keep_seed")
         and not section.get("grid")

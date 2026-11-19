@@ -52,8 +52,8 @@ OFF_TEXT = "Off"
 #: the live option's label and note (the note says what the option does to the results)
 LIVE_TEXT = "Show results while the run goes"
 LIVE_NOTE = (
-    "Splits the run into 10 batches. Results are statistically equivalent to one run, but not "
-    "identical."
+    "Splits the run into batches (normally 10). Results are statistically equivalent to one "
+    "run, but not identical."
 )
 #: the tooltip of the live option when the setup has a scan (the option does not apply)
 LIVE_SCAN_TEXT = "A scan already shows each point as it finishes"

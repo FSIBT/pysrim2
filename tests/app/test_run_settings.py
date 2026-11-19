@@ -176,7 +176,7 @@ def test_the_live_option_is_off_by_default_and_ticking_it_stores_live(tab, loade
 
 def test_the_live_note_says_what_the_option_does(tab):
     note = tab.live_note.text()
-    assert "Splits the run into 10 batches." in note
+    assert "Splits the run into batches (normally 10)." in note
     assert "statistically equivalent to one run, but not identical." in note
 
 
@@ -192,3 +192,12 @@ def test_the_live_option_is_greyed_out_for_a_scan(tab, loaded):
 
 def test_the_live_option_is_a_status_bar_target(tab):
     assert tab.widgets["live"] is tab.live_box
+
+
+def test_the_live_note_is_true_for_any_run():
+    # the batches are a tenth of the ions, capped at the TRIM.DAT limit: "normally 10"
+    from srim.app.run_settings import LIVE_NOTE
+
+    assert "(normally 10)" in LIVE_NOTE
+    assert "into 10 batches" not in LIVE_NOTE
+    assert "statistically equivalent to one run, but not identical" in LIVE_NOTE
