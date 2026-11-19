@@ -31,10 +31,11 @@ its errors and decisions are on the beam batches. Each unit runs
 A batched point (binned, or with ``batch_ions`` or a precision target) records its units when it
 finishes: ``run.yaml``, ``units.csv`` and (binned) ``beam_bins.csv``; see
 :func:`srim.beam.open_results`, which merges them back. While it runs, its finished units are
-kept in the live record (``run.live.yaml``, ``units.live.csv``, ``beam_bins.live.csv``), rewritten
-atomically after each unit. The final record replaces it: a failed point loses its live record
-(it has no final record), a stopped point keeps its finished units as its final record (as before),
-and a crashed run leaves its live files behind, which no reader takes for a finished point.
+kept in the live record (``run.live.yaml``, ``units.live.csv``, ``beam_bins.live.csv``),
+rewritten atomically after a finished unit (at most once per second per point, and always after
+its last unit). The final record replaces it: a failed point loses its live record (it has no
+final record), a stopped point keeps its finished units as its final record (as before), and a
+crashed run leaves its live files behind, which no reader takes for a finished point.
 
 Batches (:mod:`srim.scan.precision`): a point with a precision target runs as batches of
 ``batch_ions`` ions, and the unit of work is one batch. A fixed ion count with
@@ -136,6 +137,11 @@ from .result import ScanResult
 from .spec import Scan, is_binned
 
 log = logging.getLogger(__name__)
+
+#: the live record of a batched point is written at most once per this many seconds (after its
+#: last unit it is always written); the clock is :data:`LIVE_CLOCK`. Tests set both.
+LIVE_INTERVAL = 1.0
+LIVE_CLOCK = time.monotonic
 
 #: seconds a worker gets to stop cleanly (after SIGTERM) before it is killed
 GRACE_SECONDS = 10.0
@@ -598,6 +604,8 @@ class _ScanRun:
         self.n_done = 0
         self.n_failed = 0
         self.last_error: dict[int, str] = {}
+        #: point index -> the clock time of its last live record (see :meth:`_write_live`)
+        self.live_written: dict[int, float] = {}
         self.deaths = 0
         capacity = 0
         for p in self.points:  # a point's units are planned in point order
@@ -1142,7 +1150,7 @@ class _ScanRun:
             return
         self.batch_values[(index, batch)] = values
         self.finished[index][batch] = seconds
-        self._write_live(index)
+        self._write_live(index, last=self._all_planned_done(index))
         self._emit(PointProgress(index, self._done_ions(index), self._planned_ions(index)))
         if worker is not None:
             self._emit(WorkerStats(worker.ident, size / seconds if seconds > 0 else None))
@@ -1172,7 +1180,7 @@ class _ScanRun:
                 self._give_up(index, attempt, summary, n_ions=self._done_ions(index) or None)
                 return
             self.batch_values[(index, beam)] = values
-            self._write_live(index)
+            self._write_live(index, last=self._all_planned_done(index))
         if len(self.finished[index]) == len(self.plan[index]):
             if self.precision is None:
                 self._finish_batched(index, attempt)
@@ -1281,12 +1289,25 @@ class _ScanRun:
         if not live:
             self._drop_live(index)
 
-    def _write_live(self, index):
+    def _all_planned_done(self, index) -> bool:
+        """True when every batch (or unit) planned so far for the point is finished."""
+        return len(self.finished[index]) == len(self.plan[index])
+
+    def _write_live(self, index, last=False):
         """The live record of a batched point: its finished beam batches so far (none before the
-        first one is done). Written after each finished unit; the final record replaces it."""
+        first one is done). Written after a finished unit, at most once per :data:`LIVE_INTERVAL`
+        seconds of :data:`LIVE_CLOCK` (the rewrite is the whole record, so a point with many units
+        would otherwise cost a full rewrite per unit); ``last`` (the point's last unit) is always
+        written. The final record replaces it."""
         beams = self._done_beams(index)
-        if beams:
-            self._record(index, beams, live=True)
+        if not beams:
+            return
+        now = LIVE_CLOCK()
+        written = self.live_written.get(index)
+        if not last and written is not None and now - written < LIVE_INTERVAL:
+            return
+        self.live_written[index] = now
+        self._record(index, beams, live=True)
 
     def _drop_live(self, index):
         """Remove a point's live record (if any): the point has no live record once it is final,

@@ -21,7 +21,7 @@ import pandas as pd
 import pytest
 
 from srim.output import Results
-from srim.scan import MergedResults, Scan, derive_seed, run_scan
+from srim.scan import MergedResults, Scan, derive_seed, executor, run_scan
 from srim.scan.events import PointFinished, PointProgress
 from srim.scan.extract import register
 from srim.spec import RunSpec, SpecError
@@ -253,7 +253,10 @@ def failing_last_batch(spec):
     return seeded_runner(spec)
 
 
-def test_a_batched_point_has_a_live_record_that_follows_its_finished_units(tmp_path, state_dir):
+def test_a_batched_point_has_a_live_record_that_follows_its_finished_units(
+    tmp_path, state_dir, monkeypatch
+):
+    monkeypatch.setattr(executor, "LIVE_INTERVAL", 0.0)  # every unit is written (no throttle)
     scan = batched_scan(ions=25, batch_ions=10)
     point_dir = tmp_path / "s" / "points" / scan.points()[0].id[:16]
     seen = []
@@ -326,3 +329,49 @@ def test_a_failed_point_keeps_no_live_record(tmp_path, state_dir):
     )
     assert result.table["status"].tolist() == ["failed"]
     assert no_live_record(point_dir)
+
+
+def live_write_sizes(monkeypatch):
+    """Records the number of units of each live write of a batched point (parent side)."""
+    sizes = []
+    real = executor.write_point_record
+
+    def recording(folder, spec, units, beam_bins=None, provenance=None, live=False):
+        if live:
+            sizes.append(len(units))
+        return real(folder, spec, units, beam_bins, provenance=provenance, live=live)
+
+    monkeypatch.setattr(executor, "write_point_record", recording)
+    return sizes
+
+
+def test_the_live_record_is_throttled_and_the_last_unit_always_writes(
+    tmp_path, state_dir, monkeypatch
+):
+    # five units; the clock advances 0.4 s per check, the interval is 1 s: the live record is
+    # written for the first unit, then after 1.2 s, and always after the last unit
+    ticks = iter(round(0.4 * k, 1) for k in range(1, 100))
+    monkeypatch.setattr(executor, "LIVE_CLOCK", lambda: next(ticks))
+    monkeypatch.setattr(executor, "LIVE_INTERVAL", 1.0)
+    sizes = live_write_sizes(monkeypatch)
+    run_scan(
+        batched_scan(ions=50, batch_ions=10),
+        workers=1,
+        runner=seeded_runner,
+        scan_dir=tmp_path / "s",
+        cache=False,
+    )
+    assert sizes == [1, 4, 5]
+
+
+def test_the_live_record_follows_every_unit_with_no_interval(tmp_path, state_dir, monkeypatch):
+    monkeypatch.setattr(executor, "LIVE_INTERVAL", 0.0)
+    sizes = live_write_sizes(monkeypatch)
+    run_scan(
+        batched_scan(ions=50, batch_ions=10),
+        workers=1,
+        runner=seeded_runner,
+        scan_dir=tmp_path / "s",
+        cache=False,
+    )
+    assert sizes == [1, 2, 3, 4, 5]
