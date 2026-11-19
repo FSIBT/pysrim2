@@ -119,12 +119,26 @@ def error_of(result) -> str:
     return result.content[0].text
 
 
-def set_the_n15_setup(qtbot, srv, path, ions: str = "number_ions=200") -> None:
-    """The N15 setup as the agent makes it, saved to ``path``."""
+def set_the_n15_edits(qtbot, srv, ions: str = "number_ions=200") -> None:
+    """The N15 setup as the agent makes it, not saved yet."""
     tool(qtbot, srv, "set_values", {"assignments": [ions]})
     tool(qtbot, srv, "set_section", {"name": "ion", "value": N15})
     tool(qtbot, srv, "set_section", {"name": "target", "value": SI_LAYER})
+
+
+def set_the_n15_setup(qtbot, srv, path, ions: str = "number_ions=200") -> None:
+    """The N15 setup as the agent makes it, saved to ``path``."""
+    set_the_n15_edits(qtbot, srv, ions)
     tool(qtbot, srv, "save_setup", {"path": str(path)})
+
+
+def answer_the_dialog(qtbot, window, allow: bool) -> None:
+    """Wait for the window's ask-first dialog, and click Allow or Deny."""
+    qtbot.waitUntil(lambda: window.approvals.shown is not None, timeout=TIMEOUT)
+    dialog = window.approvals.shown
+    button = dialog.allow_button if allow else dialog.deny_button
+    qtbot.waitUntil(button.isEnabled, timeout=TIMEOUT)
+    button.click()
 
 
 def test_the_n15_request_runs_and_shows_the_profile_in_the_app(qtbot, window, srv, tmp_path):
@@ -191,3 +205,42 @@ def test_closing_the_app_falls_back_to_headless(qtbot, window, srv, tmp_path):
     assert result["mode"] == "headless"
     assert str(saved) in result["note"]  # the setup now comes from its last saved file
     assert result["path"] == str(saved)
+
+
+def test_saving_over_a_file_the_session_did_not_write_asks_in_the_window(
+    qtbot, window, srv, tmp_path
+):
+    taken = tmp_path / "taken.yaml"
+    taken.write_text("not a setup of this session\n", encoding="utf-8")
+    set_the_n15_edits(qtbot, srv)
+    outcome = in_thread(lambda: call_tool(srv, "save_setup", {"path": str(taken)}))
+    answer_the_dialog(qtbot, window, allow=False)
+    qtbot.waitUntil(lambda: outcome.done, timeout=TIMEOUT)
+    assert "did not allow" in error_of(outcome.value)
+    assert taken.read_text(encoding="utf-8") == "not a setup of this session\n"  # kept
+
+    outcome = in_thread(lambda: call_tool(srv, "save_setup", {"path": str(taken)}))
+    answer_the_dialog(qtbot, window, allow=True)
+    qtbot.waitUntil(lambda: outcome.done, timeout=TIMEOUT)
+    assert payload(outcome.value)["path"] == str(taken)
+    assert "number_ions: 200" in taken.read_text(encoding="utf-8")
+
+
+def test_opening_a_run_over_unsaved_edits_asks_in_the_window(qtbot, window, srv, tmp_path):
+    set_the_n15_setup(qtbot, srv, tmp_path / "n15.yaml")
+    tool(qtbot, srv, "start_run", {})
+    qtbot.waitUntil(lambda: not window.run.running, timeout=TIMEOUT)
+    folder = window.run.folder
+    tool(qtbot, srv, "set_values", {"assignments": ["number_ions=5"]})  # unsaved now
+
+    outcome = in_thread(lambda: call_tool(srv, "open_run", {"folder": str(folder)}))
+    answer_the_dialog(qtbot, window, allow=False)
+    qtbot.waitUntil(lambda: outcome.done, timeout=TIMEOUT)
+    assert "did not allow" in error_of(outcome.value)
+    assert window.document.doc["number_ions"] == 5  # the unsaved edit is kept
+
+    outcome = in_thread(lambda: call_tool(srv, "open_run", {"folder": str(folder)}))
+    answer_the_dialog(qtbot, window, allow=True)
+    qtbot.waitUntil(lambda: outcome.done, timeout=TIMEOUT)
+    assert payload(outcome.value)["folder"] == str(folder)
+    assert window.document.doc["number_ions"] == 200  # the run's own setup replaced the edit
