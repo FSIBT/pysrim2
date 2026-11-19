@@ -375,11 +375,10 @@ def test_a_live_setup_runs_in_ten_batches_in_its_run_folder(tmp_path, fast):
 
 def test_a_run_the_app_started_and_still_runs_is_not_deleted_from_here(tmp_path):
     # a run folder whose runner is the app's, and whose app process is alive, belongs to the app
-    from srim.mcp.detached import PID_FILE, start_runner_file
-    from srim.mcp.headless import delete_run_folder
-
     from test_results import spec
 
+    from srim.mcp.detached import PID_FILE, start_runner_file
+    from srim.mcp.headless import delete_run_folder
     from srim.scan import Scan
     from srim.scan.events import ScanFinished
 
