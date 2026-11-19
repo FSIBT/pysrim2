@@ -107,12 +107,15 @@ def _write_atomic(path, write):
 
 
 def write_run_file(folder, spec, provenance=None) -> None:
-    """Record a point that is not batched: its ``run.yaml``, the spec it ran, replaced atomically.
+    """Record a point that is not batched: its ``run.yaml``, the spec it ran, written atomically.
 
     Readers find a point's outputs by this file (or by ``units.csv``, which a batched point has),
-    so an unbatched point has it too.
+    so an unbatched point has it too. A ``run.yaml`` that is already there is kept as it is: the
+    run wrote it with its provenance (the SRIM build, the times), which a rewrite would lose.
     """
     folder = Path(folder)
+    if (folder / RUN_FILE).is_file():
+        return
     folder.mkdir(parents=True, exist_ok=True)
     _write_atomic(folder / RUN_FILE, lambda path: spec.to_yaml(path, provenance=provenance))
 
