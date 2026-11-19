@@ -108,6 +108,8 @@ class AgentPanel(QDockWidget):
         )
         for column, text in enumerate(values):
             item = QTableWidgetItem(text)
+            # no tooltip: one made of agent text would be rich text when it looks like markup
+            item.setToolTip("")
             if entry.error and column == ACTION_COLUMN:
                 item.setForeground(QBrush(error_colour()))
             self.table.setItem(row, column, item)

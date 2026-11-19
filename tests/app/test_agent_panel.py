@@ -15,7 +15,13 @@ pytest.importorskip("pytestqt")
 from PySide6.QtWidgets import QDialogButtonBox  # noqa: E402
 
 from srim.app.agent_backend import AgentBackend  # noqa: E402
-from srim.app.agent_panel import CELL_CAP, ROW_CAP, AgentPanel, error_colour  # noqa: E402
+from srim.app.agent_panel import (  # noqa: E402
+    CELL_CAP,
+    COLUMNS,
+    ROW_CAP,
+    AgentPanel,
+    error_colour,
+)
 from srim.app.agent_settings_dialog import AgentSettingsDialog  # noqa: E402
 from srim.app.settings import AppSettings, load_settings  # noqa: E402
 from srim.app.window import MainWindow  # noqa: E402
@@ -326,3 +332,11 @@ def test_a_socket_that_starts_clears_the_note(window, monkeypatch):
     assert window.agent.listening
     assert "not listening" not in action.text()
     assert "Agents cannot connect" not in action.toolTip()  # Qt shows the text when no tip is set
+
+
+def test_no_cell_has_a_tooltip_made_of_agent_text(panel):
+    # a tooltip would be rich text when it looks like markup: the panel sets none from agent text
+    markup = "<a href='https://example.com'>click</a>"
+    panel.add(entry(summary=markup, client=markup, answer=markup, ask=markup, error=markup))
+    for column in range(len(COLUMNS)):
+        assert panel.table.item(0, column).toolTip() == ""
