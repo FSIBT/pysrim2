@@ -69,6 +69,11 @@ def _files() -> dict[str, bytes]:
     return found
 
 
+def skill_text() -> str:
+    """The packaged SKILL.md as text (the MCP server serves it as a resource)."""
+    return (_source() / "SKILL.md").read_text(encoding="utf-8")
+
+
 def _managed(target: Path) -> bool:
     return (target / MARKER).is_file()
 

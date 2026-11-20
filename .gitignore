@@ -66,6 +66,7 @@ target/
 venv
 
 # pytest
-.pytest_cache.DS_Store
+.pytest_cache
+.DS_Store
 .venv/
 .superpowers/

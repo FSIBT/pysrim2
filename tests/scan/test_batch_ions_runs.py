@@ -16,11 +16,13 @@ import signal
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
+import pandas as pd
 import pytest
 
 from srim.output import Results
-from srim.scan import MergedResults, Scan, derive_seed, run_scan
+from srim.scan import MergedResults, Scan, derive_seed, executor, run_scan
 from srim.scan.events import PointFinished, PointProgress
 from srim.scan.extract import register
 from srim.spec import RunSpec, SpecError
@@ -228,3 +230,194 @@ def test_a_batch_ions_scan_with_a_precision_target_is_refused():
             ions=Precision(target="seeded_value", rel=0.05),
             batch_ions=10,
         )
+
+
+# --- the live record of a batched point while it runs ---------------------------------------
+
+LIVE_NAMES = ("run.live.yaml", "units.live.csv", "beam_bins.live.csv")
+
+
+def live_units(point_dir):
+    """The live record's units (None while there is no live record)."""
+    path = point_dir / "units.live.csv"
+    return pd.read_csv(path) if path.is_file() else None
+
+
+def no_live_record(point_dir):
+    return not any((point_dir / name).exists() for name in LIVE_NAMES)
+
+
+def failing_last_batch(spec):
+    """Stands in for SRIM: the 5-ion batch of a 25-ion point fails, the others run."""
+    if spec.to_dict()["number_ions"] == 5:
+        raise RuntimeError("the last batch fails")
+    return seeded_runner(spec)
+
+
+def test_a_batched_point_has_a_live_record_that_follows_its_finished_units(
+    tmp_path, state_dir, monkeypatch
+):
+    monkeypatch.setattr(executor, "LIVE_INTERVAL", 0.0)  # every unit is written (no throttle)
+    scan = batched_scan(ions=25, batch_ions=10)
+    point_dir = tmp_path / "s" / "points" / scan.points()[0].id[:16]
+    seen = []
+
+    def on_event(event):
+        if isinstance(event, PointProgress):
+            units = live_units(point_dir)
+            seen.append((event.ions_done, None if units is None else int(units["n_ions"].sum())))
+
+    run_scan(
+        scan,
+        workers=1,
+        runner=seeded_runner,
+        scan_dir=tmp_path / "s",
+        cache=False,
+        on_event=on_event,
+    )
+    # the live record never holds more ions than are finished, and it has the finished ones
+    assert all(live is None or live == done for done, live in seen)
+    assert (10, 10) in seen
+    # the final record replaces it
+    assert no_live_record(point_dir)
+    assert (point_dir / "units.csv").is_file()
+
+
+def test_the_final_record_is_the_same_when_the_batches_come_from_the_cache(tmp_path, state_dir):
+    cache = tmp_path / "cache"
+    run_scan(batched_scan(), workers=1, runner=seeded_runner, scan_dir=tmp_path / "a", cache=cache)
+    run_scan(batched_scan(), workers=1, runner=never_runs, scan_dir=tmp_path / "b", cache=cache)
+    point = batched_scan().points()[0].id[:16]
+    for name in ("run.yaml", "units.csv"):
+        first = (tmp_path / "a" / "points" / point / name).read_bytes()
+        second = (tmp_path / "b" / "points" / point / name).read_bytes()
+        assert first == second
+
+
+def test_a_stopped_point_keeps_no_live_record(tmp_path, state_dir):
+    scan = batched_scan(ions=25, batch_ions=10)
+    point_dir = tmp_path / "s" / "points" / scan.points()[0].id[:16]
+    stop = threading.Event()
+
+    def on_event(event):
+        if isinstance(event, PointProgress) and event.ions_done == 10:
+            stop.set()
+
+    result = run_scan(
+        scan,
+        workers=1,
+        runner=seeded_runner,
+        scan_dir=tmp_path / "s",
+        cache=False,
+        stop_event=stop,
+        on_event=on_event,
+    )
+    assert result.table["status"].tolist() == ["stopped"]
+    assert no_live_record(point_dir)
+    assert len(pd.read_csv(point_dir / "units.csv")) == 1  # the finished unit is kept, as before
+
+
+def test_a_failed_point_keeps_no_live_record(tmp_path, state_dir):
+    scan = batched_scan(ions=25, batch_ions=10)
+    point_dir = tmp_path / "s" / "points" / scan.points()[0].id[:16]
+    result = run_scan(
+        scan,
+        workers=1,
+        runner=failing_last_batch,
+        scan_dir=tmp_path / "s",
+        cache=False,
+        retries=0,
+    )
+    assert result.table["status"].tolist() == ["failed"]
+    assert no_live_record(point_dir)
+
+
+def live_write_sizes(monkeypatch):
+    """Records the number of units of each live write of a batched point (parent side)."""
+    sizes = []
+    real = executor.write_point_record
+
+    def recording(folder, spec, units, beam_bins=None, provenance=None, live=False):
+        if live:
+            sizes.append(len(units))
+        return real(folder, spec, units, beam_bins, provenance=provenance, live=live)
+
+    monkeypatch.setattr(executor, "write_point_record", recording)
+    return sizes
+
+
+def test_the_live_record_is_throttled_and_the_last_unit_always_writes(
+    tmp_path, state_dir, monkeypatch
+):
+    # five units; the clock advances 0.4 s per check, the interval is 1 s: the live record is
+    # written for the first unit, then after 1.2 s, and always after the last unit
+    ticks = iter(round(0.4 * k, 1) for k in range(1, 100))
+    monkeypatch.setattr(executor, "LIVE_CLOCK", lambda: next(ticks))
+    monkeypatch.setattr(executor, "LIVE_INTERVAL", 1.0)
+    sizes = live_write_sizes(monkeypatch)
+    run_scan(
+        batched_scan(ions=50, batch_ions=10),
+        workers=1,
+        runner=seeded_runner,
+        scan_dir=tmp_path / "s",
+        cache=False,
+    )
+    assert sizes == [1, 4, 5]
+
+
+def test_the_live_record_follows_every_unit_with_no_interval(tmp_path, state_dir, monkeypatch):
+    monkeypatch.setattr(executor, "LIVE_INTERVAL", 0.0)
+    sizes = live_write_sizes(monkeypatch)
+    run_scan(
+        batched_scan(ions=50, batch_ions=10),
+        workers=1,
+        runner=seeded_runner,
+        scan_dir=tmp_path / "s",
+        cache=False,
+    )
+    assert sizes == [1, 2, 3, 4, 5]
+
+
+def test_a_point_whose_final_record_cannot_be_written_keeps_its_live_record(
+    tmp_path, state_dir, monkeypatch
+):
+    # the finished units must not vanish with the live record when the final record fails
+    scan = batched_scan(ions=25, batch_ions=10)
+    point_dir = tmp_path / "s" / "points" / scan.points()[0].id[:16]
+    real = executor.write_point_record
+
+    def refuse_final(folder, spec, units, beam_bins=None, provenance=None, live=False):
+        if not live:
+            raise PermissionError("the final record is refused")
+        return real(folder, spec, units, beam_bins, provenance=provenance, live=live)
+
+    monkeypatch.setattr(executor, "write_point_record", refuse_final)
+    run_scan(scan, workers=1, runner=seeded_runner, scan_dir=tmp_path / "s", cache=False)
+    assert (point_dir / "run.live.yaml").is_file()
+    assert len(pd.read_csv(point_dir / "units.live.csv")) == 3
+    assert not (point_dir / "units.csv").exists()
+
+
+def test_a_point_scheduled_in_a_run_drops_the_live_record_a_crash_left(tmp_path, state_dir):
+    # a crashed run leaves its live files and a temporary file of a write behind; a resumed
+    # run that schedules the point must not show them as its progress
+    scan = batched_scan(ions=25, batch_ions=10)
+    run = executor._ScanRun(
+        scan,
+        tmp_path / "s",
+        workers=1,
+        base_seed=7,
+        runner=seeded_runner,
+        retries=0,
+        on_event=lambda event: None,
+        stop=threading.Event(),
+    )
+    point_dir = run.dirs[0]
+    point_dir.mkdir(parents=True)
+    for name in LIVE_NAMES:
+        (point_dir / name).write_text("left by a crashed run\n", encoding="utf-8")
+    (point_dir / "run.live.yaml.4242.tmp").write_text("torn\n", encoding="utf-8")
+    worker = SimpleNamespace(ident=0, tasks=SimpleNamespace(put=lambda item: None), current=None)
+    run._send(worker, 0, 0, 1)
+    assert no_live_record(point_dir)
+    assert not list(point_dir.glob("*.tmp"))

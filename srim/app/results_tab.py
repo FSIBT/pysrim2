@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QTabWidget,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -64,6 +65,7 @@ from srim.app.scan_plots import (
     summary_data,
     value_columns,
 )
+from srim.scan.batches import has_live_record
 from srim.spec import SpecError
 
 #: the text before any result (and what every plot needs until there is one)
@@ -99,10 +101,12 @@ _BY_KEY = {plot.key: plot for plot in CATALOGUE}
 
 @dataclass(frozen=True)
 class PointEntry:
-    """A point the tab can show: its label, and its folder relative to the run folder."""
+    """A point the tab can show: its label, and its folder relative to the run folder. ``live``
+    is True for a point that is still running, shown from its live record."""
 
     label: str
     rel_path: str
+    live: bool = False
 
 
 @dataclass(frozen=True)
@@ -126,8 +130,13 @@ def overlay_key(plot_key: str) -> str:
 
 
 def differs(doc: dict, snapshot: dict) -> bool:
-    """True when the setup ``doc`` is not the setup ``snapshot`` (``_scan`` included)."""
-    return clean(doc) != clean(snapshot) or doc.get("_scan") != snapshot.get("_scan")
+    """True when the setup ``doc`` is not the setup ``snapshot`` (``_scan`` and the live option
+    included)."""
+    return (
+        clean(doc) != clean(snapshot)
+        or doc.get("_scan") != snapshot.get("_scan")
+        or doc.get("_live") != snapshot.get("_live")
+    )
 
 
 def _label(names, values) -> str:
@@ -152,13 +161,17 @@ def _finished_points(result, folder: Path) -> tuple[list[PointEntry], list[str]]
 
 
 def _live_points(state, folder: Path) -> tuple[list[PointEntry], list[str]]:
-    """The points of a run that is going (or stopped) that can be shown, and the errors."""
+    """The points of a run that is going (or stopped) that can be shown, and the errors. A point
+    that is running is shown from its live record once it has one (its finished units so far)."""
     entries, errors = [], []
     for index in sorted(state.points):
         point = state.points[index]
         rel = f"points/{point.id[:16]}"
+        label = _label(state.param_names, point.params)
         if point.status in SHOWN_STATUSES and has_outputs(folder / rel):
-            entries.append(PointEntry(_label(state.param_names, point.params), rel))
+            entries.append(PointEntry(label, rel))
+        elif point.status == "running" and has_live_record(folder / rel):
+            entries.append(PointEntry(label, rel, live=True))
         elif point.status == "failed" and point.error:
             errors.append(point.error)
     return entries, errors
@@ -194,6 +207,7 @@ class ResultsTab(QWidget):
         self._entries: list[PointEntry] = []
         self._errors: list[str] = []
         self._results = None
+        self._live_rels: set[str] = set()
         self._unreadable = False
         #: True when a finished run's points have no output folders (see outputs_missing)
         self._missing = False
@@ -368,6 +382,35 @@ class ResultsTab(QWidget):
                 return plot.key
         return None
 
+    def show_plot(self, rel_point: str | None, key: str) -> None:
+        """Show the plot ``key`` of the point ``rel_point`` (its folder relative to the run folder;
+        None keeps the chosen point), and switch to this tab.
+
+        Raises :class:`ValueError` for a point the tab does not list or a plot that is not
+        available for the point (the tab's tooltip says why). Nothing changes then.
+        """
+        self._rebuild()
+        if rel_point is not None:
+            index = self.point_combo.findData(rel_point)
+            if index < 0:
+                raise ValueError(f"the point {rel_point!r} has no results to show")
+        if key not in self._items:
+            raise ValueError(f"there is no plot {key!r}")
+        if rel_point is not None:
+            self.point_combo.blockSignals(True)
+            self.point_combo.setCurrentIndex(index)
+            self.point_combo.blockSignals(False)
+        self._refresh_view(draw=False)  # the plots this point can give, even on a tab never shown
+        item = self._items[key]
+        if item.isDisabled():
+            raise ValueError(f"the plot {key!r} is not available: {item.toolTip(0) or 'none'}")
+        self._select(key)
+        self._refresh_view(draw=True)
+        # the window's tab widget (a window of the app has one; a bare tab has none)
+        tabs = getattr(self.window(), "tabs", None)
+        if isinstance(tabs, QTabWidget) and tabs.indexOf(self) >= 0:
+            tabs.setCurrentWidget(self)
+
     def _select(self, key: str) -> None:
         self.plot_list.blockSignals(True)
         self.plot_list.setCurrentItem(self._items[key])
@@ -435,6 +478,7 @@ class ResultsTab(QWidget):
         """Take the points again. The chosen point is kept when it is still there."""
         entries, errors, total = self._current_points()
         self._entries = entries
+        self._live_rels = {entry.rel_path for entry in entries if entry.live}
         self._errors = errors
         self._total = total
         self._missing = outputs_missing(self.controller.result, self.controller.folder)
@@ -459,7 +503,7 @@ class ResultsTab(QWidget):
         if rel is None or self.controller.folder is None:
             return None
         try:
-            return open_point(Path(self.controller.folder), rel)
+            return open_point(Path(self.controller.folder), rel, live=rel in self._live_rels)
         except (OSError, ValueError, SpecError):
             self._unreadable = True
             return None

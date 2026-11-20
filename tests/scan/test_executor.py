@@ -9,6 +9,7 @@ that hangs instead of blocking the run.
 import json
 import logging
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -934,3 +935,46 @@ def test_without_keep_seed_the_point_gets_a_derived_seed(tmp_path, state_dir):
     recorded = [json.loads(p.read_text()) for p in sorted(state_dir.glob("spec-*.json"))]
     point = scan.points()[0]
     assert recorded[0]["seed"] == derive_seed(4711, int(point.id[:15], 16))
+
+
+def test_an_unbatched_point_records_its_run_file_so_a_reader_finds_its_outputs(tmp_path):
+    # a reader finds a point's outputs by its run.yaml (or units.csv): an unbatched point has
+    # its run.yaml too, the spec it ran, as the docs of the scan folder say
+    from srim.notebook import has_outputs, read_run_folder
+
+    folder = tmp_path / "scan"
+    scan = energy_scan(energies=(10.0, 20.0))
+    run_scan(scan, workers=2, runner=fixture_runner, scan_dir=folder)
+    for point in scan.points():
+        point_dir = folder / "points" / point.id[:16]
+        assert has_outputs(point_dir)
+        ran = RunSpec.from_yaml(str(point_dir / "run.yaml"))
+        assert ran.number_ions == 10
+        assert ran.to_dict()["ion"]["energy_keV"] == point.params["ion.energy_keV"]
+    result, finished = read_run_folder(folder)
+    assert finished and result.table["status"].tolist() == ["done", "done"]
+
+
+#: the folder a stamped runner returns, named by the test (see :func:`stamped_runner`)
+STAMPED_VAR = "PYSRIM2_TEST_STAMPED"
+
+
+def stamped_runner(spec):
+    """The outputs of the folder named by ``PYSRIM2_TEST_STAMPED``: a run folder as TRIM leaves it,
+    with its own ``run.yaml`` (the provenance of the run)."""
+    return Results(os.environ[STAMPED_VAR])
+
+
+def test_a_run_file_the_run_wrote_is_kept(tmp_path, monkeypatch):
+    # TRIM writes run.yaml with its provenance (the SRIM build, the times): the record of an
+    # unbatched point must not replace it
+    stamped = tmp_path / "stamped"
+    shutil.copytree(FIXTURE, stamped)
+    BASE.to_yaml(stamped / "run.yaml", provenance={"srim_sha256": "abc123"})
+    monkeypatch.setenv(STAMPED_VAR, str(stamped))
+    folder = tmp_path / "scan"
+    scan = Scan(BASE, grid={"ion.energy_keV": [10.0]})
+    run_scan(scan, workers=1, runner=stamped_runner, scan_dir=folder)
+    (point,) = scan.points()
+    text = (folder / "points" / point.id[:16] / "run.yaml").read_text(encoding="utf-8")
+    assert "srim_sha256: abc123" in text

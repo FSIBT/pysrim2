@@ -30,7 +30,12 @@ its errors and decisions are on the beam batches. Each unit runs
 
 A batched point (binned, or with ``batch_ions`` or a precision target) records its units when it
 finishes: ``run.yaml``, ``units.csv`` and (binned) ``beam_bins.csv``; see
-:func:`srim.beam.open_results`, which merges them back.
+:func:`srim.beam.open_results`, which merges them back. While it runs, its finished units are
+kept in the live record (``run.live.yaml``, ``units.live.csv``, ``beam_bins.live.csv``),
+rewritten atomically after a finished unit (at most once per second per point, and always after
+its last unit). The final record replaces it: a failed point loses its live record (it has no
+final record), a stopped point keeps its finished units as its final record (as before), and a
+crashed run leaves its live files behind, which no reader takes for a finished point.
 
 Batches (:mod:`srim.scan.precision`): a point with a precision target runs as batches of
 ``batch_ions`` ions, and the unit of work is one batch. A fixed ion count with
@@ -100,7 +105,9 @@ from .batches import (
     BatchInfo,
     MergedResults,
     derive_seed,
+    remove_live_files,
     write_point_record,
+    write_run_file,
 )
 from .cache import RunCache, cache_key, cache_root, current_srim_sha, materialise
 from .events import (
@@ -131,6 +138,11 @@ from .result import ScanResult
 from .spec import Scan, is_binned
 
 log = logging.getLogger(__name__)
+
+#: the live record of a batched point is written at most once per this many seconds (after its
+#: last unit it is always written); the clock is :data:`LIVE_CLOCK`. Tests set both.
+LIVE_INTERVAL = 1.0
+LIVE_CLOCK = time.monotonic
 
 #: seconds a worker gets to stop cleanly (after SIGTERM) before it is killed
 GRACE_SECONDS = 10.0
@@ -593,6 +605,8 @@ class _ScanRun:
         self.n_done = 0
         self.n_failed = 0
         self.last_error: dict[int, str] = {}
+        #: point index -> the clock time of its last live record (see :meth:`_write_live`)
+        self.live_written: dict[int, float] = {}
         self.deaths = 0
         capacity = 0
         for p in self.points:  # a point's units are planned in point order
@@ -725,6 +739,8 @@ class _ScanRun:
     def _send(self, worker, index, batch, attempt):
         point = self.points[index]
         out = self._unit_dir(index, batch)
+        if index not in self.started:  # the point is scheduled: a crashed run's record goes
+            self._drop_live(index)
         self.ran.add(index)
         if attempt == 1:  # the unit's folder starts clean (a point's folder was cleared)
             shutil.rmtree(out, ignore_errors=True)
@@ -1084,6 +1100,18 @@ class _ScanRun:
 
     # -- outcomes of one attempt -------------------------------------------------------
 
+    def _record_run_file(self, index) -> None:
+        """Record an unbatched point's run file (see :func:`srim.scan.batches.write_run_file`):
+        the spec it ran. A file that cannot be written is logged; the outputs are kept."""
+        try:
+            write_run_file(
+                self.dirs[index],
+                self._unit_spec(index, 0),
+                provenance={"pysrim2_version": __version__},
+            )
+        except Exception as exc:  # a record is kept for the user, never worth the scan
+            log.warning("scan point %d: its run file could not be written (%s)", index, exc)
+
     def _finished(self, worker, index, attempt, seconds):
         """A fixed-count point's run is done: extract its values and record the row.
 
@@ -1103,6 +1131,7 @@ class _ScanRun:
             # the outputs exist, so the ions were run: the requested count is kept
             self._give_up(index, attempt, summary, n_ions=n_ions)
             return
+        self._record_run_file(index)
         self.rows[index] = {
             "index": index,
             "status": self._status(index, "done"),
@@ -1137,6 +1166,7 @@ class _ScanRun:
             return
         self.batch_values[(index, batch)] = values
         self.finished[index][batch] = seconds
+        self._write_live(index, last=self._all_planned_done(index))
         self._emit(PointProgress(index, self._done_ions(index), self._planned_ions(index)))
         if worker is not None:
             self._emit(WorkerStats(worker.ident, size / seconds if seconds > 0 else None))
@@ -1166,6 +1196,7 @@ class _ScanRun:
                 self._give_up(index, attempt, summary, n_ions=self._done_ions(index) or None)
                 return
             self.batch_values[(index, beam)] = values
+            self._write_live(index, last=self._all_planned_done(index))
         if len(self.finished[index]) == len(self.plan[index]):
             if self.precision is None:
                 self._finish_batched(index, attempt)
@@ -1233,10 +1264,16 @@ class _ScanRun:
         count = batches_to_add(precision, ions, err, goal, len(beams))
         self._schedule(index, count)
 
-    def _record(self, index, beams):
+    def _record(self, index, beams, live=False):
         """Record the finished beam batches of a batched point in its folder (see
         :func:`srim.scan.batches.write_point_record`): the units, the point's spec with the
-        total ions and the point seed, and for a binned beam the bins with their ions."""
+        total ions and the point seed, and for a binned beam the bins with their ions.
+
+        ``live`` writes the live record of a point that is still running instead. The final
+        record (not ``live``) removes the live files once it is written. If it cannot be
+        written, the live files stay: the finished units are kept, and nothing else reads them
+        as a finished point.
+        """
         units = self._units_of(index, beams)
         rows = []
         for unit in units:
@@ -1262,9 +1299,41 @@ class _ScanRun:
                 rows,
                 beam_bins,
                 provenance={"pysrim2_version": __version__},
+                live=live,
             )
         except Exception as exc:  # a record is kept for the user, never worth the scan
             log.warning("scan point %d: its record could not be written (%s)", index, exc)
+            return  # the live record (if any) stays with the finished units
+        if not live:
+            self._drop_live(index)
+
+    def _all_planned_done(self, index) -> bool:
+        """True when every batch (or unit) planned so far for the point is finished."""
+        return len(self.finished[index]) == len(self.plan[index])
+
+    def _write_live(self, index, last=False):
+        """The live record of a batched point: its finished beam batches so far (none before the
+        first one is done). Written after a finished unit, at most once per :data:`LIVE_INTERVAL`
+        seconds of :data:`LIVE_CLOCK` (the rewrite is the whole record, so a point with many units
+        would otherwise cost a full rewrite per unit); ``last`` (the point's last unit) is always
+        written. The final record replaces it."""
+        beams = self._done_beams(index)
+        if not beams:
+            return
+        now = LIVE_CLOCK()
+        written = self.live_written.get(index)
+        if not last and written is not None and now - written < LIVE_INTERVAL:
+            return
+        self.live_written[index] = now
+        self._record(index, beams, live=True)
+
+    def _drop_live(self, index):
+        """Remove a point's live record (if any): the point has no live record once it is final,
+        failed or stopped."""
+        try:
+            remove_live_files(self.dirs[index])
+        except OSError as exc:
+            log.warning("scan point %d: its live record could not be removed (%s)", index, exc)
 
     def _finish_precision(self, index, status, values, errs):
         """A precision point is done (``done``, or ``max_ions``): its row and event."""
@@ -1343,6 +1412,7 @@ class _ScanRun:
     def _give_up(self, index, attempt, summary, n_ions=None):
         point = self.points[index]
         self._emit(PointFailed(index, point.id, summary, attempt, final=True))
+        self._drop_live(index)
         self.pending = deque(unit for unit in self.pending if unit[0] != index)
         self.waiting = [unit for unit in self.waiting if unit[0] != index]
         self._release_idle(index)

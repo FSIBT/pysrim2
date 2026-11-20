@@ -7,20 +7,15 @@ the setup uses next to ``run.yaml`` (see :func:`srim.app.model.prepare_for_save`
 setup still opens when its folder moves.
 """
 
-import shutil
 from collections.abc import Callable
 from copy import deepcopy
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Signal
 
-import srim
-from srim.app import scan_model
 from srim.app.guidance import Guidance
-from srim.app.model import History, from_spec, new_document, prepare_for_save, problems, to_spec
-from srim.beam.shapes import Histogram
+from srim.app.model import History, new_document, problems, read_setup, write_setup
 from srim.scan.executor import MARKER_NAME
-from srim.spec import RunSpec, SpecError
 
 LOCKED_TEXT = "the setup is locked while a run is going"
 
@@ -85,23 +80,34 @@ class DocumentModel(QObject):
         return self._history.can_redo
 
     @property
+    def undo_label(self) -> str | None:
+        """The label of the step :meth:`undo` reverts (an agent's edit), or None."""
+        return self._history.undo_label
+
+    @property
+    def redo_label(self) -> str | None:
+        """The label of the step :meth:`redo` re-applies, or None."""
+        return self._history.redo_label
+
+    @property
     def is_modified(self) -> bool:
         """True when the document differs from the last opened or saved state."""
         return self._history.is_modified(self._doc)
 
     # --- edits -----------------------------------------------------------------
 
-    def edit(self, fn: Callable[[dict], None]) -> None:
+    def edit(self, fn: Callable[[dict], None], label: str | None = None) -> None:
         """Apply ``fn`` to a copy of the document and make that the current one.
 
         ``fn`` changes the dict it is given. When ``fn`` raises, nothing changes (the error
-        propagates). Otherwise the state before the edit goes on the undo stack, and ``changed``
+        propagates). Otherwise the state before the edit goes on the undo stack with ``label``
+        (the agent's edits pass ``"agent: <summary>"``; a user edit has none), and ``changed``
         is emitted once. Raises :class:`RuntimeError` while the setup is :attr:`locked`.
         """
         self._check_unlocked()
         new = deepcopy(self._doc)
         fn(new)
-        self._history.push(self._doc)
+        self._history.push(self._doc, label)
         self._doc = new
         self._refresh()
 
@@ -138,18 +144,7 @@ class DocumentModel(QObject):
         """
         self._check_unlocked()
         path = Path(path).absolute()
-        try:
-            spec = RunSpec.from_yaml(path)
-            section = scan_model.section_from_file(path)
-        except OSError as error:
-            raise SpecError(f"cannot read {path}: {error.strerror or error}") from error
-        except UnicodeDecodeError as error:
-            raise SpecError(f"{path} is not a text file: {error}") from error
-        doc = from_spec(spec)
-        if section is not None and not scan_model.is_single_run_section(
-            section, spec.seed, spec.number_ions
-        ):
-            doc["_scan"] = scan_model.scan_from_section(section)
+        doc = read_setup(path)
         self._doc = doc
         self._path = path
         self._history = History()
@@ -160,31 +155,11 @@ class DocumentModel(QObject):
         """Write the setup to ``path`` as a ``run.yaml`` and make it the current path.
 
         Raises :class:`~srim.spec.SpecError` for the first blocking problem, or for a histogram
-        file that does not exist. Histogram files are copied to ``beam/`` next to ``path``, and
-        the file records them relative to that folder. A setup with a scan is written as a
-        scan's ``run.yaml`` (:meth:`srim.scan.Scan.to_yaml`), otherwise as a plain one.
+        file that does not exist. The file is written by :func:`srim.app.model.write_setup`.
         """
         path = Path(path).absolute()
-        blocking = [problem for problem in self._problems if problem.blocking]
-        if blocking:
-            raise SpecError(blocking[0].text)
-        folder = path.parent
-        base = self.base_dir or Path.cwd()
-        resolved = _with_absolute_histograms(self._doc, base)
-        prepared, copies = prepare_for_save(resolved, folder)
-        for source, dest in copies:
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(source, dest)
-        provenance = {"app": f"pysrim2 {srim.__version__}"}
-        if "_scan" in prepared:
-            scan = scan_model.to_scan(prepared, folder)
-            _relative_histograms(scan.base, folder)
-            scan.to_yaml(path, provenance=provenance)
-        else:
-            spec = to_spec(prepared, folder)
-            _relative_histograms(spec, folder)
-            spec.to_yaml(path, provenance=provenance)
-        # The document now refers to the copies, relative to its new folder.
+        prepared = write_setup(self._doc, path, self.base_dir)
+        # The document now refers to the histogram copies, relative to its new folder.
         self._doc = prepared
         self._path = path
         self._history.mark_saved(prepared)
@@ -199,40 +174,3 @@ class DocumentModel(QObject):
     def _refresh(self) -> None:
         self._problems = problems(self._doc, self.base_dir)
         self.changed.emit()
-
-
-def _with_absolute_histograms(doc: dict, base: Path) -> dict:
-    """A copy of ``doc`` whose relative histogram files are taken from ``base``."""
-    out = deepcopy(doc)
-    ion = out.get("ion") or {}
-    values = [ion.get("energy_keV"), ion.get("angle_deg"), ion.get("azimuth_deg")]
-    position = ion.get("position")
-    if isinstance(position, dict):
-        values += [position.get(name) for name in ("y_nm", "z_nm", "depth_nm")]
-    for value in values:
-        body = value.get("histogram") if isinstance(value, dict) else None
-        if isinstance(body, dict) and body.get("file") is not None:
-            file = Path(body["file"])
-            if not file.is_absolute():
-                body["file"] = str((base / file).absolute())
-    return out
-
-
-def _relative_histograms(spec: RunSpec, folder: Path) -> None:
-    """Write the histogram files inside ``folder`` relative to it, so a moved folder still works.
-
-    A histogram read from a file is stored with its absolute path; this changes the path of
-    the ones inside ``folder`` to ``beam/<name>`` for the run file that is written next.
-    """
-    values = [spec.ion.energy_keV, spec.ion.angle_deg, spec.ion.azimuth_deg]
-    if spec.ion.position is not None:
-        values += [spec.ion.position.y_nm, spec.ion.position.z_nm, spec.ion.position.depth_nm]
-    root = folder.resolve()
-    for value in values:
-        if not isinstance(value, Histogram) or value.file is None:
-            continue
-        file = Path(value.file).resolve()
-        try:
-            value.file = file.relative_to(root).as_posix()
-        except ValueError:
-            pass  # outside the folder: the absolute path stays

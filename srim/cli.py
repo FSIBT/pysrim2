@@ -1,4 +1,4 @@
-"""Command line interface: ``pysrim2 install``, ``app``, ``doctor``, ``run``, ``run-job``,
+"""Command line interface: ``pysrim2 install``, ``app``, ``mcp``, ``doctor``, ``run``, ``run-job``,
 ``import``, ``clean`` and ``scan``.
 
 Exit codes of the ``scan`` commands (also in their help):
@@ -30,6 +30,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import srim
+from srim import mcp as mcp_pkg
 from srim.app.routes import ROUTES
 from srim.installer import app as app_install
 from srim.installer import container, skill
@@ -43,6 +44,7 @@ from srim.installer.wine import (  # noqa: F401
     distro_wine_commands,
     wine_status,
 )
+from srim.mcp import connect as mcp_connect
 from srim.paths import srim_dir
 from srim.ui import JsonLines, PlainProgress
 from srim.ui.web import WebView, port_problem
@@ -71,6 +73,16 @@ def build_parser() -> argparse.ArgumentParser:
     install.add_argument("--scope", choices=("user", "project"), default="user")
 
     sub.add_parser("app", help="open the pysrim2 desktop app (needs pysrim2 install app)")
+
+    mcp = sub.add_parser(
+        "mcp", help="run the MCP server over stdio for an AI agent (needs the mcp extra)"
+    )
+    mcp.add_argument(
+        "--print-config",
+        metavar="CLIENT",
+        choices=mcp_connect.CLIENTS,
+        help="print the config that connects CLIENT (%(choices)s) to the server, then exit",
+    )
 
     doctor = sub.add_parser("doctor", help="check the installation")
     doctor.add_argument("--json", action="store_true", help="machine-readable output")
@@ -283,6 +295,8 @@ def main(argv: list[str] | None = None) -> int:
         return _scan(args)
     if args.command == "app":
         return _app(args)
+    if args.command == "mcp":
+        return _mcp(args)
     return _doctor(args)
 
 
@@ -349,6 +363,26 @@ def _app(args) -> int:
     from srim.app.main import main as app_main
 
     return app_main([])
+
+
+# --- mcp --------------------------------------------------------------------
+
+
+def _mcp(args) -> int:
+    """Run the MCP server; the SDK is imported only once the extra is known to be there."""
+    if args.print_config:
+        # the snippet needs neither the SDK nor the server: stdout is only the config text, so
+        # it can be redirected into the client's file; where it goes is on stderr
+        text = mcp_connect.snippet(args.print_config, mcp_connect.pysrim2_command())
+        print(text.rstrip("\n"))
+        print(f"Put this in: {mcp_connect.snippet_location(args.print_config)}", file=sys.stderr)
+        return 0
+    if not mcp_pkg.mcp_available():
+        print(mcp_pkg.INSTALL_HINT, file=sys.stderr)
+        return 2  # the extra is missing: a usage problem, as for a bad argument
+    from srim.mcp import server
+
+    return server.main()
 
 
 # --- run / import -----------------------------------------------------------

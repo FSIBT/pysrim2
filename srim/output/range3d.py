@@ -4,13 +4,11 @@ import os
 import re
 import warnings
 
-import numpy as np
-
 from ..core.ion import Ion
 from ._common import (
-    SRIM_Output,
     SRIMOutputParseError,
-    _read_numeric_table,
+    _StreamedTable,
+    _TableScan,
     _to_float,
     double_regex,
     symbol_regex,
@@ -22,9 +20,10 @@ _HEADER_END = re.compile(rb"-+(?:[ \t]+-+)+[ \t]*")
 _ROW = re.compile(
     rb"[ \t]*(\d{7})" + (rb"[ \t]+(" + double_regex.encode() + rb")") * 3 + rb"[ \t]*"
 )
+_COLUMNS = [(0, "i"), (1, "f"), (2, "f"), (3, "f")]
 
 
-class Range3D(SRIM_Output):
+class Range3D(_StreamedTable):
     """``RANGE_3D.txt`` Final position of every ion (needs ``ranges=1`` in TRIM)
 
     Parameters
@@ -51,41 +50,40 @@ class Range3D(SRIM_Output):
     SRIM can leave the last line of the file incomplete; such a line is ignored.
     A zero-byte file gives an empty frame (same columns) and a warning, as for the event
     files.
+
+    Creating the object reads the file once to count the ions and keeps no rows;
+    :attr:`df` reads them all on first use. :meth:`iter_chunks` streams them in chunks
+    (see :mod:`srim.export`, which writes large tables that way).
     """
+
+    #: the chunked reader of :class:`_StreamedTable`, listed on this page by autodoc
+    iter_chunks = _StreamedTable.iter_chunks
 
     def __init__(self, directory, filename="RANGE_3D.txt", max_rows=None):
         path = os.path.join(directory, filename)
-        header, arrays, truncated = _read_numeric_table(
-            path,
-            _HEADER_END,
-            _ROW,
-            [(0, "i"), (1, "f"), (2, "f"), (3, "f")],
-            "RANGE_3D",
-            max_rows=max_rows,
-        )
+        self._scan = _TableScan(path, _HEADER_END, _ROW, _COLUMNS, "RANGE_3D", max_rows)
         self._source = path
         self._ion = None
-        self._truncated = truncated
-        if arrays is None and not header:
+        self._count()
+        scan = self._scan
+        if scan.found:
+            scan.warn_bad(stacklevel=2)
+        if not scan.found and not scan.header:
             warnings.warn(f"{filename} is empty", stacklevel=2)
-            self._ion_numbers = np.array([], dtype=int)
-            self._positions = np.empty((0, 3))
             return
         match = re.search(
             rb"Ion\s*=\s*(" + symbol_regex.encode() + rb")\s*\(\d+\).*?"
             rb"Energy\s*=\s*(" + double_regex.encode() + rb")\s*keV",
-            header,
+            scan.header,
             re.DOTALL,
         )
         if not match:
             raise SRIMOutputParseError("unable to extract ion from file")
         # a capped read of no rows is a valid parse: the header is there
-        if arrays is None or (len(arrays[0]) == 0 and max_rows is None):
+        if not scan.found or (self._num_rows == 0 and max_rows is None):
             raise SRIMOutputParseError("unable to extract ion positions from file")
 
         self._ion = Ion(match.group(1).decode("ascii"), 1000.0 * _to_float(match.group(2)))
-        self._ion_numbers = arrays[0]
-        self._positions = np.column_stack(arrays[1:])
 
     @property
     def metadata(self):
@@ -109,27 +107,27 @@ class Range3D(SRIM_Output):
     @property
     def num_ions(self):
         """Number of ion positions in the file"""
-        return len(self._ion_numbers)
+        return self._num_rows
 
     @property
     def depth(self):
         """Final depth [Ang] of each ion"""
-        return self._positions[:, 0]
+        return self._table_arrays()[1]
 
     @property
     def y(self):
         """Final lateral Y position [Ang] of each ion"""
-        return self._positions[:, 1]
+        return self._table_arrays()[2]
 
     @property
     def z(self):
         """Final lateral Z position [Ang] of each ion"""
-        return self._positions[:, 2]
+        return self._table_arrays()[3]
 
-    def _dataframe_columns(self):
+    def _table_columns(self, arrays):
         return [
-            ("ion", self._ion_numbers),
-            ("depth_A", self.depth),
-            ("y_A", self.y),
-            ("z_A", self.z),
+            ("ion", arrays[0]),
+            ("depth_A", arrays[1]),
+            ("y_A", arrays[2]),
+            ("z_A", arrays[3]),
         ]

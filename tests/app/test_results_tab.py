@@ -10,6 +10,7 @@ import pytest
 pytest.importorskip("PySide6")
 pytest.importorskip("pytestqt")
 
+import shutil  # noqa: E402
 from copy import deepcopy  # noqa: E402
 
 from PySide6.QtCore import QObject, Qt, Signal  # noqa: E402
@@ -428,3 +429,121 @@ def test_a_scan_whose_point_folders_are_gone_says_so_on_its_scan_group(
     run.finished.emit(run.result)
     assert tab.item_for("scan:summary").isDisabled()
     assert tab.item_for("scan:summary").toolTip(0) == MISSING_OUTPUTS_TEXT
+
+
+# --- show_plot: the agent names a point and a plot, and the tab shows them -----------------
+
+
+def test_show_plot_selects_the_point_and_the_plot(qtbot, tab, run, document, folder):
+    scan = scan_of(document, grid={"ion.energy_keV": [10.0, 20.0]})
+    finish(run, document, folder, scan, [DONE, DONE])
+    rel = tab.point_combo.itemData(1)
+    with qtbot.waitSignal(tab.canvas.drawn, timeout=10000):
+        tab.show_plot(rel, "vacancies")
+    assert tab.point_combo.currentData() == rel
+    assert tab.plot_list.currentItem() is tab.item_for("vacancies")
+    assert tab.canvas.figure.axes[0].get_title() == BY_KEY["vacancies"].title
+
+
+def test_show_plot_refuses_a_point_or_a_plot_it_cannot_show(qtbot, tab, run, document, folder):
+    finish(run, document, folder, scan_of(document), [DONE])
+    with pytest.raises(ValueError, match="no results to show"):
+        tab.show_plot("points/not-a-point", "ionization")
+    with pytest.raises(ValueError, match="no plot"):
+        tab.show_plot(None, "no-such-plot")
+
+
+def test_show_plot_switches_the_window_to_the_results_tab(qtbot, run, document, folder):
+    from PySide6.QtWidgets import QTabWidget, QWidget
+
+    class Holder(QWidget):
+        """A top-level widget with a ``tabs`` attribute, as MainWindow has."""
+
+        def __init__(self):
+            super().__init__()
+            self.tabs = QTabWidget(self)
+
+    holder = Holder()
+    qtbot.addWidget(holder)
+    other = QWidget()
+    holder.tabs.addTab(other, "Other")
+    widget = ResultsTab(run, document, AppSettings(refresh_seconds=1))
+    holder.tabs.addTab(widget, "Results")
+    finish(run, document, folder, scan_of(document), [DONE])
+    holder.tabs.setCurrentWidget(other)
+    with qtbot.waitSignal(widget.canvas.drawn, timeout=10000):
+        widget.show_plot(None, "ionization")
+    assert holder.tabs.currentWidget() is widget
+
+
+# --- a single run with the live option: the point's live record while it goes ------------
+
+
+def live_single_run(run, document, folder, units, record=True):
+    """A single run with the live option, going: its one point is running, and its finished
+    ``units`` are in the point's live record (test_files/2 copies as the units' outputs). With
+    ``record=False`` the point has no live record yet."""
+    from run_folders import FIXTURE
+
+    from srim.scan.batches import write_point_record
+
+    doc = {**deepcopy(document.doc), "_live": True}
+    scan = plan_run(doc, document.base_dir, ParallelChoice())
+    state = ScanState(scan)
+    point = scan.points()[0]
+    point_dir = folder / "points" / point.id[:16]
+    point_dir.mkdir(parents=True)
+    if record:
+        rows = []
+        for unit in units:
+            shutil.copytree(FIXTURE, point_dir / "batches" / str(unit))
+            rows.append((unit, unit, None, 10, 100 + unit))
+        write_point_record(point_dir, point.spec, rows, live=True)
+    state.points[0].status = "running"
+    run.result = None
+    run.state = state
+    run.folder = folder
+    run.running = True
+    return state
+
+
+def test_a_running_live_point_is_listed_and_shown_from_its_live_record(
+    qtbot, tab, run, document, folder
+):
+    live_single_run(run, document, folder, units=[0, 1])
+    tab.show()
+    with qtbot.waitSignal(tab.canvas.drawn, timeout=10000):
+        run.started.emit()
+    assert tab.point_combo.count() == 1
+    assert tab._results is not None
+    assert tab._results.n_ions == 20
+
+
+def test_a_running_point_without_a_live_record_yet_is_not_listed(qtbot, tab, run, document, folder):
+    live_single_run(run, document, folder, units=[], record=False)
+    run.started.emit()
+    assert tab.point_combo.count() == 0
+    assert tab._results is None
+
+
+def test_the_refresh_tick_shows_the_units_that_finished_since(qtbot, tab, run, document, folder):
+    from run_folders import FIXTURE
+
+    from srim.scan.batches import write_point_record
+
+    state = live_single_run(run, document, folder, units=[0])
+    tab.show()
+    with qtbot.waitSignal(tab.canvas.drawn, timeout=10000):
+        run.started.emit()
+    assert tab._results.n_ions == 10
+    point_dir = folder / "points" / state.points[0].id[:16]
+    shutil.copytree(FIXTURE, point_dir / "batches" / "1")
+    point = plan_run({**deepcopy(document.doc), "_live": True}, document.base_dir, ParallelChoice())
+    write_point_record(
+        point_dir,
+        point.points()[0].spec,
+        [(0, 0, None, 10, 100), (1, 1, None, 10, 101)],
+        live=True,
+    )
+    tab._on_tick()
+    assert tab._results.n_ions == 20

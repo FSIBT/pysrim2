@@ -14,13 +14,21 @@ tables) with the keys ``pysrim2_version``, ``exported_utc`` (ISO 8601, UTC), ``t
 name so that no local paths are exported) and ``spec`` (the run specification
 if one is passed, else ``null``).
 
-The ``collision`` table can have millions of rows, so it is only exported when asked for
-(``include=["collision"]``) and is always written in chunks of ``chunk_rows`` events
-streamed from :meth:`srim.output.Collision.iter_events`: memory stays proportional to
-one chunk, not to the file. Its columns are fixed (the same in every chunk and file):
-integer ``ion``, strings ``kind`` and ``atom``, and 64-bit floats for everything else;
-fields that do not apply to an event kind (see :meth:`~srim.output.Collision.iter_events`)
-are ``NaN`` (floats) and, in Parquet, null.
+Chunks
+------
+Every table is written in chunks, so that no export holds a whole big output in memory:
+
+- ``collision`` (opt-in: ``include=["collision"]``) streams its events from
+  :meth:`srim.output.Collision.iter_events`. Its columns are fixed (the same in every chunk
+  and file): integer ``ion``, strings ``kind`` and ``atom``, and 64-bit floats for everything
+  else; fields that do not apply to an event kind are ``NaN`` (floats) and, in Parquet, null.
+- the per-ion tables (:data:`PER_ION_TABLES`: ``range3d``, ``exyz``, ``backscat``,
+  ``transmit``, ``sputter``) stream their file through ``iter_chunks``; the chunks are the
+  rows of ``.df``, in order.
+- the depth profiles (``ioniz``, ``range`` ...) are small and are written whole.
+
+Chunks are ``chunk_rows`` rows (events or ions) each. Parquet gets one row group per chunk,
+HDF5 appends the chunks to the table, CSV is written chunk by chunk with one header.
 """
 
 import json
@@ -32,7 +40,7 @@ from importlib import metadata as importlib_metadata
 import pandas as pd
 import yaml
 
-from .output._chunks import iter_row_chunks
+from .output._chunks import concat_chunks, iter_row_chunks
 from .output.collision import _EVENT_DTYPES, EVENT_COLUMNS
 
 #: table name -> attribute of :class:`srim.output.Results`
@@ -52,6 +60,8 @@ TABLE_ATTRIBUTES = {
 }
 #: tables that are only exported if named in ``include`` (they can be huge)
 OPT_IN = ("collision",)
+#: the per-ion tables: their files are read in chunks (``iter_chunks``) by every export
+PER_ION_TABLES = ("range3d", "exyz", "backscat", "transmit", "sputter")
 #: events per chunk when streaming ``COLLISON.txt``
 DEFAULT_CHUNK_ROWS = 100_000
 #: key of the metadata in Parquet files and HDF5 attributes
@@ -149,10 +159,35 @@ def _metadata_of(output):
     return getattr(output, "metadata", None) or {}
 
 
+def _at_least_one(chunks, columns, dtypes):
+    """``chunks``, or one empty frame with ``columns`` and ``dtypes`` when there are none, so
+    that every writer gets the columns and dtypes of the table"""
+    given = False
+    for chunk in chunks:
+        given = True
+        yield chunk
+    if not given:
+        yield concat_chunks([], columns, dtypes)
+
+
 def event_chunks(collision, chunk_rows=DEFAULT_CHUNK_ROWS):
     """Stream the events of ``collision`` as DataFrames of at most ``chunk_rows`` rows"""
     rows = ([event[c] for c in EVENT_COLUMNS] for event in collision.iter_events())
-    return iter_row_chunks(rows, EVENT_COLUMNS, _EVENT_DTYPES, chunk_rows)
+    chunks = iter_row_chunks(rows, EVENT_COLUMNS, _EVENT_DTYPES, chunk_rows)
+    return _at_least_one(chunks, EVENT_COLUMNS, _EVENT_DTYPES)
+
+
+def table_chunks(name, output, chunk_rows=DEFAULT_CHUNK_ROWS):
+    """The rows of table ``name`` as DataFrames of at most ``chunk_rows`` rows (at least one).
+
+    ``collision`` streams its events, the per-ion tables (:data:`PER_ION_TABLES`) their file
+    (``iter_chunks``); the depth profiles give their ``.df`` as one chunk.
+    """
+    if name == "collision":
+        return event_chunks(output, chunk_rows)
+    if name in PER_ION_TABLES:
+        return output.iter_chunks(chunk_rows)
+    return iter([output.df])
 
 
 def _check_chunk_rows(chunk_rows):
@@ -184,12 +219,30 @@ def _parquet_table(pa, df, document):
     return table.replace_schema_metadata(metadata)
 
 
-def write_parquet(df, path, name, metadata=None, spec=None):
-    """Write ``df`` to ``path`` with the pysrim2 metadata document in the schema"""
+def _parquet_chunks(path, chunks, name, metadata=None, spec=None):
+    """Write the frames of ``chunks`` (at least one) to one Parquet file, a row group each;
+    returns the number of rows"""
     pa = _require("pyarrow", "parquet")
     pq = _require("pyarrow.parquet", "parquet")
     document = _document(name, metadata, spec, _now())
-    pq.write_table(_parquet_table(pa, df, document), os.fspath(path))
+    writer = None
+    total = 0
+    try:
+        for chunk in chunks:
+            table = _parquet_table(pa, chunk, document)
+            if writer is None:
+                writer = pq.ParquetWriter(os.fspath(path), table.schema)
+            writer.write_table(table)
+            total += len(chunk)
+    finally:
+        if writer is not None:
+            writer.close()
+    return total
+
+
+def write_parquet(df, path, name, metadata=None, spec=None):
+    """Write ``df`` to ``path`` with the pysrim2 metadata document in the schema"""
+    _parquet_chunks(path, [df], name, metadata, spec)
 
 
 def collision_to_parquet(
@@ -225,7 +278,8 @@ def results_to_parquet(results, directory, spec=None, include=None, chunk_rows=D
         if name == "collision":
             collision_to_parquet(output, path, chunk_rows, _metadata_of(output), spec, name=name)
         else:
-            write_parquet(output.df, path, name, _metadata_of(output), spec)
+            chunks = table_chunks(name, output, chunk_rows)
+            _parquet_chunks(path, chunks, name, _metadata_of(output), spec)
         written[name] = path
     return written
 
@@ -250,20 +304,25 @@ def _hdf_set_metadata(store, name, document):
     store.get_storer(name).attrs[METADATA_KEY] = json.dumps(document)
 
 
-def collision_to_hdf5_store(store, collision, name, chunk_rows, document):
-    """Append the events of ``collision`` chunk-wise to the table ``name`` of ``store``"""
+def _hdf5_chunks(store, name, chunks, document, min_itemsize=None):
+    """Append the frames of ``chunks`` (at least one) to the table ``name`` of ``store``; the
+    index continues across the chunks (the row positions). Returns the number of rows."""
     offset = 0
-    for chunk in event_chunks(collision, chunk_rows):
+    options = {"format": "table"}
+    if min_itemsize:
+        options["min_itemsize"] = min_itemsize
+    for chunk in chunks:
         chunk.index = pd.RangeIndex(offset, offset + len(chunk))
         offset += len(chunk)
-        _hdf_write(store.append, name, chunk, format="table", min_itemsize=_HDF_MIN_ITEMSIZE)
-    if offset == 0:
-        empty = pd.DataFrame(
-            {c: pd.Series(dtype=d) for c, d in zip(EVENT_COLUMNS, _EVENT_DTYPES, strict=True)}
-        )
-        _hdf_write(store.append, name, empty, format="table", min_itemsize=_HDF_MIN_ITEMSIZE)
+        _hdf_write(store.append, name, chunk, **options)
     _hdf_set_metadata(store, name, document)
     return offset
+
+
+def collision_to_hdf5_store(store, collision, name, chunk_rows, document):
+    """Append the events of ``collision`` chunk-wise to the table ``name`` of ``store``"""
+    chunks = event_chunks(collision, chunk_rows)
+    return _hdf5_chunks(store, name, chunks, document, _HDF_MIN_ITEMSIZE)
 
 
 def results_to_hdf5(results, path, spec=None, include=None, chunk_rows=DEFAULT_CHUNK_ROWS):
@@ -279,8 +338,10 @@ def results_to_hdf5(results, path, spec=None, include=None, chunk_rows=DEFAULT_C
     with pd.HDFStore(os.fspath(path), mode="w", complevel=4, complib="zlib") as store:
         for name, output in selected.items():
             document = _document(name, _metadata_of(output), spec, exported)
-            if name == "collision":
-                collision_to_hdf5_store(store, output, name, chunk_rows, document)
+            if name == "collision" or name in PER_ION_TABLES:
+                min_itemsize = _HDF_MIN_ITEMSIZE if name == "collision" else None
+                chunks = table_chunks(name, output, chunk_rows)
+                _hdf5_chunks(store, name, chunks, document, min_itemsize)
             else:
                 _hdf_write(store.put, name, output.df, format="table")
                 _hdf_set_metadata(store, name, document)
@@ -290,17 +351,21 @@ def results_to_hdf5(results, path, spec=None, include=None, chunk_rows=DEFAULT_C
 # -------------------------------------------------------------------- CSV
 
 
+def _csv_chunks(path, chunks):
+    """Write the frames of ``chunks`` (at least one) to a CSV file, the header once; returns
+    the number of rows"""
+    total = 0
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        for number, chunk in enumerate(chunks):
+            chunk.to_csv(f, index=False, header=number == 0, lineterminator="\n")
+            total += len(chunk)
+    return total
+
+
 def collision_to_csv(collision, path, chunk_rows=DEFAULT_CHUNK_ROWS):
     """Stream the events of ``collision`` into one CSV file at ``path``; returns the row count"""
     chunk_rows = _check_chunk_rows(chunk_rows)
-    total = 0
-    with open(path, "w", newline="", encoding="utf-8") as f:
-        for chunk in event_chunks(collision, chunk_rows):
-            chunk.to_csv(f, index=False, header=total == 0, lineterminator="\n")
-            total += len(chunk)
-        if total == 0:
-            f.write(",".join(EVENT_COLUMNS) + "\n")
-    return total
+    return _csv_chunks(path, event_chunks(collision, chunk_rows))
 
 
 def results_to_csv(results, directory, spec=None, include=None, chunk_rows=DEFAULT_CHUNK_ROWS):
@@ -313,10 +378,7 @@ def results_to_csv(results, directory, spec=None, include=None, chunk_rows=DEFAU
     tables = {}
     for name, output in selected.items():
         path = os.path.join(directory, f"{name}.csv")
-        if name == "collision":
-            collision_to_csv(output, path, chunk_rows)
-        else:
-            output.df.to_csv(path, index=False, lineterminator="\n")
+        _csv_chunks(path, table_chunks(name, output, chunk_rows))
         tables[name] = _jsonable(_public(_metadata_of(output)))
         written[name] = path
     document = {

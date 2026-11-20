@@ -230,3 +230,74 @@ def test_history_sees_a_change_to_the_scan():
 
 def test_problems_are_guidance_objects():
     assert all(isinstance(g, Guidance) for g in problems(scanned()))
+
+
+# --- the live option: one run in ten batches, saved in the setup -------------------------
+
+from srim.app.model import read_setup, write_setup  # noqa: E402
+from srim.app.scan_model import (  # noqa: E402
+    LIVE_BATCHES,
+    is_live,
+    is_live_run_section,
+    live_batch_ions,
+)
+
+
+def test_live_batches_are_ten_and_the_batch_is_a_tenth_at_least_one_ion():
+    assert LIVE_BATCHES == 10
+    assert live_batch_ions(1000) == 100
+    assert live_batch_ions(1001) == 101
+    assert live_batch_ions(7) == 1
+    assert live_batch_ions(1) == 1
+
+
+def test_a_live_batch_is_capped_at_the_trim_dat_limit():
+    from srim.beam.spec import MAX_TRIM_DAT_IONS
+
+    assert live_batch_ions(10_000_000) == MAX_TRIM_DAT_IONS
+
+
+def test_a_live_section_is_recognised_and_no_other_section_is():
+    section = {"batch_ions": 100, "extract": [], "ions": 1000, "seed": 12345}
+    assert is_live_run_section(section, 12345, 1000)
+    assert is_live_run_section({**section, "keep_seed": False}, 12345, 1000)
+    assert not is_live_run_section({**section, "keep_seed": True}, 12345, 1000)
+    assert not is_live_run_section({**section, "batch_ions": 50}, 12345, 1000)
+    assert not is_live_run_section({**section, "extract": ["ioniz"]}, 12345, 1000)
+    assert not is_live_run_section({**section, "seed": 1}, 12345, 1000)
+    assert not is_live_run_section({**section, "ions": 999}, 12345, 1000)
+    assert not is_live_run_section({**section, "grid": {"ion.energy_keV": [1, 2]}}, 12345, 1000)
+    assert not is_live_run_section(
+        {**section, "precision": {"target": "x", "goal": 1}}, 12345, 1000
+    )
+
+
+def test_a_live_setup_is_saved_as_a_ten_batch_scan_and_opens_as_live(tmp_path):
+    doc = from_spec(RunSpec.from_dict(deepcopy(BORON)))  # 200 ions
+    doc["_live"] = True
+    path = tmp_path / "setup" / "run.yaml"
+    write_setup(doc, path, tmp_path)
+    section = section_from_file(path)
+    assert section["batch_ions"] == 20 and section["extract"] == []
+    reopened = read_setup(path)
+    assert reopened["_live"] is True
+    assert "_scan" not in reopened
+
+
+def test_a_plain_setup_opens_without_the_live_option(tmp_path):
+    doc = from_spec(RunSpec.from_dict(deepcopy(BORON)))
+    path = tmp_path / "run.yaml"
+    write_setup(doc, path, tmp_path)
+    assert "_live" not in read_setup(path)
+
+
+def test_live_is_off_for_a_setup_with_a_scan():
+    doc = document(new_scan())
+    doc["_live"] = True
+    assert not is_live(doc)
+    assert is_live({**document(), "_live": True})
+
+
+def test_a_live_section_with_no_number_of_ions_is_not_live():
+    section = {"batch_ions": 100, "extract": [], "ions": 1000, "seed": 12345}
+    assert not is_live_run_section(section, 12345, None)

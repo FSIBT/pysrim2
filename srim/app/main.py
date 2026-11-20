@@ -81,6 +81,8 @@ def main(argv: list[str] | None = None) -> int:
     stop_on_quit(app, window)
     open_setup_when_needed(window)
     window.show()
+    if settings.agent_socket:
+        window.start_agent_socket()
     window.refresh_checks()
     code = app.exec()
     wait_for_threads(EXIT_WAIT_MS)  # a check that is still running gets a short grace period

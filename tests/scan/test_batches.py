@@ -1,6 +1,8 @@
 """run_batches: seeds, batch sizes and merging (mocked runner, no SRIM)."""
 
+import os
 import warnings
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -30,7 +32,13 @@ SPEC = RunSpec.from_dict(
 
 
 def table(df, num_ions):
-    return SimpleNamespace(df=df, metadata={"num_ions": num_ions, "source": "x"})
+    def iter_chunks(chunk_rows=50_000):  # as Range3D.iter_chunks
+        for start in range(0, max(len(df), 1), chunk_rows):
+            yield df.iloc[start : start + chunk_rows]
+
+    return SimpleNamespace(
+        df=df, metadata={"num_ions": num_ions, "source": "x"}, iter_chunks=iter_chunks
+    )
 
 
 class FakeResults:
@@ -261,3 +269,74 @@ def test_bin_columns_follow_the_batch_column_in_per_ion_tables():
     plain = MergedResults([FakeResults(SPEC, 1.0)], [BatchInfo(0, 1, 10)], spec=SPEC.to_dict())
     assert list(plain.range3d.df.columns)[:3] == ["ion", "batch", "depth_A"]
     assert plain.beam_bins is None
+
+
+class _SpecStub:
+    """Stands in for a RunSpec: write_point_record only calls ``to_yaml``."""
+
+    def to_yaml(self, path, provenance=None):
+        Path(path).write_text("spec\n", encoding="utf-8")
+
+
+def test_a_live_record_is_written_spec_then_bins_then_units(tmp_path, monkeypatch):
+    # a reader reads the units first and the spec and bins after, so the spec and the bins
+    # are never older than the units: the units are the last file of the record to be replaced
+    from srim.scan import batches
+
+    written = []
+    real = batches._write_atomic
+
+    def recording(path, write):
+        written.append(Path(path).name)
+        return real(path, write)
+
+    monkeypatch.setattr(batches, "_write_atomic", recording)
+    bins = pd.DataFrame({"bin": [0], "energy_keV": [10.0], "angle_deg": [7.0]})
+    batches.write_point_record(tmp_path, _SpecStub(), [(0, 0, 0, 10, 1)], bins, live=True)
+    assert written == ["run.live.yaml", "beam_bins.live.csv", "units.live.csv"]
+    written.clear()
+    batches.write_point_record(tmp_path, _SpecStub(), [(0, 0, 0, 10, 1)], bins)
+    assert written == ["run.yaml", "beam_bins.csv", "units.csv"]
+
+
+def test_write_atomic_retries_a_permission_error_while_a_reader_has_the_file(tmp_path, monkeypatch):
+    # Windows refuses os.replace while a reader has the file open: the replace is retried
+    from srim.scan import batches
+
+    target = tmp_path / "units.live.csv"
+    target.write_text("old\n", encoding="utf-8")
+    real_replace = os.replace
+    attempts = []
+
+    def busy(source, destination):
+        attempts.append(1)
+        if len(attempts) <= 3:
+            raise PermissionError("the file is open in a reader")
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(batches.os, "replace", busy)
+    batches._write_atomic(target, lambda path: Path(path).write_text("new\n", encoding="utf-8"))
+    assert len(attempts) == 4
+    assert target.read_text(encoding="utf-8") == "new\n"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["units.live.csv"]
+
+
+def test_write_atomic_gives_up_after_its_retries_and_removes_its_temporary_file(
+    tmp_path, monkeypatch
+):
+    from srim.scan import batches
+
+    target = tmp_path / "units.live.csv"
+    target.write_text("old\n", encoding="utf-8")
+    attempts = []
+
+    def always_busy(source, destination):
+        attempts.append(1)
+        raise PermissionError("the file is open in a reader")
+
+    monkeypatch.setattr(batches.os, "replace", always_busy)
+    with pytest.raises(PermissionError):
+        batches._write_atomic(target, lambda path: Path(path).write_text("new\n"))
+    assert len(attempts) == 4  # the first try and three retries
+    assert target.read_text(encoding="utf-8") == "old\n"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["units.live.csv"]

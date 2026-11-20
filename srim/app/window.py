@@ -4,7 +4,7 @@ import os
 from collections.abc import Callable
 from pathlib import Path
 
-from PySide6.QtCore import QUrl, Signal
+from PySide6.QtCore import Qt, QUrl, Signal
 from PySide6.QtGui import QActionGroup, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
@@ -18,7 +18,13 @@ from PySide6.QtWidgets import (
 
 import srim
 from srim.app import DOCS_URL
+from srim.app.agent_backend import AgentBackend
+from srim.app.agent_panel import AgentPanel
+from srim.app.agent_server import AgentServer, AgentSocketError
+from srim.app.agent_settings_dialog import AgentSettingsDialog
+from srim.app.approval_dialog import ApprovalQueue
 from srim.app.beam_tab import BeamTab
+from srim.app.connect_dialog import ConnectDialog
 from srim.app.document import DocumentModel
 from srim.app.geometry import GeometryTab
 from srim.app.guidance import Guidance, setup_guidance
@@ -56,6 +62,7 @@ from srim.app.theme import THEMES, apply_theme
 from srim.app.workers import run_in_thread
 from srim.cli import collect_checks
 from srim.installer.container import find_runtime
+from srim.mcp.activity import ActivityLog
 from srim.spec import SpecError
 
 #: the editor tabs, by key (the first part of a guidance target) and tab name
@@ -75,6 +82,14 @@ FILE_FILTER = "Run setup (*.yaml *.yml)"
 DISCARD_TEXT = "Discard the changes to this setup?"
 
 
+def _history_text(base: str, label: str | None) -> str:
+    """The Undo or Redo menu text, with the step's label after it. A "&" in the label is doubled,
+    so the menu shows it and does not make the next letter a shortcut."""
+    if not label:
+        return base
+    return f"{base} {label.replace('&', '&&')}"
+
+
 class MainWindow(QMainWindow):
     checked = Signal(list)
     setup_requested = Signal()
@@ -86,6 +101,7 @@ class MainWindow(QMainWindow):
         parent=None,
         document: DocumentModel | None = None,
         run_runner=None,
+        agent_handler=None,
     ):
         super().__init__(parent)
         self.settings = settings
@@ -109,6 +125,26 @@ class MainWindow(QMainWindow):
         self.document = document if document is not None else DocumentModel(self)
         #: the run of the setup (``run_runner`` replaces SRIM in tests; see srim.app.run_control)
         self.run = RunController(self, runner=run_runner)
+        #: the agent's ask-first requests wait here for the user's answer (see approval_dialog)
+        self.approvals = ApprovalQueue(self)
+        #: the agent socket: listening for agents while it runs (see srim.app.agent_server); the
+        #: handler answers them from this window (a test may pass another one)
+        handler = agent_handler if agent_handler is not None else AgentBackend(self)
+        self.agent = AgentServer(handler, parent=self)
+        #: why the agent socket did not start (None when it runs or was never asked to)
+        self._agent_message: Guidance | None = None
+        #: the same reason as text, for the "Allow agents to connect" action (None when listening)
+        self._agent_failure: str | None = None
+        #: the Agent activity panel: hidden until the first agent connects (see
+        #: _on_agent_connected); it shows the log's newest entries from before this start
+        self.agent_panel = AgentPanel(self)
+        self.agent_panel.hide()
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.agent_panel)
+        self.agent_panel.load_recent(ActivityLog())
+        self._agent_panel_shown = False
+        self.agent.client_connected.connect(self._on_agent_connected)
+        #: the Connect an agent dialog, made the first time it is asked for
+        self.connect_dialog: ConnectDialog | None = None
 
         # Editors are keyed "geometry", "beam", "settings" and "scan".
         self.editors: dict[str, QWidget] = {}
@@ -229,6 +265,24 @@ class MainWindow(QMainWindow):
         self.stop_notebook_action = notebook_menu.addAction("S&top notebook")
         self.stop_notebook_action.triggered.connect(self._stop_notebook)
 
+        agent_menu = menus.addMenu("&Agent")
+        self.connect_agent_action = agent_menu.addAction("&Connect an agent…")
+        self.connect_agent_action.triggered.connect(
+            lambda _checked=False: self.open_connect_dialog()
+        )
+        agent_menu.addSeparator()
+        self.agent_activity_action = self.agent_panel.toggleViewAction()
+        agent_menu.addAction(self.agent_activity_action)
+        self.agent_settings_action = agent_menu.addAction("Agent &settings…")
+        self.agent_settings_action.triggered.connect(
+            lambda _checked=False: self.open_agent_settings()
+        )
+        agent_menu.addSeparator()
+        self.agent_socket_action = agent_menu.addAction("&Allow agents to connect")
+        self.agent_socket_action.setCheckable(True)
+        self.agent_socket_action.setChecked(self.settings.agent_socket)
+        self.agent_socket_action.toggled.connect(self._set_agent_socket)
+
         view_menu = menus.addMenu("&View")
         theme_menu = view_menu.addMenu("&Theme")
         group = QActionGroup(self)
@@ -263,6 +317,44 @@ class MainWindow(QMainWindow):
 
     def _about(self) -> None:
         QMessageBox.about(self, "About pysrim2", f"pysrim2 {srim.__version__}")
+
+    # --- the agent: the activity panel, the settings and the socket -------------------------
+
+    def _on_agent_connected(self, _client: str) -> None:
+        """The first agent to connect shows the activity panel; after that the user decides."""
+        if self._closing or self._agent_panel_shown:
+            return
+        self._agent_panel_shown = True
+        self.agent_panel.show()
+
+    def open_connect_dialog(self) -> None:
+        """Show the Connect an agent dialog without blocking the window (it is kept for later)."""
+        if self._closing:
+            return
+        if self.connect_dialog is None:
+            self.connect_dialog = ConnectDialog(self)
+        self.connect_dialog.show()
+        self.connect_dialog.raise_()
+        self.connect_dialog.activateWindow()
+
+    def open_agent_settings(self) -> None:
+        if self._closing:
+            return
+        AgentSettingsDialog(self.settings, self).exec()
+
+    def _set_agent_socket(self, allowed: bool) -> None:
+        """The "Allow agents to connect" switch: save the choice, then start or stop listening."""
+        if self._closing:
+            return
+        self.settings.agent_socket = allowed
+        try:
+            save_settings(self.settings)
+        except OSError as error:
+            self._set_setup_messages([Guidance(f"Could not save the setting: {error}")])
+        if allowed:
+            self.start_agent_socket()
+        else:
+            self.stop_agent_socket()
 
     # --- the run setup -------------------------------------------------------------
 
@@ -311,6 +403,8 @@ class MainWindow(QMainWindow):
         self.save_results_action.setStatusTip(tip)
         self.undo_action.setEnabled(document.can_undo and not busy)
         self.redo_action.setEnabled(document.can_redo and not busy)
+        self.undo_action.setText(_history_text("&Undo", document.undo_label))
+        self.redo_action.setText(_history_text("&Redo", document.redo_label))
         for editor in self.editors.values():
             editor.setEnabled(not busy)
         self._update_notebook_actions()
@@ -536,9 +630,16 @@ class MainWindow(QMainWindow):
         if choice is None:
             return
         try:
-            self.run.start(choice)
+            self.start_run_with(choice)
         except SpecError as error:
             QMessageBox.warning(self, "Run", str(error))
+
+    def start_run_with(self, choice: ParallelChoice) -> None:
+        """Start a run of the setup as ``choice`` says, with no dialog. The setup must have a
+        file of its own (see :meth:`save_setup_path`). Raises :class:`~srim.spec.SpecError` for
+        a setup the library refuses, and :class:`RuntimeError` while a run goes; nothing starts
+        then. The Progress tab is shown when the run starts (see :attr:`run`)."""
+        self.run.start(choice)
 
     def _choose_parallel(self) -> ParallelChoice | None:
         """The choice for the run: the dialog when the run is long enough to offer it, else one
@@ -646,10 +747,15 @@ class MainWindow(QMainWindow):
         if not self._may_discard():
             return
         try:
-            self.document.open(path)
+            self.open_setup_path(path)
         except (SpecError, OSError) as error:
             QMessageBox.warning(self, "Open setup", str(error))
-            return
+
+    def open_setup_path(self, path) -> None:
+        """Open the setup file at ``path`` with no dialog. Raises :class:`~srim.spec.SpecError`
+        or :class:`OSError`, and :class:`RuntimeError` while a run goes; the document is then
+        unchanged. The caller asks about unsaved edits first (the menu does)."""
+        self.document.open(path)
         self._remember_setup(path)
 
     def _needs_new_file(self) -> bool:
@@ -704,10 +810,14 @@ class MainWindow(QMainWindow):
 
     def _save_to(self, path: Path) -> None:
         try:
-            self.document.save(path)
+            self.save_setup_path(path)
         except (SpecError, OSError) as error:
             QMessageBox.warning(self, "Save setup", str(error))
-            return
+
+    def save_setup_path(self, path) -> None:
+        """Save the setup to ``path`` with no dialog, and remember it. Raises
+        :class:`~srim.spec.SpecError` or :class:`OSError`; the setup's file is then unchanged."""
+        self.document.save(path)
         self._remember_setup(path)
 
     # --- setup and checks ----------------------------------------------------------
@@ -757,7 +867,48 @@ class MainWindow(QMainWindow):
         blocking = [problem for problem in problems if problem.blocking]
         notes = [problem for problem in problems if not problem.blocking]
         notebook = [self._notebook_message] if self._notebook_message is not None else []
-        self.status.set_messages([*notebook, *self._setup_messages, *blocking, *notes])
+        agent = [self._agent_message] if self._agent_message is not None else []
+        self.status.set_messages([*notebook, *agent, *self._setup_messages, *blocking, *notes])
+
+    def start_agent_socket(self) -> None:
+        """Listen for agents (the socket and the discovery file). A failure is shown in the status
+        bar; the window works without the socket."""
+        if self._closing or self.agent.listening:
+            return
+        try:
+            self.agent.start()
+        except AgentSocketError as error:
+            self._agent_failure = f"Agents cannot connect: {error}"
+            self._agent_message = Guidance(self._agent_failure)
+        else:
+            self._agent_failure = None
+            self._agent_message = None
+        self._show_agent_socket_state()
+        self._show_status()
+
+    def stop_agent_socket(self) -> None:
+        """Stop listening for agents and remove the discovery file.
+
+        An ask still open is cancelled.
+        """
+        self.agent.stop()
+        self._agent_message = None
+        self._agent_failure = None
+        self._show_agent_socket_state()
+        self._show_status()
+
+    def _show_agent_socket_state(self) -> None:
+        """The action says when the choice is on but nothing listens, with the reason as its tip.
+
+        The text is the app's own (no agent text reaches it), and the tip is cleared once listening.
+        """
+        action = self.agent_socket_action
+        if self._agent_failure is None:
+            action.setText("&Allow agents to connect")
+            action.setToolTip("")
+        else:
+            action.setText("&Allow agents to connect (not listening)")
+            action.setToolTip(self._agent_failure)
 
     def refresh_checks(self) -> None:
         """Run the installation checks in a thread and show what is not ready."""
@@ -824,5 +975,7 @@ class MainWindow(QMainWindow):
         Called when the window closes and when the application quits (see
         :func:`srim.app.main.stop_on_quit`). Safe to call more than once.
         """
+        self.agent.stop()  # the asks of a connection that is gone are cancelled first
+        self.approvals.close()  # then every ask still open is denied
         self._stop_notebook()
         stop_exports()

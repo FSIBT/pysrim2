@@ -11,6 +11,7 @@ One page per part of the library. Each object is documented on one page only.
 - {doc}`analysis`: `implant_summary`.
 - {doc}`core`: the natural isotopes and the common materials with their formulas.
 - {doc}`export`: Parquet, HDF5 and CSV export.
+- {doc}`mcp`: the agent server's config snippets, ask-first limits and activity log.
 - {doc}`plot`: the plots of a `Results` object.
 
 ```{toctree}
@@ -27,4 +28,5 @@ analysis
 core
 export
 plot
+mcp
 ```

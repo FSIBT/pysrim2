@@ -11,6 +11,7 @@ from srim.app.runs import (
     CONTAINER_SECONDS,
     DEFAULT_IONS_PER_S,
     ParallelChoice,
+    estimate_seconds,
     open_point,
     outputs_missing,
     parallel_advice,
@@ -70,6 +71,10 @@ def document(scan=None, calculation=1):
 
 def scanned(calculation=1, **section):
     return document(scan_from_section(section), calculation)
+
+
+def spec_with(**changes):
+    return spec(**changes)
 
 
 def binned_spec(calculation=2):
@@ -218,6 +223,36 @@ def test_a_precision_target_is_costed_at_its_upper_bound():
     advice = parallel_advice(scan, 8, {}, False)
     assert advice.seconds == 100_000 / 100.0
     assert advice.can_split is False
+
+
+def test_estimate_uses_the_remembered_rate_and_the_workers():
+    scan = beam_scan(spec_with(number_ions=1000, calculation=2))
+    assert estimate_seconds(scan, {"2": 10.0}) == 100.0
+    assert estimate_seconds(scan, {}, workers=1) == 1000 / DEFAULT_IONS_PER_S[2]
+
+
+def test_workers_beyond_the_units_do_not_shorten_the_estimate():
+    scan = beam_scan(spec_with(number_ions=1000, calculation=2))  # one unit
+    assert estimate_seconds(scan, {"2": 10.0}, workers=8) == 100.0
+
+
+def test_workers_share_the_batches_of_a_fixed_count():
+    scan = Scan(spec(calculation=2), ions=1000, batch_ions=100, seed=1)  # ten batches
+    assert estimate_seconds(scan, {"2": 10.0}, workers=8) == 1000 / 10.0 / 8
+    assert estimate_seconds(scan, {"2": 10.0}, workers=20) == 1000 / 10.0 / 10
+
+
+def test_the_bins_of_a_binned_beam_are_units_too():
+    scan = Scan(binned_spec(), ions=100_000, seed=1)  # five bins
+    assert estimate_seconds(scan, {"2": 100.0}, workers=8) == 100_000 / 100.0 / 5
+
+
+def test_estimate_costs_a_precision_target_at_its_upper_bound():
+    from srim.scan import Precision
+
+    precision = Precision(target="sputter_yield", rel=0.05, max_ions=100_000)
+    scan = Scan(spec(calculation=2), ions=precision, seed=1)
+    assert estimate_seconds(scan, {"2": 100.0}) == 100_000 / 100.0
 
 
 # --- remembered rates -----------------------------------------------------------------
@@ -433,3 +468,32 @@ def test_a_run_where_no_point_finished_has_no_outputs_missing(tmp_path, boron_da
     result, _finished = read_run(tmp_path / "run")
     assert not outputs_missing(result, tmp_path / "run")
     assert not outputs_missing(None, tmp_path / "run")
+
+
+# --- the live option of a single run ----------------------------------------------------
+
+
+def test_a_live_setup_is_a_ten_batch_scan_and_ignores_the_parallel_batch_size(tmp_path):
+    doc = document()
+    doc["_live"] = True
+    doc = {**doc, "number_ions": 1000}
+    scan = plan_run(doc, tmp_path, ParallelChoice(batch_ions=7))
+    assert scan.batch_ions == 100
+    assert scan.extract == []
+    assert scan.keep_seed is False
+    assert scan.ions == 1000
+
+
+def test_a_plain_run_keeps_its_seed_and_takes_no_batches(tmp_path):
+    scan = plan_run(document(), tmp_path, ParallelChoice())
+    assert scan.keep_seed is True
+    assert scan.batch_ions is None
+
+
+def test_a_live_setup_with_a_scan_is_planned_as_the_scan(tmp_path):
+    doc = document(scan_from_section({"grid": {"ion.energy_keV": [10.0, 20.0]}, "ions": 50}))
+    doc["_live"] = True
+    scan = plan_run(doc, tmp_path, ParallelChoice())
+    assert scan.keep_seed is False
+    assert len(scan.points()) == 2
+    assert scan.batch_ions is None

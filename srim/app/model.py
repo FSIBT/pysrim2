@@ -10,13 +10,16 @@ judge of values: the only rule of its own is "a value is missing".
 
 import filecmp
 import re
+import shutil
 import warnings
 from collections.abc import Mapping
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
+import srim
 from srim.app.guidance import Guidance
+from srim.beam.shapes import Histogram
 from srim.spec import RunSpec, SpecError
 
 #: nm per display unit (the layer's thickness is shown in the best one)
@@ -105,10 +108,13 @@ def _without_app_keys(value: Any) -> Any:
 
 
 def _state(doc: dict) -> dict:
-    """What undo and "modified" compare: the spec as :func:`clean` gives it, and the scan."""
+    """What undo and "modified" compare: the spec as :func:`clean` gives it, the scan and the
+    live option."""
     out = clean(doc)
     if "_scan" in doc:
         out["_scan"] = deepcopy(doc["_scan"])
+    if "_live" in doc:
+        out["_live"] = doc["_live"]
     return out
 
 
@@ -289,14 +295,17 @@ def problems(doc: dict, base_dir: Any = None) -> list[Guidance]:
 class History:
     """Undo and redo for the document, and whether it differs from the last saved state.
 
-    ``push`` is called with the state *before* an edit. A new edit clears redo. The baseline
-    for :meth:`is_modified` is the last :meth:`mark_saved` state, or an empty new document.
+    ``push`` is called with the state *before* an edit and the edit's label (None for a user
+    edit). A new edit clears redo. Each stack holds ``(state, label)``: an undone step keeps its
+    label on the redo stack, so :attr:`undo_label` and :attr:`redo_label` name the step that
+    undo or redo would act on. The baseline for :meth:`is_modified` is the last
+    :meth:`mark_saved` state, or an empty new document.
     """
 
     def __init__(self, limit: int = 200):
         self.limit = limit
-        self._undo: list[dict] = []
-        self._redo: list[dict] = []
+        self._undo: list[tuple[dict, str | None]] = []
+        self._redo: list[tuple[dict, str | None]] = []
         self._saved: dict | None = None
 
     @property
@@ -307,24 +316,36 @@ class History:
     def can_redo(self) -> bool:
         return bool(self._redo)
 
-    def push(self, doc: dict) -> None:
-        self._undo.append(deepcopy(doc))
+    @property
+    def undo_label(self) -> str | None:
+        """The label of the step :meth:`undo` would revert, or None (none, or a user edit)."""
+        return self._undo[-1][1] if self._undo else None
+
+    @property
+    def redo_label(self) -> str | None:
+        """The label of the step :meth:`redo` would re-apply, or None."""
+        return self._redo[-1][1] if self._redo else None
+
+    def push(self, doc: dict, label: str | None = None) -> None:
+        self._undo.append((deepcopy(doc), label))
         self._redo.clear()
         self._trim(self._undo)
 
     def undo(self, current: dict) -> dict | None:
         if not self._undo:
             return None
-        self._redo.append(deepcopy(current))
+        previous, label = self._undo.pop()
+        self._redo.append((deepcopy(current), label))
         self._trim(self._redo)
-        return self._undo.pop()
+        return previous
 
     def redo(self, current: dict) -> dict | None:
         if not self._redo:
             return None
-        self._undo.append(deepcopy(current))
+        following, label = self._redo.pop()
+        self._undo.append((deepcopy(current), label))
         self._trim(self._undo)
-        return self._redo.pop()
+        return following
 
     def clear(self) -> None:
         self._undo.clear()
@@ -337,7 +358,7 @@ class History:
         baseline = self._saved if self._saved is not None else _state(new_document())
         return _state(current) != baseline
 
-    def _trim(self, stack: list[dict]) -> None:
+    def _trim(self, stack: list) -> None:
         overflow = len(stack) - self.limit
         if overflow > 0:
             del stack[:overflow]
@@ -409,3 +430,108 @@ def prepare_for_save(doc: dict, folder: Path) -> tuple[dict, list[tuple[Path, Pa
             copies.append((source, dest))
         body["file"] = dest.relative_to(folder).as_posix()
     return saved, copies
+
+
+def read_setup(path: Path) -> dict:
+    """The document of the ``run.yaml`` at ``path``: its spec in the document layout, and its
+    ``scan:`` section as ``_scan`` when the file has a scan (not a single run's wrapper). A file
+    whose ``scan:`` is a single run with the live option (:func:`scan_model.live_scan`) gives
+    ``_live`` instead.
+
+    Raises :class:`~srim.spec.SpecError` for a file that cannot be read or is not a setup.
+    """
+    from srim.app import scan_model  # lazy: scan_model imports this module
+
+    path = Path(path).absolute()
+    try:
+        spec = RunSpec.from_yaml(path)
+        section = scan_model.section_from_file(path)
+    except OSError as error:
+        raise SpecError(f"cannot read {path}: {error.strerror or error}") from error
+    except UnicodeDecodeError as error:
+        raise SpecError(f"{path} is not a text file: {error}") from error
+    doc = from_spec(spec)
+    if section is not None and scan_model.is_live_run_section(section, spec.seed, spec.number_ions):
+        doc["_live"] = True
+    elif section is not None and not scan_model.is_single_run_section(
+        section, spec.seed, spec.number_ions
+    ):
+        doc["_scan"] = scan_model.scan_from_section(section)
+    return doc
+
+
+def write_setup(doc: dict, path: Path, base_dir: Path | None) -> dict:
+    """Write ``doc`` to ``path`` as a ``run.yaml`` and return the document as saved.
+
+    ``base_dir`` is the folder relative histogram files are read from (the working directory
+    when None). Raises :class:`~srim.spec.SpecError` for the first blocking problem, or for a
+    histogram file that does not exist. Histogram files are copied to ``beam/`` next to
+    ``path``, and the file records them relative to that folder. A setup with a scan is written
+    as a scan's ``run.yaml`` (:meth:`srim.scan.Scan.to_yaml`), otherwise as a plain one. The
+    caller takes the returned document as its current state (it refers to the copies).
+    """
+    from srim.app import scan_model  # lazy: scan_model imports this module
+
+    path = Path(path).absolute()
+    blocking = [problem for problem in problems(doc, base_dir) if problem.blocking]
+    if blocking:
+        raise SpecError(blocking[0].text)
+    folder = path.parent
+    folder.mkdir(parents=True, exist_ok=True)
+    base = base_dir or Path.cwd()
+    resolved = _with_absolute_histograms(doc, base)
+    prepared, copies = prepare_for_save(resolved, folder)
+    for source, dest in copies:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, dest)
+    provenance = {"app": f"pysrim2 {srim.__version__}"}
+    if "_scan" in prepared:
+        scan = scan_model.to_scan(prepared, folder)
+        _relative_histograms(scan.base, folder)
+        scan.to_yaml(path, provenance=provenance)
+    elif scan_model.is_live(prepared):
+        scan = scan_model.live_scan(to_spec(prepared, folder))
+        _relative_histograms(scan.base, folder)
+        scan.to_yaml(path, provenance=provenance)
+    else:
+        spec = to_spec(prepared, folder)
+        _relative_histograms(spec, folder)
+        spec.to_yaml(path, provenance=provenance)
+    return prepared
+
+
+def _with_absolute_histograms(doc: dict, base: Path) -> dict:
+    """A copy of ``doc`` whose relative histogram files are taken from ``base``."""
+    out = deepcopy(doc)
+    ion = out.get("ion") or {}
+    values = [ion.get("energy_keV"), ion.get("angle_deg"), ion.get("azimuth_deg")]
+    position = ion.get("position")
+    if isinstance(position, dict):
+        values += [position.get(name) for name in ("y_nm", "z_nm", "depth_nm")]
+    for value in values:
+        body = value.get("histogram") if isinstance(value, dict) else None
+        if isinstance(body, dict) and body.get("file") is not None:
+            file = Path(body["file"])
+            if not file.is_absolute():
+                body["file"] = str((base / file).absolute())
+    return out
+
+
+def _relative_histograms(spec: RunSpec, folder: Path) -> None:
+    """Write the histogram files inside ``folder`` relative to it, so a moved folder still works.
+
+    A histogram read from a file is stored with its absolute path; this changes the path of
+    the ones inside ``folder`` to ``beam/<name>`` for the run file that is written next.
+    """
+    values = [spec.ion.energy_keV, spec.ion.angle_deg, spec.ion.azimuth_deg]
+    if spec.ion.position is not None:
+        values += [spec.ion.position.y_nm, spec.ion.position.z_nm, spec.ion.position.depth_nm]
+    root = folder.resolve()
+    for value in values:
+        if not isinstance(value, Histogram) or value.file is None:
+            continue
+        file = Path(value.file).resolve()
+        try:
+            value.file = file.relative_to(root).as_posix()
+        except ValueError:
+            pass  # outside the folder: the absolute path stays

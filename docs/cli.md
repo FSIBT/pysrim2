@@ -8,6 +8,7 @@ pysrim2 --version
 pysrim2 install [COMPONENT ...] [--dry-run] [--yes] [--agent claude|all] [--scope user|project]
 pysrim2 doctor [--json]
 pysrim2 app
+pysrim2 mcp [--print-config claude|codex|gemini|cursor|vscode|generic]
 pysrim2 run run.yaml [--set KEY=VALUE ...] [--output DIR]
 pysrim2 run-job DIR
 pysrim2 import TRIM.IN [-o run.yaml]
@@ -138,6 +139,25 @@ Ctrl-C), and `--set` (changes the scan's base run). The web view has no authenti
 pysrim2 scan run scan.yaml --ui plain --output my-scan
 pysrim2 scan clean my-scan --dry-run
 ```
+
+## `pysrim2 mcp`
+
+Runs the MCP server (see {doc}`agents`) over stdio, for an AI agent. The client that
+starts it talks to it through standard input and output; nothing listens on a port. It needs
+the `mcp` extra (`uv tool install "pysrim2[mcp]"`); without it the command prints how to
+install the extra and exits with 2.
+
+`--print-config CLIENT` prints the config that starts the server for a client and exits
+without starting it. `CLIENT` is `claude`, `codex`, `gemini`, `cursor`, `vscode` or `generic`.
+The config goes to standard output alone, so it can be redirected; the file it belongs in is
+printed on standard error:
+
+```shell
+pysrim2 mcp --print-config gemini > pysrim2-gemini.json   # its place is printed on stderr
+pysrim2 mcp --print-config claude                          # then run the printed line
+```
+
+The server's relative paths are resolved from its working directory, which the client sets.
 
 ## Exit codes
 

@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `pysrim2 mcp` runs an MCP server over stdio for an AI agent (Claude Code, Codex, Gemini CLI, Cursor, VS Code or any stdio client). The agent sets up a run, starts it, follows it and reads its tables and plots, on the `run.yaml` files and run folders of the working directory (headless; undo and redo need the app). It asks the user before a long or large run, a save or export that replaces a file, a discarded setup, a run delete and an installer step; admin installer steps are never run, their commands are shown. It needs the new `mcp` extra (`pysrim2[mcp]`, the MCP SDK 2.x, also in `app` and `all`); without it, the command says how to install the extra.
+- `pysrim2 mcp --print-config CLIENT` prints the config that connects Claude Code, Codex, Gemini CLI, Cursor, VS Code or any other stdio client to the server (the absolute path of the installed `pysrim2`), and says which file it goes in.
+- The agent's activity is kept in `activity.jsonl` under the data directory (`agent/`): each request and answer, the client's name and the mode, up to 1 MB per file.
+- The agent's ask-first limits are settings in `settings.json`: `agent_max_minutes` (a run estimated longer needs the user's OK, default 30) and `agent_max_core_fraction` (more workers than this share of the cores need the OK, default 0.5).
+- Edit > Undo and Redo name the step they act on when it has a label (`Undo agent: ...` for a step the agent made); a user's edit keeps the plain "Undo" and "Redo" text.
+- The documentation has a section on the MCP server (`docs/agents.md`) and on the command (`docs/cli.md`); the pysrim2 skill has a section on it (section 10), and the API reference lists `srim.mcp.connect`, `srim.mcp.limits` and `srim.mcp.activity`.
+- The agent works in the open desktop app. With "Allow agents to connect" on (on by default), `pysrim2 mcp` drives the window: an edit is one undo step labelled `agent: ...`, a run appears in Progress, a plot in Results, and each call in the Agent activity panel. The agent's undo and redo reverse only its own steps. A question the agent asks (a long run, an overwrite, a discard) is a dialog in the window: Deny is the default, and no answer in 120 seconds counts as a refusal. When the app closes, the agent carries on headless from the last saved setup and says so.
+- The desktop app's Agent menu has Connect an agent… (the setup for each AI client, with Copy, and the pysrim2 skill installed at user scope), Agent activity (the panel, shown once an agent connects), Agent settings… (the two ask-first limits) and Allow agents to connect.
+- Run settings: "Show results while the run goes" splits a single run into ten batches (a tenth of its ions each, at most 99 999 ions, so a run of more than 999 990 ions has more), and the Results tab redraws the point as its batches finish. The results are statistically equivalent to one run, not identical. The option is saved in `run.yaml` as a scan section, so `pysrim2 scan run run.yaml` runs it again the same way (a plain `pysrim2 run` ignores the section); it does not apply to a scan. An agent turns it on with `set_section("run", {"live": true})`.
+- While a batched point runs, its folder holds `run.live.yaml`, `units.live.csv` and `beam_bins.live.csv`, rewritten at most once a second and removed when the point is final; a failed point has none. `srim.beam.open_results(point_dir, live=True)` reads them.
+
+### Changed
+
+- Exporting the big per-ion outputs (`range3d`, `exyz`, `backscat`, `transmit`, `sputter`, also of batched results) writes them in chunks instead of loading the whole output into memory; the files are the same.
+- A scan's per-point implant summary, both the `implant_summary` extractor and the batch summary, reads `RANGE_3D` in chunks instead of loading the whole table (the new `srim.analysis.implant_summary_chunks` gives the same values as `implant_summary`).
+
 ## [0.12.1] - 2026-11-15
 
 ### Added

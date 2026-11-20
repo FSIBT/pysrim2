@@ -8,9 +8,11 @@ that behaves like :class:`srim.output.Results` for the table extractors
 
 import hashlib
 import math
+import os
 import random
 import shutil
 import tempfile
+import time
 from concurrent.futures import (
     FIRST_EXCEPTION,
     ProcessPoolExecutor,
@@ -33,6 +35,12 @@ UNITS_FILE = "units.csv"
 BINS_FILE = "beam_bins.csv"
 BATCHES_DIR = "batches"
 UNIT_COLUMNS = ("unit", "beam_batch", "bin", "n_ions", "seed")
+#: the live record of a batched point while it runs (the same files, with ``.live``): it lists
+#: the finished units so far, and the final record replaces it (see :func:`write_point_record`)
+RUN_LIVE_FILE = "run.live.yaml"
+UNITS_LIVE_FILE = "units.live.csv"
+BINS_LIVE_FILE = "beam_bins.live.csv"
+LIVE_FILES = (RUN_LIVE_FILE, UNITS_LIVE_FILE, BINS_LIVE_FILE)
 
 _PER_ION = ("range3d", "exyz", "backscat", "transmit", "sputter")
 _PROFILES = ("ioniz", "vacancy", "novac", "e2recoil", "phonon", "range")
@@ -71,7 +79,48 @@ class BatchInfo:
     columns: dict | None = field(default=None, repr=False)
 
 
-def write_point_record(folder, spec, units, beam_bins=None, provenance=None):
+#: Windows refuses :func:`os.replace` while a reader has the file open: the replace is tried
+#: again this many times, :data:`_REPLACE_DELAY` seconds apart, before the write fails
+_REPLACE_RETRIES = 3
+_REPLACE_DELAY = 0.05
+
+
+def _write_atomic(path, write):
+    """Write ``path`` as a whole: ``write(temporary)`` writes a file in the same folder, which
+    then replaces ``path`` in one step (:func:`os.replace`), so a reader never sees half of it.
+    The temporary file is removed when the write fails."""
+    path = Path(path)
+    temporary = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    try:
+        write(temporary)
+        for attempt in range(_REPLACE_RETRIES + 1):
+            try:
+                os.replace(temporary, path)
+                break
+            except PermissionError:
+                if attempt == _REPLACE_RETRIES:
+                    raise
+                time.sleep(_REPLACE_DELAY)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
+
+
+def write_run_file(folder, spec, provenance=None) -> None:
+    """Record a point that is not batched: its ``run.yaml``, the spec it ran, written atomically.
+
+    Readers find a point's outputs by this file (or by ``units.csv``, which a batched point has),
+    so an unbatched point has it too. A ``run.yaml`` that is already there is kept as it is: the
+    run wrote it with its provenance (the SRIM build, the times), which a rewrite would lose.
+    """
+    folder = Path(folder)
+    if (folder / RUN_FILE).is_file():
+        return
+    folder.mkdir(parents=True, exist_ok=True)
+    _write_atomic(folder / RUN_FILE, lambda path: spec.to_yaml(path, provenance=provenance))
+
+
+def write_point_record(folder, spec, units, beam_bins=None, provenance=None, live=False):
     """Record a batched point in its folder, so that :func:`srim.beam.open_results` can merge it.
 
     Writes ``run.yaml`` (``spec``: the point's run spec with the total ions and the point's
@@ -79,15 +128,45 @@ def write_point_record(folder, spec, units, beam_bins=None, provenance=None):
     :func:`srim.beam.binned.bins_frame`), ``beam_bins.csv``. ``units`` lists the finished units
     as ``(unit, beam_batch, bin, n_ions, seed)``; ``bin`` is None for a plain batch (an empty
     cell), and a plain batch is its own beam batch.
+
+    With ``live``, the same records are written under the names in :data:`LIVE_FILES` (the
+    live record of a point that is still running). Every file is replaced atomically, so a
+    reader sees the previous version of a file or the new one. The files are written in the
+    order spec, bins, units, so a reader that reads the units first, then the spec and bins,
+    never has units newer than the spec and bins it reads. The final record is written without
+    ``live``; the caller removes the live files then (:func:`remove_live_files`).
     """
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
-    spec.to_yaml(folder / RUN_FILE, provenance=provenance)
+    run_name, units_name, bins_name = (
+        (RUN_LIVE_FILE, UNITS_LIVE_FILE, BINS_LIVE_FILE)
+        if live
+        else (RUN_FILE, UNITS_FILE, BINS_FILE)
+    )
+    _write_atomic(folder / run_name, lambda path: spec.to_yaml(path, provenance=provenance))
+    if beam_bins is not None:
+        _write_atomic(folder / bins_name, lambda path: beam_bins.to_csv(path, index=False))
     frame = pd.DataFrame(list(units), columns=list(UNIT_COLUMNS))
     frame = frame.astype("Int64")
-    frame.to_csv(folder / UNITS_FILE, index=False)
-    if beam_bins is not None:
-        beam_bins.to_csv(folder / BINS_FILE, index=False)
+    # the units are written last: a reader that reads them first never sees them newer than
+    # the spec and bins it reads after (see :func:`srim.beam.open_results`)
+    _write_atomic(folder / units_name, lambda path: frame.to_csv(path, index=False))
+
+
+def has_live_record(folder) -> bool:
+    """True when the folder of a batched point has its live record (its run and units)."""
+    folder = Path(folder)
+    return (folder / RUN_LIVE_FILE).is_file() and (folder / UNITS_LIVE_FILE).is_file()
+
+
+def remove_live_files(folder) -> None:
+    """Remove the live record of a point's folder, if it has one, and the temporary files a
+    crashed write left beside it (see :func:`_write_atomic`)."""
+    folder = Path(folder)
+    for name in LIVE_FILES:
+        (folder / name).unlink(missing_ok=True)
+        for leftover in folder.glob(f"{name}.*.tmp"):
+            leftover.unlink(missing_ok=True)
 
 
 def _check_same_bins(frames, name):
@@ -97,6 +176,24 @@ def _check_same_bins(frames, name):
             raise ValueError(f"cannot merge {name!r}: the batches have different columns or bins")
         if not np.allclose(frame["depth_A"], first["depth_A"], rtol=1e-9, atol=0.0):
             raise ValueError(f"cannot merge {name!r}: the batches have different depth bins")
+
+
+def _split(frame, chunk_rows):
+    """``frame`` in consecutive pieces of ``chunk_rows`` rows (one piece if it is empty)"""
+    if len(frame) == 0:
+        return iter([frame])
+    return (frame.iloc[start : start + chunk_rows] for start in range(0, len(frame), chunk_rows))
+
+
+def _as_merged(frame, info, offset):
+    """A batch's rows as part of the merged table: ``ion`` numbered from ``offset``, the
+    ``batch`` index and the batch's columns (bins) after it. Copies ``frame``."""
+    frame = frame.copy()
+    frame["ion"] = frame["ion"] + offset
+    frame.insert(1, "batch", info.index)
+    for position, (name, value) in enumerate((info.columns or {}).items(), start=2):
+        frame.insert(position, name, value)
+    return frame
 
 
 class _MergedTable:
@@ -135,14 +232,45 @@ class _MergedTable:
         offset = 0
         out = []
         for info, frame in zip(self._merged.batches, frames, strict=True):
-            frame = frame.copy()
-            frame["ion"] = frame["ion"] + offset
-            frame.insert(1, "batch", info.index)
-            for position, (name, value) in enumerate((info.columns or {}).items(), start=2):
-                frame.insert(position, name, value)
+            out.append(_as_merged(frame, info, offset))
             offset += info.n_ions
-            out.append(frame)
         return pd.concat(out, ignore_index=True)
+
+    def iter_chunks(self, chunk_rows=50_000):
+        """The merged table in chunks of up to ``chunk_rows`` rows, as ``.df`` (the chunks of
+        the batches in batch order, see :meth:`srim.output.Range3D.iter_chunks`).
+
+        Batches whose bin columns differ (no scan makes such batches) are merged by
+        :attr:`df`, which unions their columns and may change their dtypes; then the whole
+        table is built once and only the writing is in chunks. Depth profiles are small and
+        come as one chunk."""
+        if int(chunk_rows) < 1:
+            raise ValueError("chunk_rows must be a positive integer")
+        if self._kind == "profile":
+            return iter([self.df])
+        if not self._same_batch_columns():
+            return _split(self.df, chunk_rows)
+        return self._chunks(chunk_rows)
+
+    def _same_batch_columns(self):
+        """True when every batch adds the same columns, with the same value types, so that
+        the chunks of each batch have the columns of the merged table"""
+        layouts = {
+            tuple((name, type(value).__name__) for name, value in (info.columns or {}).items())
+            for info in self._merged.batches
+        }
+        return len(layouts) <= 1
+
+    def _chunks(self, chunk_rows):
+        offset = 0
+        rows = 0
+        for info, part in zip(self._merged.batches, self._parts(), strict=True):
+            for frame in part.iter_chunks(chunk_rows):
+                frame = _as_merged(frame, info, offset)
+                frame.index = pd.RangeIndex(rows, rows + len(frame))
+                rows += len(frame)
+                yield frame
+            offset += info.n_ions
 
     @property
     def metadata(self):
@@ -476,10 +604,15 @@ def _collect(executor, futures, annotate, convert):
     raise exc
 
 
+#: rows of RANGE_3D read at a time for a batch's summary
+_SUMMARY_CHUNK_ROWS = 50_000
+
+
 def _summary(results):
+    """The implant summary of a batch's ions, read from RANGE_3D in chunks (never ``.df``)."""
     range3d = getattr(results, "range3d", None)
     if range3d is None:
         return None
-    from ..analysis import implant_summary
+    from ..analysis import implant_summary_chunks
 
-    return implant_summary(range3d.df)
+    return implant_summary_chunks(range3d.iter_chunks(chunk_rows=_SUMMARY_CHUNK_ROWS))

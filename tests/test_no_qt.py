@@ -19,6 +19,15 @@ def test_the_library_and_cli_never_import_qt(tmp_path):
         "import srim.app.quantity, srim.app.scan_model, srim.app.runs, srim.app.plots\n"
         "import srim.app.scan_plots, srim.app.export_results, srim.app.recent\n"
         "import srim.notebook\n"
+        "import srim.mcp, srim.mcp.limits, srim.mcp.approval, srim.mcp.activity\n"
+        "import srim.mcp.backend, srim.mcp.headless, srim.mcp.lookup\n"
+        "import srim.mcp.detached\n"
+        "import srim.mcp.discovery, srim.mcp.protocol\n"
+        "import srim.mcp.connect\n"
+        "import srim.mcp.app_client\n"
+        "import srim.mcp.results\n"
+        "import srim.mcp.tools\n"
+        "import srim.mcp.install_child\n"
         "import srim.app.notebooks, srim.installer.app\n"
         # pandas imports pyarrow itself when it is installed; the export extras are not ours to load
         "heavy = [m for m in sys.modules if m in ('tables', 'pyarrow.parquet')]\n"
@@ -28,22 +37,25 @@ def test_the_library_and_cli_never_import_qt(tmp_path):
         "cli.build_parser().parse_args(['doctor'])\n"
         "with open(os.devnull, 'w') as sink, contextlib.redirect_stdout(sink), "
         "contextlib.redirect_stderr(sink):\n"
-        "    for argv in (['install', '--dry-run', 'app'], ['doctor']):\n"
+        "    for argv in (['install', '--dry-run', 'app'], ['doctor'], "
+        "['mcp', '--print-config', 'codex']):\n"
         "        try:\n"
         "            cli.main(argv)\n"
         "        except SystemExit:\n"
         "            pass  # the exit code is not what this test checks\n"
+        "assert 'mcp' not in sys.modules, 'MCP SDK imported'\n"
         "assert not [m for m in sys.modules if m.startswith('PySide6')], 'Qt imported'\n"
     )
     subprocess.run([sys.executable, "-c", code], check=True, timeout=300, env=env)
 
 
 def test_the_plot_catalogue_does_not_import_matplotlib():
-    # A fresh interpreter: the catalogue is Qt-free, and matplotlib is only for the drawing
-    # functions of the GUI and the tests, which import it themselves.
+    # A fresh interpreter: the catalogue and the agent's results are Qt-free, and matplotlib is only
+    # for the drawing functions (the GUI, the tests and render_plot), which import it themselves.
     code = (
         "import sys\n"
         "import srim.app.plots\n"
+        "import srim.mcp.results\n"
         "loaded = [m for m in sys.modules if m == 'matplotlib' or m.startswith('matplotlib.')]\n"
         "assert not loaded, loaded\n"
     )

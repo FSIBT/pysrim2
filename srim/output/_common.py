@@ -8,7 +8,7 @@ from io import BytesIO
 import numpy as np
 
 from ..core.ion import Ion
-from ._chunks import concat_chunks, iter_lines, iter_row_chunks
+from ._chunks import iter_lines, iter_row_chunks
 
 # Valid double_regex 4, 4.0, .4, 4.0e100, and comma decimals (4,0 / 4,0E+02)
 # as written by SRIM under locales that use a comma as decimal separator
@@ -91,6 +91,89 @@ def _element_names(names, count, output=None):
 _MAX_HEADER_LINES = 200
 
 
+class _TableScan:
+    """One streaming pass over a SRIM table in a text file.
+
+    ``columns`` is a list of ``(group index, "i" or "f")``: the regex group of each column
+    and its kind. No rows are kept here: :meth:`chunks` yields them chunk by chunk. The
+    state of the pass (``header``, ``found``, ``truncated``, ``bad``, ``first_bad``) is
+    complete once :meth:`chunks` has run to the end; each pass starts it afresh.
+    """
+
+    def __init__(self, path, header_end, row_regex, columns, name, max_rows=None):
+        self.path = path
+        self.header_end = header_end
+        self.row_regex = row_regex
+        self.columns = columns
+        self.name = name
+        self.max_rows = max_rows
+        self.dtypes = [int if kind == "i" else float for _, kind in columns]
+        self.header = b""
+        self.found = False
+        self.truncated = False
+        self.bad = 0
+        self.first_bad = None
+
+    def _rows(self):
+        """The parsed data rows of one pass, a list of values per row"""
+        header = []
+        self.found = False
+        self.truncated = False
+        self.bad = 0
+        self.first_bad = None
+        count = 0
+        for raw in iter_lines(self.path, None, keepends=True):
+            line = raw.rstrip(b"\r\n")
+            if not self.found:
+                header.append(raw)
+                if self.header_end.fullmatch(line):
+                    self.found = True
+                elif len(header) >= _MAX_HEADER_LINES:
+                    break
+                continue
+            match = self.row_regex.fullmatch(line)
+            if match:
+                if self.max_rows is not None and count >= self.max_rows:
+                    self.truncated = True
+                    break
+                count += 1
+                groups = match.groups()
+                yield [
+                    int(groups[i]) if kind == "i" else _to_float(_squeeze(groups[i]))
+                    for i, kind in self.columns
+                ]
+            elif line.strip() and raw.endswith(b"\n"):
+                self.bad += 1
+                self.first_bad = self.first_bad or line.strip()[:60]
+        self.header = b"".join(header)
+
+    def chunks(self, chunk_rows=50_000):
+        """Yield the rows in chunks of up to ``chunk_rows``: a list with one array per column
+        (in the order of ``columns``). A table without rows yields one chunk of empty arrays,
+        so a caller always gets the columns and dtypes."""
+        names = [str(j) for j in range(len(self.columns))]
+        given = False
+        for frame in iter_row_chunks(self._rows(), names, self.dtypes, chunk_rows):
+            given = True
+            yield [frame[n].to_numpy() for n in names]
+        if not given:
+            yield _empty_arrays(self.columns)
+
+    def arrays(self, chunk_rows=50_000):
+        """Every row, one array per column: the whole table in memory"""
+        pieces = list(self.chunks(chunk_rows))
+        return [np.concatenate([piece[j] for piece in pieces]) for j in range(len(self.columns))]
+
+    def warn_bad(self, stacklevel=2):
+        """Warn once about the data lines that did not match the row pattern"""
+        if self.bad:
+            warnings.warn(
+                f"{self.bad} line(s) in the {self.name} data section could not be parsed and "
+                f"were skipped (first: {self.first_bad.decode('latin-1')!r})",
+                stacklevel=stacklevel + 1,
+            )
+
+
 def _read_numeric_table(
     path, header_end, row_regex, columns, name, chunk_rows=50000, max_rows=None
 ):
@@ -114,52 +197,12 @@ def _read_numeric_table(
     Non-blank lines that do not match are skipped with one warning; a final line without a
     line break (SRIM may truncate it) is parsed if it matches, otherwise ignored silently.
     """
-    header = []
-    found = False
-    bad = 0
-    first_bad = None
-    truncated = False
-
-    def rows():
-        nonlocal found, bad, first_bad, truncated
-        count = 0
-        for raw in iter_lines(path, None, keepends=True):
-            line = raw.rstrip(b"\r\n")
-            if not found:
-                header.append(raw)
-                if header_end.fullmatch(line):
-                    found = True
-                elif len(header) >= _MAX_HEADER_LINES:
-                    return
-                continue
-            match = row_regex.fullmatch(line)
-            if match:
-                if max_rows is not None and count >= max_rows:
-                    truncated = True
-                    return
-                count += 1
-                groups = match.groups()
-                yield [
-                    int(groups[i]) if kind == "i" else _to_float(_squeeze(groups[i]))
-                    for i, kind in columns
-                ]
-            elif line.strip() and raw.endswith(b"\n"):
-                bad += 1
-                first_bad = first_bad or line.strip()[:60]
-
-    names = [str(j) for j in range(len(columns))]
-    dtypes = [int if kind == "i" else float for _, kind in columns]
-    frame = concat_chunks(iter_row_chunks(rows(), names, dtypes, chunk_rows), names, dtypes)
-    header = b"".join(header)
-    if not found:
-        return header, None, False
-    if bad:
-        warnings.warn(
-            f"{bad} line(s) in the {name} data section could not be parsed and were skipped "
-            f"(first: {first_bad.decode('latin-1')!r})",
-            stacklevel=4,
-        )
-    return header, [frame[n].to_numpy() for n in names], truncated
+    scan = _TableScan(path, header_end, row_regex, columns, name, max_rows)
+    arrays = scan.arrays(chunk_rows)
+    if not scan.found:
+        return scan.header, None, False
+    scan.warn_bad(stacklevel=2)
+    return scan.header, arrays, scan.truncated
 
 
 def _squeeze(token):
@@ -200,17 +243,7 @@ class SRIM_Output:
         The first column is ``depth_A``; the others are documented in the
         class docstring. Values equal the array properties of the object.
         """
-        import pandas as pd
-
-        data = {}
-        for name, values in self._dataframe_columns():
-            values = np.asarray(values)
-            if values.ndim == 2:
-                for j in range(values.shape[1]):
-                    data[name[j]] = values[:, j]
-            else:
-                data[name] = values
-        return pd.DataFrame(data)
+        return _frame(self._dataframe_columns())
 
     @property
     def metadata(self):
@@ -296,3 +329,91 @@ class SRIM_Output:
             data = np.genfromtxt(BytesIO(output[match.end() :].replace(b",", b".")), max_rows=100)
             return data
         raise SRIMOutputParseError("unable to extract table from file")
+
+
+def _frame(columns):
+    """DataFrame from ``(name, values)`` pairs (as :attr:`SRIM_Output.df`); a 2-D ``values``
+    gives one column per name in the list ``name``"""
+    import pandas as pd
+
+    data = {}
+    for name, values in columns:
+        values = np.asarray(values)
+        if values.ndim == 2:
+            for j in range(values.shape[1]):
+                data[name[j]] = values[:, j]
+        else:
+            data[name] = values
+    return pd.DataFrame(data)
+
+
+class _StreamedTable(SRIM_Output):
+    """A per-ion table (``RANGE_3D.txt``, ``EXYZ.txt``, the event files): its rows stay in the file.
+
+    The constructor makes one pass over the file (:meth:`_count`) that counts the rows and
+    keeps none of them, so holding the object costs no table memory. :attr:`df` and the
+    array properties read the whole table on first use and cache it. :meth:`iter_chunks`
+    reads it in chunks and keeps nothing.
+
+    Subclasses set ``self._scan`` (a :class:`_TableScan`) and implement
+    :meth:`_table_columns`.
+    """
+
+    _scan = None
+    _num_rows = 0
+    _distinct = 0
+    _cache = None
+
+    def _count(self, distinct_ions=False):
+        """One pass that counts the rows (and, with ``distinct_ions``, the distinct ion numbers
+        of column 0, one integer each)"""
+        rows = 0
+        ions = set()
+        for arrays in self._scan.chunks():
+            rows += len(arrays[0])
+            if distinct_ions:
+                ions.update(np.unique(arrays[0]).tolist())
+        self._num_rows = rows
+        self._distinct = len(ions)
+        self._truncated = self._scan.truncated
+
+    def _table_arrays(self):
+        """Every row, one array per table column: the whole table (cached)"""
+        if self._cache is None:
+            self._cache = self._scan.arrays()
+        return self._cache
+
+    def _table_columns(self, arrays):
+        """Ordered ``(column name, array)`` pairs for the table columns ``arrays``"""
+        raise NotImplementedError()
+
+    def _dataframe_columns(self):
+        return self._table_columns(self._table_arrays())
+
+    def iter_chunks(self, chunk_rows=50_000):
+        """Iterate over the rows as :class:`pandas.DataFrame` chunks of ``chunk_rows`` rows
+
+        The chunks, concatenated, are :attr:`df`: the same columns, dtypes and values, with
+        the index the row position in :attr:`df`. The file is read in one pass and nothing
+        is kept, so memory use is one chunk. A table without rows gives one empty chunk
+        with the same columns and dtypes.
+
+        Raises
+        ------
+        ValueError
+            if ``chunk_rows`` is less than 1
+        """
+        chunk_rows = int(chunk_rows)
+        if chunk_rows < 1:
+            raise ValueError("chunk_rows must be a positive integer")
+        return self._chunks(chunk_rows)
+
+    def _chunks(self, chunk_rows):
+        import pandas as pd
+
+        offset = 0
+        for arrays in self._scan.chunks(chunk_rows):
+            frame = _frame(self._table_columns(arrays))
+            frame.index = pd.RangeIndex(offset, offset + len(frame))
+            offset += len(frame)
+            yield frame

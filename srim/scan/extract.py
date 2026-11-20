@@ -26,7 +26,7 @@ from typing import Any
 
 import numpy as np
 
-from ..analysis import implant_summary as _implant_summary
+from ..analysis import implant_summary_chunks as _implant_summary_chunks
 from ..output import Results
 from ..spec import SpecError, parse_trim_in
 
@@ -174,14 +174,22 @@ def combine(extractors: Iterable[Any]) -> Extractor:
 # -- helpers ----------------------------------------------------------------------------
 
 
-def _range3d_df(results, who):
+#: rows of RANGE_3D read at a time by the implant_summary extractor
+_CHUNK_ROWS = 50_000
+
+
+def _range3d_table(results, who):
     table = getattr(results, "range3d", None)
     if table is None:
         raise ValueError(
             f"{who} needs the final ion positions (RANGE_3D.txt): run with ranges=1 "
             "(TRIM(..., ranges=1) or settings: {ranges: 1} in run.yaml)"
         )
-    return table.df
+    return table
+
+
+def _range3d_df(results, who):
+    return _range3d_table(results, who).df
 
 
 def _output_df(results, attribute, who, setting):
@@ -268,7 +276,8 @@ def implant_summary(results, point=None) -> dict[str, float]:
         The keys of :meth:`srim.analysis.implant_summary` with ``n_ions`` renamed to
         ``n_ions_stopped``.
     """
-    summary = dict(_implant_summary(_range3d_df(results, "implant_summary")))
+    chunks = _range3d_table(results, "implant_summary").iter_chunks(chunk_rows=_CHUNK_ROWS)
+    summary = dict(_implant_summary_chunks(chunks))
     summary["n_ions_stopped"] = summary.pop("n_ions")
     return summary
 

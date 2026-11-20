@@ -21,7 +21,7 @@ import pandas as pd
 
 from srim.app.model import to_spec
 from srim.app.plots import PLOT_ROW_CAP
-from srim.app.scan_model import to_scan
+from srim.app.scan_model import is_live, live_scan, to_scan
 from srim.app.settings import RATE_KEYS, AppSettings
 from srim.beam import beam_scan, sampled_ions
 from srim.beam.binned import make_bins
@@ -119,9 +119,13 @@ def plan_run(doc: dict, base_dir: Any, choice: ParallelChoice) -> Scan:
 
     The batch size of ``choice`` applies only where the scan has fixed ions and no batch size or
     precision target of its own, and is not a one-point scan that keeps its seed (the library
-    refuses to split that). Raises :class:`~srim.spec.SpecError` for a value the library refuses.
+    refuses to split that). A setup with the live option runs in its own batches
+    (:func:`~srim.app.scan_model.live_scan`), whatever the choice says. Raises
+    :class:`~srim.spec.SpecError` for a value the library refuses.
     """
     scan = doc.get("_scan")
+    if scan is None and is_live(doc):
+        return live_scan(to_spec(doc, base_dir))  # its batch size is the option's, not the choice's
     if scan is None:
         return beam_scan(to_spec(doc, base_dir), batch_ions=choice.batch_ions)
     if (
@@ -132,6 +136,31 @@ def plan_run(doc: dict, base_dir: Any, choice: ParallelChoice) -> Scan:
     ):
         doc = {**doc, "_scan": {**scan, "batch_ions": choice.batch_ions}}
     return to_scan(doc, base_dir)
+
+
+def estimate_seconds(scan: Scan, ions_per_s: dict[str, float], workers: int = 1) -> float:
+    """The estimated run time of ``scan`` in seconds, run by ``workers`` worker processes.
+
+    The ions of all points (a precision target at its ``max_ions``) over the remembered or
+    default rate of the calculation, divided by the number of SRIM runs that can run at once:
+    at most ``workers``, and at most the scan's units (the points' bins, times the batches of
+    ``batch_ions``; a precision target is one unit per point, as its batches are planned as it
+    goes). Parallel advice uses it with one worker, so the two never disagree.
+    """
+    points = scan.points()
+    precision = isinstance(scan.ions, Precision)
+    per_point = scan.ions.max_ions if precision else scan.ions
+    parallel = max(1, min(workers, scan_units(scan)))
+    return per_point * len(points) / _rate(scan.base.calculation, ions_per_s) / parallel
+
+
+def scan_units(scan: Scan) -> int:
+    """The SRIM runs of ``scan``: the bins of each point, times its batches of ``batch_ions``
+    (a precision target counts the batches of its ``max_ions``)."""
+    precision = isinstance(scan.ions, Precision)
+    per_point = scan.ions.max_ions if precision else scan.ions
+    batches = math.ceil(per_point / scan.batch_ions) if scan.batch_ions else 1
+    return sum(_units(point.spec) * batches for point in scan.points())
 
 
 def parallel_advice(
@@ -147,7 +176,7 @@ def parallel_advice(
     points = scan.points()
     precision = isinstance(scan.ions, Precision)
     per_point = scan.ions.max_ions if precision else scan.ions
-    seconds = per_point * len(points) / _rate(scan.base.calculation, ions_per_s)
+    seconds = estimate_seconds(scan, ions_per_s)
     if seconds < LONG_RUN_SECONDS:
         return None
     units = sum(_units(point.spec) for point in points)

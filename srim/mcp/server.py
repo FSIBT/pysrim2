@@ -1,0 +1,490 @@
+"""The MCP server of ``pysrim2 mcp``: the pysrim2 tools for an AI agent, over stdio.
+
+This is the only module that imports the MCP SDK (``mcp``, version 2.x). ``srim.cli`` imports it
+lazily, once :func:`srim.mcp.mcp_available` says the SDK is installed.
+
+Each MCP tool calls one method of :class:`srim.mcp.tools.Tools` on a worker thread (so a slow run
+check never blocks the protocol). The client's name goes into the activity log. With the open
+app, the ask-first questions go to the app's dialog and each log entry is sent to its panel (see
+:mod:`srim.mcp.app_client`); otherwise the client's elicitation answers them, and a client without
+elicitation gets the one-time code flow instead (see :mod:`srim.mcp.tools`). A
+:class:`BackendError` becomes a tool error with its message, which the agent shows to the user.
+
+Standard output is the protocol's channel while the server runs: nothing here prints. The SDK's
+stdio transport moves descriptor 1 to stderr while it serves, so stray output cannot corrupt the
+stream, and logging goes to stderr.
+"""
+
+import json
+import sys
+import threading
+import traceback
+from collections.abc import Callable
+from importlib import resources
+from pathlib import Path
+from typing import Any
+
+import anyio
+from mcp.server.mcpserver import AcceptedElicitation, Context, Image, MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
+from mcp.shared.exceptions import MCPError, NoBackChannelError
+from mcp.types import CallToolResult, TextContent
+from pydantic import BaseModel, Field
+
+import srim
+from srim.app.settings import AppSettings, load_settings
+from srim.installer.skill import skill_text
+from srim.mcp.activity import ActivityEntry, ActivityLog
+from srim.mcp.app_client import DEFAULT_CLIENT, AppGone, AppLink
+from srim.mcp.approval import ApprovalCodes
+from srim.mcp.backend import Backend, BackendError
+from srim.mcp.headless import HeadlessBackend
+from srim.mcp.tools import Answer, Ask, Tools
+
+#: how long the user has to answer an ask before it counts as "timed out" (a refusal)
+ASK_SECONDS = 300.0
+UNKNOWN_CLIENT = "unknown client"
+SKILL_URI = "pysrim2://skill"
+
+
+class Allow(BaseModel):
+    """The form of an ask: one yes or no."""
+
+    allow: bool = Field(description="True to allow the action")
+
+
+def choose_backend(link: AppLink, client: str, headless: Backend) -> Backend:
+    """The backend that answers a call: the open app while it answers, else ``headless`` (see
+    :class:`srim.mcp.app_client.AppLink`). ``client`` is the name the app shows."""
+    return link.backend(client, headless)
+
+
+class _Relay:
+    """The activity log, with each entry also sent to the app's panel while the app answers."""
+
+    def __init__(self, log: ActivityLog, send: Callable[[ActivityEntry], None] | None):
+        self._log = log
+        self._send = send
+
+    def append(self, entry: ActivityEntry) -> None:
+        self._log.append(entry)
+        if self._send is not None:
+            try:
+                self._send(entry)
+            except BackendError:
+                # not fatal: a lost connection is handled by the next call (see AppLink)
+                pass
+
+
+class _State:
+    """What one server keeps between calls: the backend link, the log, the codes, one call at a
+    time."""
+
+    def __init__(
+        self,
+        cwd: Path,
+        headless: HeadlessBackend,
+        settings: Callable[[], AppSettings],
+        link: AppLink,
+    ):
+        self.cwd = cwd
+        self.headless = headless
+        #: the reader of the saved settings: each run request reads the limits again
+        self.settings = settings
+        #: the app's connection, kept between calls (one client while the app answers)
+        self.link = link
+        self.log = ActivityLog()
+        self.approvals = ApprovalCodes()
+        self._one_at_a_time = threading.Lock()
+
+    async def run(self, ctx: Context, action: Callable[[Tools], Any], *, read_only: bool = False):
+        """``action`` on a worker thread, with this call's tools. A :class:`BackendError` is
+        returned to the agent as a tool error with its message.
+
+        ``read_only`` tools are answered again by the headless backend when the app closes during
+        the call; the others report that the app closed, as an edit may have been made.
+        """
+        abandoned = threading.Event()  # set when the client cancels this call
+        client = _client_name(ctx)
+        hello = _app_client_name(ctx)
+        elicit = _ask_for(ctx, self._one_at_a_time, abandoned)
+
+        def work() -> Any:
+            # one call at a time, except while a question waits for the user (see _ask_for)
+            self._one_at_a_time.acquire()
+            try:
+                if abandoned.is_set():
+                    raise BackendError("the call was cancelled, so nothing was done")
+                return self._attempt(action, client, hello, elicit, abandoned, read_only)
+            finally:
+                self._one_at_a_time.release()
+
+        try:
+            # the worker is not waited for on cancel: it gives up at its next question or check
+            return await anyio.to_thread.run_sync(work, abandon_on_cancel=True)
+        except anyio.get_cancelled_exc_class():
+            abandoned.set()
+            raise
+        except BackendError as error:
+            raise ToolError(str(error)) from error
+        except Exception as error:  # a bug: the agent gets a short message, the log the traceback
+            traceback.print_exception(error, file=sys.stderr)
+            raise ToolError(f"{type(error).__name__}: {error}") from error
+
+    def _attempt(
+        self,
+        action: Callable[[Tools], Any],
+        client: str,
+        hello: str,
+        elicit: Ask | None,
+        abandoned: threading.Event,
+        read_only: bool,
+    ) -> Any:
+        backend = choose_backend(self.link, hello, self.headless)
+        try:
+            result = action(self._tools(backend, client, elicit, abandoned))
+        except AppGone:
+            self.link.lost()
+            if not read_only:
+                raise
+            backend = choose_backend(self.link, hello, self.headless)
+            result = action(self._tools(backend, client, elicit, abandoned))
+        notice = self.link.take_notice()
+        if notice is not None and isinstance(result, dict):
+            result = {**result, "note": notice}
+        return result
+
+    def _tools(
+        self,
+        backend: Backend,
+        client: str,
+        elicit: Ask | None,
+        abandoned: threading.Event,
+    ) -> Tools:
+        """This call's tools. In app mode the questions and the log go to the app; otherwise the
+        client's elicitation answers the questions and the log stays in the file."""
+        if backend.mode == "app":
+            ask = _app_ask(backend, abandoned, self._one_at_a_time)
+            send: Callable[[ActivityEntry], None] | None = backend.log
+        else:
+            ask, send = elicit, None
+        return Tools(
+            backend,
+            _Relay(self.log, send),
+            self.approvals,
+            self.settings,
+            client=client,
+            ask=ask,
+            cores=None,  # the backend's own core count: the limit is the library's
+        )
+
+
+def build_server(
+    cwd: Path | None = None,
+    *,
+    headless: HeadlessBackend | None = None,
+    link: AppLink | None = None,
+) -> MCPServer:
+    """The pysrim2 MCP server, with its tools, the instructions and the skill resource.
+
+    ``cwd`` is the working directory that relative paths are resolved from (the current one
+    when None). ``headless`` replaces the headless backend, and ``link`` the connection to the
+    app (tests pass their own), so tests can pass fake checks and a fake app.
+    """
+    cwd = Path(cwd) if cwd is not None else Path.cwd()
+    settings = load_settings()
+    if headless is None:
+        headless = HeadlessBackend(cwd, settings=settings)
+    if link is None:
+        link = AppLink(cwd=cwd)
+    state = _State(cwd, headless, load_settings, link)
+    server = MCPServer(
+        "pysrim2",
+        instructions=resources.files("srim.mcp")
+        .joinpath("instructions.md")
+        .read_text(encoding="utf-8"),
+        version=srim.__version__,
+    )
+
+    @server.tool()
+    async def status(ctx: Context) -> dict:
+        """Whether SRIM is ready, the doctor's checks, the setup's file and the latest run."""
+        return await state.run(ctx, lambda t: t.status(), read_only=True)
+
+    @server.tool()
+    async def get_setup(ctx: Context) -> dict:
+        """The current run setup (the run.yaml layout), its file and what it still needs."""
+        return await state.run(ctx, lambda t: t.get_setup(), read_only=True)
+
+    @server.tool()
+    async def lookup_element(ctx: Context, text: str) -> dict:
+        """Look up an element or isotope by its symbol or name (e.g. "N", "N15")."""
+        return await state.run(ctx, lambda t: t.lookup_element(text), read_only=True)
+
+    @server.tool()
+    async def find_material(ctx: Context, text: str) -> dict:
+        """Look up a compound or material with its formula and density (e.g. "SiO2")."""
+        return await state.run(ctx, lambda t: t.find_material(text), read_only=True)
+
+    @server.tool()
+    async def estimate(
+        ctx: Context, workers: int | None = None, batch_ions: int | None = None
+    ) -> dict:
+        """The time, workers and cores a run of the setup would take. Changes nothing."""
+        return await state.run(ctx, lambda t: t.estimate(workers, batch_ions), read_only=True)
+
+    @server.tool()
+    async def set_values(ctx: Context, assignments: list[str]) -> dict:
+        """Set values of the setup by key, as in the command line: "ion.energy_keV=40",
+        "number_ions=1000", "scan.grid.ion.energy_keV=[20, 40]". All or nothing."""
+        return await state.run(ctx, lambda t: t.set_values(assignments))
+
+    @server.tool()
+    async def set_section(ctx: Context, name: str, value: Any) -> dict:
+        """Replace a whole section: "ion", "target" (a list of layers), "run" or "scan"
+        (None makes it a single run). {"live": true} in "run" shows the results of a single run
+        while it goes (normally ten batches; not identical to a run without it). All or nothing."""
+        return await state.run(ctx, lambda t: t.set_section(name, value))
+
+    @server.tool()
+    async def open_setup(ctx: Context, path: str, confirm_code: str | None = None) -> dict:
+        """Open a run.yaml (relative paths are from the working directory)."""
+        return await state.run(ctx, lambda t: t.open_setup(path, confirm_code))
+
+    @server.tool()
+    async def new_setup(ctx: Context, confirm_code: str | None = None) -> dict:
+        """Start an empty setup (asks first when the current one has unsaved changes)."""
+        return await state.run(ctx, lambda t: t.new_setup(confirm_code))
+
+    @server.tool()
+    async def save_setup(
+        ctx: Context, path: str | None = None, confirm_code: str | None = None
+    ) -> dict:
+        """Save the setup to a run.yaml (its own file when no path is given). A run needs one."""
+        return await state.run(ctx, lambda t: t.save_setup(path, confirm_code))
+
+    @server.tool()
+    async def start_run(
+        ctx: Context,
+        workers: int | None = None,
+        batch_ions: int | None = None,
+        confirm_code: str | None = None,
+    ) -> dict:
+        """Start a run of the saved setup in its own run folder. Asks first when the run is
+        estimated over 30 minutes or wants more than half the cores."""
+        return await state.run(ctx, lambda t: t.start_run(workers, batch_ions, confirm_code))
+
+    @server.tool()
+    async def run_status(ctx: Context, folder: str | None = None) -> dict:
+        """The state of a run (its progress and points). Default: the latest run."""
+        return await state.run(ctx, lambda t: t.run_status(folder), read_only=True)
+
+    @server.tool()
+    async def control_run(ctx: Context, action: str, folder: str | None = None) -> dict:
+        """Pause, resume or stop a run. action is "pause", "resume" or "stop"."""
+        return await state.run(ctx, lambda t: t.control_run(action, folder))
+
+    @server.tool()
+    async def list_runs(ctx: Context, setup_path: str | None = None) -> dict:
+        """The run folders of a setup, newest first, with their status."""
+        return await state.run(ctx, lambda t: t.list_runs(setup_path), read_only=True)
+
+    @server.tool()
+    async def open_run(ctx: Context, folder: str, confirm_code: str | None = None) -> dict:
+        """Read an earlier run folder: whether it finished and its points. In the app the
+        unsaved changes of the setup are asked about first (they are replaced)."""
+        return await state.run(ctx, lambda t: t.open_run(folder, confirm_code))
+
+    @server.tool()
+    async def delete_run(ctx: Context, folder: str, confirm_code: str | None = None) -> dict:
+        """Delete a run folder of the setup (always asks first). A running one is refused."""
+        return await state.run(ctx, lambda t: t.delete_run(folder, confirm_code))
+
+    @server.tool()
+    async def summary(ctx: Context, folder: str | None = None, point: int | None = None) -> dict:
+        """The implant summary of a run, one row: mean depth and straggle. A scan needs a point."""
+        return await state.run(ctx, lambda t: t.summary(folder, point), read_only=True)
+
+    @server.tool()
+    async def available_plots(
+        ctx: Context, folder: str | None = None, point: int | None = None
+    ) -> dict:
+        """The plots of a run, with their keys, and whether each one is available."""
+        return await state.run(ctx, lambda t: t.available_plots(folder, point), read_only=True)
+
+    @server.tool()
+    async def table(
+        ctx: Context,
+        folder: str | None = None,
+        point: int | None = None,
+        key: str = "",
+        max_rows: int = 500,
+    ) -> dict:
+        """The data behind a plot key, at most max_rows rows (5000 at most)."""
+        return await state.run(ctx, lambda t: t.table(folder, point, key, max_rows), read_only=True)
+
+    @server.tool(structured_output=False)
+    async def plot(
+        ctx: Context, folder: str | None = None, point: int | None = None, key: str = ""
+    ) -> CallToolResult:
+        """Draw a plot of a run. Returns the picture and its details (the saved file's path)."""
+        details = await state.run(ctx, lambda t: t.plot(folder, point, key), read_only=True)
+        png = await anyio.to_thread.run_sync(Path(details["path"]).read_bytes)
+        return CallToolResult(
+            content=[
+                Image(data=png, format="png").to_image_content(),
+                TextContent(type="text", text=json.dumps(details, sort_keys=True)),
+            ]
+        )
+
+    @server.tool()
+    async def export(
+        ctx: Context,
+        folder: str | None,
+        fmt: str,
+        dest: str,
+        include_collision: bool = False,
+        point: int | None = None,
+        confirm_code: str | None = None,
+    ) -> dict:
+        """Export a run's tables as csv, parquet or hdf5 to dest. Asks first before it replaces
+        a file this session did not write."""
+        return await state.run(
+            ctx,
+            lambda t: t.export(folder, fmt, dest, include_collision, point, confirm_code),
+        )
+
+    @server.tool()
+    async def install_plan(ctx: Context, components: list[str] | None = None) -> dict:
+        """The installer steps still to do for the components (the default ones when none),
+        with their commands. Admin steps are listed, never run."""
+        return await state.run(ctx, lambda t: t.install_plan(components), read_only=True)
+
+    @server.tool()
+    async def install_step(ctx: Context, component: str, confirm_code: str | None = None) -> dict:
+        """Run the non-admin installer steps of one component (always asks first)."""
+        return await state.run(ctx, lambda t: t.install_step(component, confirm_code))
+
+    @server.tool()
+    async def undo(ctx: Context) -> dict:
+        """Undo the agent's last change in the pysrim2 window. Needs the app open."""
+        return await state.run(ctx, lambda t: t.undo())
+
+    @server.tool()
+    async def redo(ctx: Context) -> dict:
+        """Redo the agent's last undone change in the pysrim2 window. Needs the app open."""
+        return await state.run(ctx, lambda t: t.redo())
+
+    @server.resource(
+        SKILL_URI,
+        name="skill",
+        title="The pysrim2 skill",
+        description="How to use pysrim2 and its tools: the guide for agents.",
+        mime_type="text/markdown",
+    )
+    def skill() -> str:
+        return skill_text()
+
+    return server
+
+
+def _app_client_name(ctx: Context) -> str:
+    """The name the app shows for this client: the MCP client's own name, or "an agent"."""
+    params = ctx.session.client_params
+    info = params.client_info if params is not None else None
+    name = info.name.strip() if info is not None else ""
+    return name or DEFAULT_CLIENT
+
+
+def _app_ask(backend: Backend, abandoned: threading.Event, one_at_a_time: threading.Lock) -> Ask:
+    """The question asked in the app's dialog. The server's lock is released while the user
+    answers, but the app's connection is held for the answer (see ``AppClient``), so the agent's
+    other requests that reach the app wait for it. The dialog gives up after 120 s, so that wait is
+    at most about two minutes. A call that was cancelled is refused, and an allowance that comes
+    after the cancel does not count."""
+
+    def ask(text: str) -> Answer | None:
+        if abandoned.is_set():
+            return "denied"
+        one_at_a_time.release()
+        try:
+            answer = backend.ask(text)
+        finally:
+            one_at_a_time.acquire()
+        return "denied" if abandoned.is_set() and answer == "allowed" else answer
+
+    return ask
+
+
+def _client_name(ctx: Context) -> str:
+    """The client's name and version from its initialize request, for the activity log."""
+    params = ctx.session.client_params
+    info = params.client_info if params is not None else None
+    if info is None:
+        return UNKNOWN_CLIENT
+    return f"{info.name} {info.version}".strip()
+
+
+def _ask_for(ctx: Context, one_at_a_time: threading.Lock, abandoned: threading.Event) -> Ask | None:
+    """The question to ask the user through the client, or None when the client cannot answer
+    questions (it did not declare elicitation). Called on the event loop; the question itself
+    runs in the worker thread that is making the call. The lock is released while the user
+    answers, so the other tools go on; the caller checks the setup again once the answer is in.
+    This is the headless path only: in app mode the other calls wait (see :func:`_app_ask`)."""
+    capabilities = ctx.client_capabilities
+    if capabilities is None or capabilities.elicitation is None:
+        return None
+
+    def ask(text: str) -> Answer | None:
+        if abandoned.is_set():
+            return "denied"
+        one_at_a_time.release()
+        try:
+            answer = anyio.from_thread.run(_answer, ctx, text, abandoned)
+        except BaseException:  # anyio's cancel of the question is not an Exception
+            if abandoned.is_set():  # the call was cancelled while the question was open
+                return "denied"
+            raise
+        finally:
+            one_at_a_time.acquire()
+        # an answer that comes after a cancel does not count: nothing is started for it
+        return "denied" if abandoned.is_set() else answer
+
+    return ask
+
+
+async def _answer(ctx: Context, text: str, abandoned: threading.Event) -> Answer | None:
+    """The user's answer to ``text``, or "timed out" after :data:`ASK_SECONDS`. Set ``abandoned``
+    when the client cancels the call while the question is open: the worker then starts nothing."""
+    try:
+        with anyio.move_on_after(ASK_SECONDS) as timer:
+            answer = await _form_answer(ctx, text)
+        return "timed out" if timer.cancelled_caught else answer
+    except anyio.get_cancelled_exc_class():
+        abandoned.set()  # set here, on the loop, before the worker sees the cancel
+        raise
+
+
+async def _form_answer(ctx: Context, text: str) -> Answer | None:
+    """Only an explicit yes allows; a refusal, a cancel, a malformed answer does not. None when
+    the protocol cannot carry the question mid-call (2026-07-28 and later have no back channel
+    for server requests): the caller then uses the one-time code."""
+    try:
+        result = await ctx.elicit(message=f"pysrim2 agent request: {text}. Allow it?", schema=Allow)
+    except NoBackChannelError:
+        return None
+    except (MCPError, ValueError):  # the client refused the form, or answered badly: no
+        return "denied"
+    if isinstance(result, AcceptedElicitation) and result.data.allow:
+        return "allowed"
+    return "denied"
+
+
+def main() -> int:
+    """Serve the tools over stdio until the client goes away. Returns 0."""
+    build_server(Path.cwd()).run("stdio")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

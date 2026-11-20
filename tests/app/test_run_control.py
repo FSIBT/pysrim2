@@ -379,3 +379,31 @@ def test_loading_is_refused_while_a_run_goes(make_window, setup_file, qtbot, tmp
     finally:
         with qtbot.waitSignal(win.run.finished, timeout=STOP_TIMEOUT):
             win.run.stop()
+
+
+def test_a_live_single_run_shows_its_finished_batches_while_it_goes(
+    make_window, setup_file, qtbot, tmp_path, monkeypatch
+):
+    import pandas as pd
+    from runners import COUNT_VAR, gated_after_first_runner
+
+    gate = tmp_path / "gate"
+    monkeypatch.setenv(GATE_VAR, str(gate))
+    monkeypatch.setenv(COUNT_VAR, str(tmp_path / "count"))
+    win = make_window(runner=gated_after_first_runner)
+    win.document.open(setup_file)
+    win.document.edit(lambda doc: doc.__setitem__("_live", True))
+    win.run.start(ParallelChoice())
+    folder = win.run.folder
+    point_dir = folder / "points" / win.run.state.scan.points()[0].id[:16]
+    qtbot.waitUntil(lambda: (point_dir / "units.live.csv").is_file(), timeout=RUN_TIMEOUT)
+    live = pd.read_csv(point_dir / "units.live.csv")
+    assert len(live) == 1 and int(live["n_ions"].sum()) == 20  # 200 ions in ten batches
+    assert not (point_dir / "units.csv").exists()  # not finished: no final record yet
+    assert (folder / "runner.json").is_file() and (folder / "events.jsonl").is_file()
+    assert (folder / "scan.yaml").read_text().count("batch_ions: 20") == 1
+    gate.touch()  # the other batches may go on
+    qtbot.waitUntil(lambda: not win.run.running, timeout=RUN_TIMEOUT)
+    assert not (point_dir / "units.live.csv").exists()
+    assert len(pd.read_csv(point_dir / "units.csv")) == 10
+    assert win.run.result.table["status"].tolist() == ["done"]

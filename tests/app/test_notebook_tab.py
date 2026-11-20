@@ -143,7 +143,9 @@ def test_the_notebook_menu_is_between_run_and_view(qtbot):
     win = window_of(qtbot)
     titles = [action.text() for action in win.menuBar().actions()]
     assert titles.index("&Notebook") == titles.index("&Run") + 1
-    assert titles.index("&View") == titles.index("&Notebook") + 1
+    # the Agent menu sits between Notebook and View (see tests/app/test_agent_panel.py)
+    assert titles.index("&Agent") == titles.index("&Notebook") + 1
+    assert titles.index("&View") == titles.index("&Agent") + 1
 
 
 def test_start_marimo_is_greyed_without_a_run_folder_and_names_the_reason(qtbot):

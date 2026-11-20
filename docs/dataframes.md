@@ -28,10 +28,13 @@ exports; naming a table that is not available raises `ValueError`), or stream it
 
 The depth profiles (`ioniz`, `vacancy`, `novac`, `e2recoil`, `phonon`, `range`)
 are read when `Results` is created. The large per-ion files (`range3d`, `exyz`,
-`backscat`, `transmit`, `sputter`, `collision`) are read on first access of the
-attribute and cached: creating `Results` stays cheap, and a broken file raises
-(or warns) at that access. A file changed after the first access is not re-read;
-create a new `Results`. The attribute is `None` if the file is absent.
+`backscat`, `transmit`, `sputter`, `collision`) are opened on first access of the
+attribute and cached. Opening a per-ion file reads it once to count its rows and
+keeps none of them: `.df` and the array properties read every row on first use, and
+`iter_chunks(chunk_rows)` streams them chunk by chunk (the export does this, see
+{doc}`export`). A broken file raises (or warns) at that access. A file changed after
+the first access is not re-read; create a new `Results`. The attribute is `None` if
+the file is absent.
 
 ## Depth profiles
 
@@ -242,6 +245,9 @@ implant_summary(results.range3d.df)
 #  'lateral_straggle_A': ..., 'radial_range_A': ..., 'radial_straggle_A': ...,
 #  'skewness': ..., 'kurtosis': ...}
 ```
+
+For a large `RANGE_3D.txt`, `implant_summary_chunks(results.range3d.iter_chunks())` gives the same
+dictionary (the same values and types) reading one chunk of rows at a time.
 
 | Key | Definition |
 |---|---|

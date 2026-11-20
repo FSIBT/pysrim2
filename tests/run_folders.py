@@ -15,9 +15,10 @@ FIXTURE = Path(__file__).resolve().parents[1] / "test_files" / "2"
 DONE = "done"
 
 
-def finished_scan(folder: Path, scan, outcomes, values=None) -> ScanResult:
+def finished_scan(folder: Path, scan, outcomes, values=None, source: Path = FIXTURE) -> ScanResult:
     """The result of ``scan`` in ``folder``: one outcome per point, :data:`DONE` (its outputs
-    are copied in) or the error text of a point that failed.
+    are copied in from ``source``, test_files/2 unless given) or the error text of a point that
+    failed.
 
     ``values``, when given, is one dict of extracted values per point (the rows of a point
     that is done get them; the others have none).
@@ -29,7 +30,7 @@ def finished_scan(folder: Path, scan, outcomes, values=None) -> ScanResult:
         if outcome == DONE:
             rel = f"points/{point.id[:16]}"
             point_dir = folder / rel
-            shutil.copytree(FIXTURE, point_dir)
+            shutil.copytree(source, point_dir)
             point.spec.to_yaml(point_dir / "run.yaml", provenance={"test": "result"})
             extra = values[position] if values is not None else {}
             rows.append(

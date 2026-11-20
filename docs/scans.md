@@ -611,6 +611,25 @@ It needs IPython and matplotlib (`pip install "pysrim2[plot]" ipython`), and a J
 session: in a script it refuses to start, so use `PlainProgress` there. Its plot updates at
 most every `every` seconds (default 1). See the scan notebook in `examples/notebooks`.
 
+### Reading a batched point while it runs
+
+A batched point (a precision target, `batch_ions`, a binned beam, or the desktop app's live option)
+records its units when it finishes: `run.yaml`, `units.csv` and, for a binned beam, `beam_bins.csv`.
+While it runs, the finished units are kept in the same records under the names `run.live.yaml`,
+`units.live.csv` and `beam_bins.live.csv` in the point's folder. Each file is replaced atomically, at
+most once a second per point and after the point's last unit. They are written spec first, units
+last, so a reader never sees units newer than the spec and bins it reads.
+
+- The final record replaces the live files and removes them.
+- A failed point has no live files (it has no final record either).
+- A crashed run leaves its live files behind. Read them as the state of a run that is still going,
+  never as a finished point.
+- A new run of a point removes its stale live files when the point is scheduled again.
+
+`srim.beam.open_results(point_dir, live=True)` merges the live files into one result, as
+`open_results` does for a finished point. It raises `FileNotFoundError` when the point has no live
+record (a point that has finished or stopped has its final record only).
+
 ## Stopping
 
 - Ctrl-C (or SIGTERM, or `q` in a view, or `stop_event` in Python) stops the scan. No new
