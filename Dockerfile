@@ -40,7 +40,7 @@ USER srim
 # `docker run IMAGE pytest -m srim` works with the tests mounted).
 RUN uv venv /opt/venv --python 3.15
 RUN --mount=type=bind,source=.,target=/tmp/src,rw \
-    uv pip install /tmp/src pytest pytest-mock
+    uv pip install --exclude-newer "7 days" /tmp/src pytest pytest-mock
 
 # The same code path users run: wine prefix (OCX + VB5 runtimes) and SRIM-2013.
 RUN xvfb-run -a -s "-screen 0 1024x768x24" pysrim2 install wine srim --yes \

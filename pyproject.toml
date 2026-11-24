@@ -80,6 +80,10 @@ Docs = "https://pysrim2.readthedocs.io"
 Changelog = "https://github.com/FSIBT/pysrim2/blob/main/CHANGELOG.md"
 Original = "https://gitlab.com/costrouc/pysrim"
 
+[tool.uv]
+# only use releases that are at least a week old (supply-chain cooldown)
+exclude-newer = "7 days"
+
 [tool.hatch.build.targets.wheel]
 packages = ["srim"]
 
